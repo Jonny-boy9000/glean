@@ -11,7 +11,7 @@
 |---|---|---|
 | 1 | 78 tests pass, 1 skipped | yes (78 passed, 1 skipped) |
 | 2 | <30% candidates from docs/, test/, *.md | yes — 0% (0 of 35 ranked candidates) |
-| 3 | `glean repair` scanned and reported correctly on historical OUT.md | yes — 36 scanned, 0 repaired, 11 skipped (extraction-too-short). See notes. |
+| 3 | `glean repair` scanned and reported correctly on historical OUT.md | PARTIAL — 36 scanned, 0 repaired, 11 skipped (extraction-too-short). See notes. |
 | 4 | >=1 fetch-docs / dep candidate emerged | yes — 32 dep candidates, 3 todo candidates |
 | 5 | npm test, build, lint exit 0 | yes |
 | 6 | CHANGELOG.md documents user-visible changes | yes |
