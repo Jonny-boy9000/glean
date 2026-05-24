@@ -71,18 +71,22 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   });
 
   let timedOut = false;
-  const timerPromise = new Promise<'timeout'>((resolve) => {
-    setTimeout(() => { timedOut = true; job.kill(); resolve('timeout'); }, ctx.taskTimeoutMs);
-  });
+  const timer = setTimeout(() => { timedOut = true; job.kill(); }, ctx.taskTimeoutMs);
 
-  const exitCode = await Promise.race([job.exit, timerPromise.then(() => -2)]);
+  let exitCode: number;
+  try {
+    exitCode = await job.exit;
+  } finally {
+    clearTimeout(timer);
+  }
+
   stderrStream.end();
   jsonlStream.end();
 
   const elapsed_ms = Date.now() - start;
 
   if (rateLimited) return { status: 'rate-limit', elapsed_ms };
-  if (timedOut || exitCode === -2) return { status: 'timeout', elapsed_ms };
+  if (timedOut) return { status: 'timeout', elapsed_ms };
   if (exitCode !== 0) {
     const tail = tailLines(readFileSync(stderrPath, 'utf8'), 50);
     return { status: 'failed', elapsed_ms, stderr_tail: tail };

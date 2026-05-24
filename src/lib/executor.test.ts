@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,5 +95,22 @@ describe('executeOne', () => {
     expect(r1.output_path).not.toEqual(r2.output_path);
     expect(r1.output_path).toMatch(/-L42/);
     expect(r2.output_path).toMatch(/-L99/);
+  });
+
+  it('clears the timeout handle on normal exit (no dangling timers)', async () => {
+    const clearSpy = vi.spyOn(global, 'clearTimeout');
+    try {
+      const root = tmpRoot();
+      const result = await executeOne(candidate(), {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(result.status).toBe('ok');
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
   });
 });
