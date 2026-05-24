@@ -82,9 +82,9 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     for (const c of ranked) {
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
       if (Date.now() - start >= opts.budgetMs) { reason = 'budget-exhausted'; exitCode = 10; break; }
-      // Re-prioritize for end-of-budget filter
+      // Skip research-dossier tasks when fewer than 5 min remain (fetch-docs are fast enough).
       const remaining = opts.budgetMs - (Date.now() - start);
-      if (remaining < 30 * 60_000 && c.type !== 'fetch-docs') continue;
+      if (remaining < 5 * 60_000 && c.type !== 'fetch-docs') continue;
 
       appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.start', task_id: c.id, type: c.type });
       const result = await executeOne(c, {

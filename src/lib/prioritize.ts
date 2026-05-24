@@ -30,7 +30,10 @@ export function scoreValue(c: Candidate, hints: { fileMtime?: number } = {}): nu
 
 export function prioritize(candidates: Candidate[], budgetMs: number, elapsedMs: number): Candidate[] {
   const remaining = budgetMs - elapsedMs;
-  const onlyDocs = remaining < 30 * 60_000;
+  // Reserve the last 5 minutes of a run for cheap fetch-docs tasks only.
+  // (Previously this used 30 * 60_000 which wrongly filtered everything on
+  //  a 30-minute budget because remaining ≈ budgetMs at run start.)
+  const onlyDocs = remaining < 5 * 60_000;
   const eligible = onlyDocs ? candidates.filter((c) => c.type === 'fetch-docs') : [...candidates];
 
   eligible.sort((a, b) => score(b) - score(a));

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream } from 'node:fs';
 import { join, basename } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 import type { Candidate, TaskResult } from './types.js';
 import { spawnInJob } from './jobobject.js';
@@ -37,9 +38,13 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   const jsonlStream = createWriteStream(jsonlPath);
   let rateLimited = false;
 
+  // Pass prompt via stdin to avoid Windows command-line length limits (~8191 chars).
+  // Use -p with no argument; claude reads the prompt from stdin when piped.
+  // --verbose is required for --output-format stream-json in -p (print) mode.
   const claudeArgs = [
-    '-p', prompt,
+    '-p',
     '--output-format', 'stream-json',
+    '--verbose',
     '--include-partial-messages',
     '--add-dir', workDir,
     '--permission-mode', 'acceptEdits',
@@ -49,6 +54,12 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   // On Windows, .cmd files must be invoked via cmd.exe /c
   const [spawnCmd, spawnArgs] = resolveSpawn(ctx.claudeBin, claudeArgs);
   const job = spawnInJob(spawnCmd, spawnArgs, { cwd: workDir, env: ctx.env, stdio: 'pipe' });
+
+  // Write the prompt to stdin and close the stream so claude proceeds immediately.
+  if (job.child.stdin) {
+    job.child.stdin.write(prompt, 'utf8');
+    job.child.stdin.end();
+  }
 
   job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
   job.child.stderr?.on('data', (chunk: Buffer) => {
@@ -161,8 +172,21 @@ function findFirstFile(dir: string, re: RegExp): string | undefined {
  * Returns [command, args] suitable for spawnInJob.
  */
 function resolveSpawn(bin: string, args: string[]): [string, string[]] {
-  if (process.platform === 'win32' && bin.toLowerCase().endsWith('.cmd')) {
-    return ['cmd', ['/c', bin, ...args]];
+  if (process.platform === 'win32') {
+    // On Windows, bare command names like "claude" resolve to "claude.cmd"
+    // in npm-global dirs. .cmd files must be invoked via cmd.exe /c.
+    if (bin.toLowerCase().endsWith('.cmd')) {
+      return ['cmd', ['/c', bin, ...args]];
+    }
+    // If the bin has no extension, probe for a .cmd variant on PATH.
+    // This handles config { claude_bin: "claude" } on Windows where only
+    // claude.cmd is executable by CreateProcess.
+    if (!bin.includes('.')) {
+      try {
+        const cmdPath = execFileSync('where', [bin + '.cmd'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
+        if (cmdPath) return ['cmd', ['/c', cmdPath, ...args]];
+      } catch { /* no .cmd found on PATH, fall through */ }
+    }
   }
   return [bin, args];
 }

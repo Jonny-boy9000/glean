@@ -48,10 +48,10 @@ describe('prioritize', () => {
     expect(ranked[0].type).toBe('research-dossier');
   });
 
-  it('keeps only fetch-docs when <30 min remains', () => {
+  it('keeps only fetch-docs when <5 min remains', () => {
     const r = c({ type: 'research-dossier' });
     const f = c({ type: 'fetch-docs', evidence: { kind: 'dep', manifest: 'package.json', package: 'p', added_at: 'now' } });
-    const ranked = prioritize([r, f], 60 * 60_000, 35 * 60_000); // 25 min remains
+    const ranked = prioritize([r, f], 60 * 60_000, 56 * 60_000); // 4 min remains
     expect(ranked.every((c) => c.type === 'fetch-docs')).toBe(true);
   });
 });

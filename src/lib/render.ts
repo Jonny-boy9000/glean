@@ -1,7 +1,16 @@
 type Filter = (input: unknown) => string;
 
 const filters: Record<string, Filter> = {
-  join_lines: (v) => (Array.isArray(v) ? v.map(String).join('\n') : String(v)),
+  join_lines: (v) =>
+    Array.isArray(v)
+      ? v
+          .map((item) =>
+            typeof item === 'object' && item !== null
+              ? `line ${(item as Record<string, unknown>).line}: ${(item as Record<string, unknown>).text ?? JSON.stringify(item)}`
+              : String(item),
+          )
+          .join('\n')
+      : String(v),
   bullet_list: (v) =>
     Array.isArray(v)
       ? v
