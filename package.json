@@ -26,6 +26,7 @@
   "dependencies": {
     "citty": "^0.1.6",
     "fast-glob": "^3.3.2",
+    "smol-toml": "^1.6.1",
     "uuid": "^9.0.1",
     "yaml": "^2.4.0",
     "zod": "^3.22.4"
