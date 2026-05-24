@@ -219,7 +219,15 @@ export async function discoverDeps(projectPath: string): Promise<Candidate[]> {
     if (commits.length === 0) continue;
 
     const oldestInWindow = commits[commits.length - 1];
-    const preContent = gitShowAtParent(projectPath, oldestInWindow, m);
+    // Two-branch baseline: when there are multiple commits in the window, baseline is
+    // the file content AT the oldest commit (packages already there are not "new").
+    // When only one commit is in the window, baseline is the parent of that commit
+    // (because the single commit IS the change event). The simpler "always use parent"
+    // form fails when the manifest's first-ever commit is also the oldest in-window
+    // commit — its parent doesn't exist, so every dep would be incorrectly emitted.
+    const preContent = commits.length > 1
+      ? gitShowAt(projectPath, oldestInWindow, m)
+      : gitShowAtParent(projectPath, oldestInWindow, m);
     const currentContent = readFileSync(join(projectPath, m), 'utf8');
 
     const preDeps = parseManifestDeps(m, preContent);
@@ -255,6 +263,18 @@ function recentCommits(projectPath: string, manifest: string, days: number): str
     return stdout.split(/\r?\n/).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+function gitShowAt(projectPath: string, commit: string, manifest: string): string {
+  try {
+    return execFileSync(
+      'git',
+      ['-C', projectPath, 'show', `${commit}:${manifest}`],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+  } catch {
+    return '';
   }
 }
 

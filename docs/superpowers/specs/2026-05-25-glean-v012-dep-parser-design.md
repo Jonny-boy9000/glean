@@ -40,8 +40,13 @@ For each present manifest type:
 1. Run `git log --since=14.days --format=%H -- <manifest>` to list commits in the window.
 2. If zero commits → skip (no recent activity for this manifest).
 3. Get file contents at two points:
-   - **Pre-window:** `git show <commit-just-before-oldest-window-commit>:<manifest>`. If that commit doesn't exist (the file was newly-added in the window) or the path doesn't exist at that commit → treat as empty string.
+   - **Pre-window baseline (two-branch rule):**
+     - **If the window contains *multiple* commits**, baseline is the file content **AT the oldest in-window commit** (`git show <oldest>:<manifest>`). Packages already present there are not "new" — they were added before the change history we're examining begins.
+     - **If the window contains *exactly one* commit**, baseline is the file content at that commit's **parent** (`git show <oldest>^:<manifest>`). That single commit IS the change event we're evaluating, so its parent is the correct "before" state.
+     - If either `git show` invocation fails (initial commit with no parent, or path doesn't exist at that revision) → treat as empty string.
    - **Current:** `readFileSync(<projectPath>/<manifest>, 'utf8')`.
+
+   The two-branch rule exists because the simpler "always use parent of oldest" interpretation fails when the manifest's first-ever commit is also the oldest commit in the window: the parent doesn't exist, so the baseline becomes empty, and every existing dependency would be incorrectly emitted as "new". The two-branch rule correctly identifies "new in window" as "appeared in a diff during the window" rather than "didn't exist at the moment N days ago."
 4. Parse both with `parseManifestDeps(type, content)` into a `Set<string>` of dependency names.
 5. Emit one `fetch-docs` candidate per name in `currentDeps \ preDeps`.
 
@@ -49,7 +54,7 @@ For each present manifest type:
 
 | File | Change |
 |---|---|
-| `src/lib/discover-deps.ts` | Rewrite `discoverDeps`. Remove `parseAddedPackages` and `extractPackageName`. Add `parseManifestDeps(manifest, content): Set<string>` plus two small git-surface helpers (`recentCommits`, `gitShowAtParent`). |
+| `src/lib/discover-deps.ts` | Rewrite `discoverDeps`. Remove `parseAddedPackages` and `extractPackageName`. Add `parseManifestDeps(manifest, content): Set<string>` plus three small git-surface helpers (`recentCommits`, `gitShowAt`, `gitShowAtParent`). |
 | `src/lib/discover-deps.test.ts` | Existing 2 tests preserved (assertions unchanged — same fixtures, same outcomes under new flow). Add 3 new tests for section-scoping (package.json top-level fields, Cargo.toml [package] table, pyproject.toml [build-system]/[project]/[tool.*]). |
 | `package.json` | Add `smol-toml` dependency. Bump version to `0.1.2`. |
 | `CHANGELOG.md` | Add v0.1.2 entry. |
@@ -93,7 +98,11 @@ export async function discoverDeps(projectPath: string): Promise<Candidate[]> {
     if (commits.length === 0) continue;
 
     const oldestInWindow = commits[commits.length - 1];
-    const preContent = gitShowAtParent(projectPath, oldestInWindow, m);
+    // Two-branch baseline: see §3. Multiple commits in window → baseline at
+    // oldest in-window commit. Single commit → baseline at its parent.
+    const preContent = commits.length > 1
+      ? gitShowAt(projectPath, oldestInWindow, m)
+      : gitShowAtParent(projectPath, oldestInWindow, m);
     const currentContent = readFileSync(join(projectPath, m), 'utf8');
 
     const preDeps = parseManifestDeps(m, preContent);
@@ -133,6 +142,19 @@ function recentCommits(projectPath: string, manifest: string, days: number): str
     return stdout.split(/\r?\n/).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+function gitShowAt(projectPath: string, commit: string, manifest: string): string {
+  // Returns the file content at `commit`, or '' if the path doesn't exist there.
+  try {
+    return execFileSync(
+      'git',
+      ['-C', projectPath, 'show', `${commit}:${manifest}`],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+  } catch {
+    return '';
   }
 }
 
