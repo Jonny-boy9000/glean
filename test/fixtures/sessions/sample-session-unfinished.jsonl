@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-05-23T10:00:00Z","cwd":"C:\\fake-project","content":"start"}
+{"type":"assistant","timestamp":"2026-05-23T10:00:30Z","cwd":"C:\\fake-project","content":"working"}
+{"type":"assistant","timestamp":"2026-05-23T10:01:00Z","cwd":"C:\\fake-project","tool_use":{"id":"toolu_01","name":"Bash","input":{"command":"ls"}}}
+{"type":"permission-mode","mode":"acceptEdits"}
