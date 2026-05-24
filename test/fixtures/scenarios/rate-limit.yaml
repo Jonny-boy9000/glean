@@ -1,0 +1,3 @@
+stderr_lines:
+  - 'error: 5-hour limit reached, please retry later'
+exit_code: 1

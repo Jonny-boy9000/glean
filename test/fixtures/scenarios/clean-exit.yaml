@@ -1,0 +1,8 @@
+write_out_md: |
+  # Research dossier OUT
+  This is a fake dossier produced by the test stub.
+  Findings: nothing real.
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}'
+exit_code: 0
