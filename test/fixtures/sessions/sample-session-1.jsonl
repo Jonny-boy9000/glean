@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-05-20T10:00:00Z","cwd":"C:\\fake-project","content":"start"}
+{"type":"assistant","timestamp":"2026-05-20T10:00:30Z","cwd":"C:\\fake-project","content":"working"}
+{"type":"ai-title","sessionId":"sess-1","aiTitle":"TODO: refactor auth module"}
+{"type":"permission-mode","mode":"acceptEdits"}
