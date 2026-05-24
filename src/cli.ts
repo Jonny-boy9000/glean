@@ -14,6 +14,7 @@ const runCmd = defineCommand({
   args: {
     project: { type: 'string', required: true, description: 'Absolute path to a git project' },
     budget: { type: 'string', default: '60m', description: 'Wall-clock budget, e.g. 60m, 1h, 30m' },
+    'task-timeout': { type: 'string', default: '8m', description: 'Per-task timeout (e.g. 8m, 30s, 2m)' },
     'dry-run': { type: 'boolean', default: false, description: 'Stop after candidates.json is written' },
   },
   async run({ args }) {
@@ -29,13 +30,14 @@ const runCmd = defineCommand({
     const cfg = loadConfig(defaultConfigPath());
     const claudeBin = cfg.claude_bin ?? 'claude';
     const budgetMs = parseBudget(args.budget as string);
+    const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const summary = await runPipeline({
       projectPath,
       gleanRoot: gleanRoot(),
       claudeBin,
       claudeEnv: process.env,
       budgetMs,
-      taskTimeoutMs: 8 * 60_000,
+      taskTimeoutMs,
       dryRun: Boolean(args['dry-run']),
       templatesDir: BUNDLED_TEMPLATES,
     });
@@ -70,8 +72,10 @@ export function main(argv: string[]): void {
 }
 
 function parseBudget(s: string): number {
-  const m = s.match(/^(\d+)\s*(m|h)$/);
-  if (!m) throw new Error(`invalid budget: ${s} (use e.g. 60m or 1h)`);
+  const m = s.match(/^(\d+)\s*(s|m|h)$/);
+  if (!m) throw new Error(`invalid duration: ${s} (use e.g. 8m, 30s, 1h)`);
   const n = Number(m[1]);
-  return m[2] === 'h' ? n * 60 * 60_000 : n * 60_000;
+  if (m[2] === 'h') return n * 60 * 60_000;
+  if (m[2] === 'm') return n * 60_000;
+  return n * 1000;
 }
