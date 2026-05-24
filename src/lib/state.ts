@@ -1,0 +1,88 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import type { RunSummary } from './types.js';
+
+export function gleanRoot(): string {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+  return join(home, 'glean');
+}
+
+type LockResult =
+  | { acquired: true; recovered?: boolean }
+  | { acquired: false; reason: 'busy'; holder: { pid: number; run_id: string; started_at: string } };
+
+export function acquireLock(root: string, runId: string): LockResult {
+  const stateDir = join(root, 'state');
+  mkdirSync(stateDir, { recursive: true });
+  const lockPath = join(stateDir, 'RUN.lock');
+  let recovered = false;
+  if (existsSync(lockPath)) {
+    try {
+      const existing = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid: number; run_id: string; started_at: string };
+      if (isPidAlive(existing.pid)) {
+        return { acquired: false, reason: 'busy', holder: existing };
+      }
+      recovered = true;
+    } catch {
+      recovered = true; // corrupt lock — treat as stale
+    }
+  }
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, run_id: runId, started_at: new Date().toISOString() }));
+  return { acquired: true, recovered };
+}
+
+export function releaseLock(root: string): void {
+  const lockPath = join(root, 'state', 'RUN.lock');
+  try { unlinkSync(lockPath); } catch { /* ignore */ }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // sends signal 0 = liveness probe
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'; // EPERM = exists but we lack permission
+  }
+}
+
+export function stopPath(root: string): string {
+  return join(root, 'STOP');
+}
+export function isStopRequested(root: string): boolean {
+  return existsSync(stopPath(root));
+}
+export function writeStop(root: string): void {
+  mkdirSync(root, { recursive: true });
+  writeFileSync(stopPath(root), new Date().toISOString());
+}
+export function clearStop(root: string): void {
+  try { unlinkSync(stopPath(root)); } catch { /* ignore */ }
+}
+
+export function ensureTemplatesDir(root: string, bundledDir: string): void {
+  const userTemplates = join(root, 'templates');
+  mkdirSync(userTemplates, { recursive: true });
+  for (const f of readdirSync(bundledDir)) {
+    const dst = join(userTemplates, f);
+    if (!existsSync(dst)) copyFileSync(join(bundledDir, f), dst);
+  }
+}
+
+export function writeSummary(root: string, runId: string, summary: RunSummary): void {
+  const dir = join(root, 'state', runId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2));
+}
+
+export function writeCandidatesJson(root: string, runId: string, candidates: unknown): void {
+  const dir = join(root, 'state', runId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'candidates.json'), JSON.stringify(candidates, null, 2));
+}
+
+export function appendOrchestratorLog(root: string, runId: string, event: Record<string, unknown>): void {
+  const dir = join(root, 'logs', runId);
+  mkdirSync(dir, { recursive: true });
+  const line = JSON.stringify({ t: new Date().toISOString(), ...event }) + '\n';
+  writeFileSync(join(dir, 'orchestrator.log'), line, { flag: 'a' });
+}
