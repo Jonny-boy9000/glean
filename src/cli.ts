@@ -62,9 +62,28 @@ const versionCmd = defineCommand({
   },
 });
 
+const repairCmd = defineCommand({
+  meta: { name: 'repair', description: 'Re-extract missing OUT.md from recent JSONL logs (no Claude spawn)' },
+  args: {
+    'run-id': { type: 'string', description: 'Specific run to repair (default: all within --days)' },
+    days: { type: 'string', default: '7', description: 'How many days back to scan' },
+  },
+  async run({ args }) {
+    const { repairRecent } = await import('./lib/repair.js');
+    const days = Number(args.days);
+    const result = repairRecent(gleanRoot(), days);
+    const filtered = args['run-id']
+      ? { ...result, repaired: result.repaired.filter((r) => r.run_id === args['run-id']) }
+      : result;
+    console.log(`scanned ${result.scanned}, repaired ${filtered.repaired.length}, skipped ${result.skipped.length}, failed ${result.failed.length}`);
+    for (const r of filtered.repaired) console.log(`  + ${r.path} (${r.bytes} bytes)`);
+    for (const f of result.failed) console.error(`  x ${f.path}: ${f.reason}`);
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd },
 });
 
 export function main(argv: string[]): void {
