@@ -13,6 +13,7 @@ export type EvidenceJsonl = {
   session_id: string;
   ai_title: string;
   idle_hours: number;
+  signal?: string;
   // Hydrated by executor at run-time:
   recent_turns?: string[];
 };
