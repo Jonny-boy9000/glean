@@ -107,7 +107,7 @@ function consumeIfBlock(
 ): { branches: IfBranch[]; endIndex: number } {
   const branches: IfBranch[] = [];
   let cursor = openIdx;
-  while (true) {
+  for (;;) {
     const tagOpen = template.indexOf('{{', cursor);
     const tagClose = template.indexOf('}}', tagOpen);
     const tag = template.slice(tagOpen + 2, tagClose).trim();
