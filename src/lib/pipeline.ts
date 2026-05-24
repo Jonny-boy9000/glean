@@ -10,6 +10,7 @@ import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
 import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir } from './state.js';
+import { repairRecent } from './repair.js';
 
 export type PipelineOpts = {
   projectPath: string;
@@ -42,6 +43,16 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     return summary;
   }
   if (lock.recovered) appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'lock.stale_recovered' });
+
+  const repairResult = repairRecent(opts.gleanRoot);
+  if (repairResult.repaired.length > 0) {
+    appendOrchestratorLog(opts.gleanRoot, runId, {
+      evt: 'repair.done',
+      repaired: repairResult.repaired.length,
+      skipped: repairResult.skipped.length,
+      failed: repairResult.failed.length,
+    });
+  }
 
   let candidatesTotal = 0;
   let skippedCount = 0;
