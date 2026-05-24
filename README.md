@@ -196,6 +196,12 @@ The test stub at `test/fixtures/fake-claude.cmd` simulates `claude -p` so integr
 
 ---
 
+## Changelog
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for what's new in each release.
+
+---
+
 ## License
 
 [MIT](./LICENSE) — © 2026 [Jonny-boy9000](https://github.com/Jonny-boy9000)
