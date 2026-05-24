@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.2 — 2026-05-25
+
+Single-issue quality patch from the v0.1.1 dogfood findings.
+
+### Fixed
+- `discover-deps` no longer emits spurious `fetch-docs` candidates for top-level manifest fields like `name`, `version`, `description`, `scripts`, `bin`. The parser is rewritten to use full-file parsing at git boundaries: it loads the manifest at the pre-window and current commits, parses both with proper parsers (JSON.parse for `package.json`, `smol-toml` for `Cargo.toml`/`pyproject.toml`, regex for `go.mod`/`requirements.txt`), and emits candidates for packages present in current dependency sections that weren't there at window-start. Fixes 32 of 35 spurious candidates from the v0.1.1 dogfood.
+
+### Added
+- `smol-toml` runtime dependency (~10KB) for `Cargo.toml` and `pyproject.toml` parsing.
+
+### Tests
+- Suite: 78 + 1 skip → 81 + 1 skip.
+- 3 new tests verify section scoping for `package.json`, `Cargo.toml`, `pyproject.toml`.
+
 ## v0.1.1 — 2026-05-24
 
 Quality patch driven by the v0.1.0 dogfood findings.
