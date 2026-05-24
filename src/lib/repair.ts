@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, writeFileSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { parse as parseYaml, stringify as yamlStringify } from 'yaml';
 import { extractLastAssistantText } from './jsonl-extract.js';
 
@@ -45,7 +45,7 @@ export function repairRecent(gleanRoot: string, days = 7): RepairResult {
       let indexDirty = false;
       for (const entry of fm.entries) {
         if (!entry.output) continue;
-        const outPath = join(datePath, entry.output);
+        const outPath = isAbsolute(entry.output) ? entry.output : join(datePath, entry.output);
         if (!existsSync(outPath)) {
           out.skipped.push({ path: outPath, reason: 'output-missing' });
           continue;

@@ -87,6 +87,23 @@ describe('repairRecent', () => {
     expect(result.repaired.length).toBe(0);
   });
 
+  it('repairs when INDEX.md stores an absolute output path (Windows-style)', () => {
+    const { root } = setup();
+    const today = new Date().toISOString().slice(0, 10);
+    const taskId = 'task-abs';
+    const outDir = join(root, 'dossiers', 'proj', today, 'research-abs');
+    mkdirSync(outDir, { recursive: true });
+    const absOutPath = join(outDir, 'OUT.md');
+    writeFileSync(absOutPath, '_(no output produced)_');
+    // Write INDEX.md with absolute path in output field (as v0.1.0 runs stored it)
+    writeIndex(root, 'proj', today, [{ task_id: taskId, output: absOutPath, status: 'ok-fallback', evidence_hash: 'h6' }]);
+    writeJsonlLog(root, 'test-run', taskId, 'A'.repeat(200));
+
+    const result = repairRecent(root);
+    expect(result.repaired.length).toBe(1);
+    expect(result.repaired[0].path).toBe(absOutPath);
+  });
+
   it('respects the days window - ignores outputs older than days', () => {
     const { root } = setup();
     const oldDate = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
