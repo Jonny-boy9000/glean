@@ -146,7 +146,12 @@ function titleFor(c: Candidate): string {
 }
 
 function slugify(c: Candidate): string {
-  return titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  const base = titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  if (c.evidence.kind === 'todo') {
+    const line = c.evidence.todo_lines[0]?.line ?? 0;
+    return `${base}-L${line}`;
+  }
+  return base;
 }
 
 function projectSlug(p: string): string {
