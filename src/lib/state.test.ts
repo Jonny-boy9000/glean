@@ -9,6 +9,7 @@ import {
   writeStop,
   clearStop,
   ensureTemplatesDir,
+  ensureDefaultConfig,
   writeSummary,
 } from './state.js';
 
@@ -85,6 +86,27 @@ describe('templates dir', () => {
     writeFileSync(join(bundled, 'a.md'), 'BUNDLED');
     ensureTemplatesDir(root, bundled);
     expect(readFileSync(join(root, 'templates', 'a.md'), 'utf8')).toBe('USER');
+  });
+});
+
+describe('ensureDefaultConfig', () => {
+  it('writes a default config when missing', () => {
+    const root = newRoot();
+    const result = ensureDefaultConfig(root);
+    expect(result.created).toBe(true);
+    expect(existsSync(join(root, 'config.json'))).toBe(true);
+    const parsed = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
+    expect(parsed.claude_bin).toBe('claude');
+  });
+
+  it('does not overwrite an existing config', () => {
+    const root = newRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'config.json'), JSON.stringify({ claude_bin: 'mine' }));
+    const result = ensureDefaultConfig(root);
+    expect(result.created).toBe(false);
+    const parsed = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
+    expect(parsed.claude_bin).toBe('mine');
   });
 });
 

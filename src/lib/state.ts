@@ -7,6 +7,14 @@ export function gleanRoot(): string {
   return join(home, 'glean');
 }
 
+export function ensureDefaultConfig(root: string): { created: boolean; path: string } {
+  const path = join(root, 'config.json');
+  if (existsSync(path)) return { created: false, path };
+  mkdirSync(root, { recursive: true });
+  writeFileSync(path, JSON.stringify({ claude_bin: 'claude' }, null, 2) + '\n');
+  return { created: true, path };
+}
+
 type LockResult =
   | { acquired: true; recovered?: boolean }
   | { acquired: false; reason: 'busy'; holder: { pid: number; run_id: string; started_at: string } };

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { runPipeline } from './lib/pipeline.js';
-import { writeStop, gleanRoot } from './lib/state.js';
+import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,6 +21,10 @@ const runCmd = defineCommand({
     if (!existsSync(projectPath)) {
       console.error(`error: project path does not exist: ${projectPath}`);
       process.exit(1);
+    }
+    const bootstrap = ensureDefaultConfig(gleanRoot());
+    if (bootstrap.created) {
+      console.log(`created default config at ${bootstrap.path}`);
     }
     const cfg = loadConfig(defaultConfigPath());
     const claudeBin = cfg.claude_bin ?? 'claude';
