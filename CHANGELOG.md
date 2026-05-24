@@ -19,13 +19,14 @@ Quality patch driven by the v0.1.0 dogfood findings.
 - Executor no longer collides "child exited with code -2" with "task timed out" — the sentinel is now a typed flag, not a magic number.
 - Slug collisions when multiple TODOs share a file: dossier dirs now include the line number (`research-handle-todo-in-foo-ts-L42` vs `…-L99`).
 - `discover-deps` now picks up packages from manifests that were ADDED (not just modified) in the last 14 days — the `git log --diff-filter` was overly strict.
+- `glean repair` now correctly resolves absolute output paths stored in INDEX.md (v0.1.0 wrote absolute paths; `path.join` on Windows silently produced wrong paths as a subpath instead of using the absolute path directly).
 
 ### Tests
 - v03-budget integration test revived using the new `--task-timeout 2s` (was `.skip` due to 8-min runtime).
 - New `jobobject.test.ts` unit test asserts `taskkill /T /F` is invoked with correct args on Windows.
 - v08-jobobject integration test stays skipped (heuristic process-list assertion); comment updated to point at the new unit test.
-- New `repair.test.ts` (5 cases) and integration tests `v11-repair.test.ts` and `v12-task-timeout.test.ts`.
-- Suite: 58 + 2 skip → 77 + 1 skip.
+- New `repair.test.ts` (6 cases) and integration tests `v11-repair.test.ts` and `v12-task-timeout.test.ts`.
+- Suite: 58 + 2 skip → 78 + 1 skip.
 
 ## v0.1.0-mvp — 2026-05-23
 
