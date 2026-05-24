@@ -53,3 +53,45 @@ describe('discoverGitPrs', () => {
     expect((cands[0].evidence as any).number).toBe(7);
   });
 });
+
+describe('discoverGitTodos path exclusions', () => {
+  it('excludes TODOs in *.md files', async () => {
+    const r = mkdtempSync(join(tmpdir(), 'glean-git-md-'));
+    execSync('git init -q', { cwd: r });
+    execSync('git config user.email t@t && git config user.name t', { cwd: r });
+    writeFileSync(join(r, 'NOTES.md'), '<!-- TODO: ignore me -->\n');
+    writeFileSync(join(r, 'src.ts'), '// TODO: keep me\n');
+    execSync('git add . && git commit -q -m i', { cwd: r });
+    const cands = await discoverGitTodos(r);
+    const files = cands.map(c => (c.evidence as { file: string }).file);
+    expect(files.some(f => f.endsWith('NOTES.md'))).toBe(false);
+    expect(files.some(f => f.endsWith('src.ts'))).toBe(true);
+  });
+
+  it('excludes TODOs in *.test.ts files', async () => {
+    const r = mkdtempSync(join(tmpdir(), 'glean-git-test-'));
+    execSync('git init -q', { cwd: r });
+    execSync('git config user.email t@t && git config user.name t', { cwd: r });
+    writeFileSync(join(r, 'foo.test.ts'), '// TODO: ignore me\n');
+    writeFileSync(join(r, 'foo.ts'), '// TODO: keep me\n');
+    execSync('git add . && git commit -q -m i', { cwd: r });
+    const cands = await discoverGitTodos(r);
+    const files = cands.map(c => (c.evidence as { file: string }).file);
+    expect(files.some(f => f.endsWith('foo.test.ts'))).toBe(false);
+    expect(files.some(f => f.endsWith('foo.ts'))).toBe(true);
+  });
+
+  it('excludes TODOs under docs/ subtree', async () => {
+    const r = mkdtempSync(join(tmpdir(), 'glean-git-docs-'));
+    execSync('git init -q', { cwd: r });
+    execSync('git config user.email t@t && git config user.name t', { cwd: r });
+    mkdirSync(join(r, 'docs'));
+    writeFileSync(join(r, 'docs', 'notes.txt'), 'TODO: ignore me\n');
+    writeFileSync(join(r, 'real.ts'), '// TODO: keep me\n');
+    execSync('git add . && git commit -q -m i', { cwd: r });
+    const cands = await discoverGitTodos(r);
+    const files = cands.map(c => (c.evidence as { file: string }).file);
+    expect(files.some(f => f.startsWith('docs/'))).toBe(false);
+    expect(files.some(f => f.endsWith('real.ts'))).toBe(true);
+  });
+});
