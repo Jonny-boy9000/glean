@@ -32,4 +32,19 @@ describe('discoverDeps', () => {
     expect(packages).toContain('zod');
     expect(packages).not.toContain('lodash'); // present at init, not newly added
   });
+
+  it('emits candidates from a manifest that was ADDED in the last 14 days (not modified)', async () => {
+    const r = mkdtempSync(join(tmpdir(), 'glean-deps-new-'));
+    execSync('git init -q', { cwd: r });
+    execSync('git config user.email t@t', { cwd: r });
+    execSync('git config user.name t', { cwd: r });
+    writeFileSync(join(r, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: r });
+    writeFileSync(join(r, 'package.json'), JSON.stringify({ dependencies: { lodash: '^4.0.0' } }, null, 2));
+    execSync('git add . && git commit -q -m "add package.json"', { cwd: r });
+
+    const cands = await discoverDeps(r);
+    const packages = cands.map(c => (c.evidence as { package: string }).package);
+    expect(packages).toContain('lodash');
+  });
 });

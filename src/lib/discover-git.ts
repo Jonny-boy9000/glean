@@ -9,6 +9,14 @@ export type GhOpts = {
   skipComments?: boolean;
 };
 
+const PATH_EXCLUDES = [
+  ':!node_modules', ':!dist', ':!build',
+  ':!*.md', ':!*.test.*',
+  ':!docs/**', ':!test/**', ':!**/fixtures/**',
+  ':!*.min.*', ':!*.generated.*',
+  ':!*-lock.*', ':!*.lock',
+];
+
 const MAX_HITS = 200;
 const TODO_RE = /^(.+?):(\d+):(.*)$/;
 
@@ -17,7 +25,7 @@ export async function discoverGitTodos(projectPath: string): Promise<Candidate[]
   try {
     stdout = execFileSync(
       'git',
-      ['-C', projectPath, 'grep', '-nE', '(TODO|FIXME|XXX|HACK)\\b', '--', ':!node_modules', ':!dist', ':!build'],
+      ['-C', projectPath, 'grep', '-nE', '(TODO|FIXME|XXX|HACK)\\b', '--', ...PATH_EXCLUDES],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     );
   } catch (e) {

@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 import type { Candidate, TaskResult } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
+import { extractLastAssistantText } from './jsonl-extract.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -71,18 +72,22 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   });
 
   let timedOut = false;
-  const timerPromise = new Promise<'timeout'>((resolve) => {
-    setTimeout(() => { timedOut = true; job.kill(); resolve('timeout'); }, ctx.taskTimeoutMs);
-  });
+  const timer = setTimeout(() => { timedOut = true; job.kill(); }, ctx.taskTimeoutMs);
 
-  const exitCode = await Promise.race([job.exit, timerPromise.then(() => -2)]);
+  let exitCode: number;
+  try {
+    exitCode = await job.exit;
+  } finally {
+    clearTimeout(timer);
+  }
+
   stderrStream.end();
   jsonlStream.end();
 
   const elapsed_ms = Date.now() - start;
 
   if (rateLimited) return { status: 'rate-limit', elapsed_ms };
-  if (timedOut || exitCode === -2) return { status: 'timeout', elapsed_ms };
+  if (timedOut) return { status: 'timeout', elapsed_ms };
   if (exitCode !== 0) {
     const tail = tailLines(readFileSync(stderrPath, 'utf8'), 50);
     return { status: 'failed', elapsed_ms, stderr_tail: tail };
@@ -146,7 +151,12 @@ function titleFor(c: Candidate): string {
 }
 
 function slugify(c: Candidate): string {
-  return titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  const base = titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  if (c.evidence.kind === 'todo') {
+    const line = c.evidence.todo_lines[0]?.line ?? 0;
+    return `${base}-L${line}`;
+  }
+  return base;
 }
 
 function projectSlug(p: string): string {
@@ -189,18 +199,4 @@ function resolveSpawn(bin: string, args: string[]): [string, string[]] {
     }
   }
   return [bin, args];
-}
-
-function extractLastAssistantText(jsonlPath: string): string {
-  try {
-    const content = readFileSync(jsonlPath, 'utf8').split(/\r?\n/).reverse();
-    for (const ln of content) {
-      try {
-        const o = JSON.parse(ln);
-        const text = o?.message?.content?.[0]?.text ?? o?.delta?.text;
-        if (typeof text === 'string' && text.length > 0) return text;
-      } catch { /* skip */ }
-    }
-  } catch { /* file missing */ }
-  return '_(no output produced)_';
 }

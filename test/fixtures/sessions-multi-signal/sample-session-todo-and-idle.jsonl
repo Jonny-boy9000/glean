@@ -1,0 +1,13 @@
+{"type":"user","timestamp":"2026-04-01T10:00:00Z","cwd":"C:\\fake-project","content":"start"}
+{"type":"assistant","timestamp":"2026-04-01T10:00:30Z","cwd":"C:\\fake-project","content":"turn 1"}
+{"type":"assistant","timestamp":"2026-04-01T10:01:00Z","cwd":"C:\\fake-project","content":"turn 2"}
+{"type":"assistant","timestamp":"2026-04-01T10:02:00Z","cwd":"C:\\fake-project","content":"turn 3"}
+{"type":"assistant","timestamp":"2026-04-01T10:03:00Z","cwd":"C:\\fake-project","content":"turn 4"}
+{"type":"assistant","timestamp":"2026-04-01T10:04:00Z","cwd":"C:\\fake-project","content":"turn 5"}
+{"type":"assistant","timestamp":"2026-04-01T10:05:00Z","cwd":"C:\\fake-project","content":"turn 6"}
+{"type":"assistant","timestamp":"2026-04-01T10:06:00Z","cwd":"C:\\fake-project","content":"turn 7"}
+{"type":"assistant","timestamp":"2026-04-01T10:07:00Z","cwd":"C:\\fake-project","content":"turn 8"}
+{"type":"assistant","timestamp":"2026-04-01T10:08:00Z","cwd":"C:\\fake-project","content":"turn 9"}
+{"type":"assistant","timestamp":"2026-04-01T10:09:00Z","cwd":"C:\\fake-project","content":"turn 10"}
+{"type":"assistant","timestamp":"2026-04-01T10:10:00Z","cwd":"C:\\fake-project","content":"turn 11"}
+{"type":"ai-title","sessionId":"sess-todo-idle","aiTitle":"TODO: refactor auth module"}

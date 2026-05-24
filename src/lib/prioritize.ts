@@ -5,6 +5,16 @@ const TYPE_WEIGHT: Record<Candidate['type'], number> = {
   'fetch-docs': 0.2,
 };
 
+const SOFT_NOISE_PATTERNS = [
+  /vendor\//, /third_party\//, /\.config\./, /\.lock$/,
+];
+
+function pathPenalty(c: Candidate): number {
+  if (c.evidence.kind !== 'todo') return 1.0;
+  const todoEvidence = c.evidence as { kind: 'todo'; file: string };
+  return SOFT_NOISE_PATTERNS.some((re) => re.test(todoEvidence.file)) ? 0.7 : 1.0;
+}
+
 export function scoreValue(c: Candidate, hints: { fileMtime?: number } = {}): number {
   if (c.type === 'fetch-docs') return 30;
   switch (c.evidence.kind) {
@@ -35,6 +45,8 @@ export function prioritize(candidates: Candidate[], budgetMs: number, elapsedMs:
   //  a 30-minute budget because remaining ≈ budgetMs at run start.)
   const onlyDocs = remaining < 5 * 60_000;
   const eligible = onlyDocs ? candidates.filter((c) => c.type === 'fetch-docs') : [...candidates];
+
+  for (const c of eligible) c.est_value = Math.round(c.est_value * pathPenalty(c));
 
   eligible.sort((a, b) => score(b) - score(a));
   eligible.forEach((c, i) => (c.rank = i + 1));

@@ -6,9 +6,11 @@ import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 
 describe('verification 8: job-object child-tree cleanup', () => {
-  // This test verifies that when the orchestrator is force-killed, its fake-claude child
-  // process is also killed (via Windows Job Object or SIGKILL propagation on POSIX).
-  // Inherently platform-specific and somewhat heuristic — marked skip if unreliable.
+  // SKIPPED: integration assertion of "no orphan node.exe with fake-claude in command line" is
+  // inherently heuristic and unreliable across machines. See `src/lib/jobobject.test.ts`'s
+  // "calls taskkill /T /F with the child pid" unit test for the real coverage. Spec §10 row 8
+  // manual verification: kill a `glean run` process, then check Task Manager for orphaned
+  // fake-claude.cmd processes — none should remain.
   it.skip(
     'child processes die when orchestrator is force-killed (skipped: heuristic process-listing is unreliable in CI; see spec §10 row 8 for manual verification)',
     async () => {

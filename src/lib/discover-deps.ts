@@ -17,7 +17,7 @@ export async function discoverDeps(projectPath: string): Promise<Candidate[]> {
     try {
       diff = execFileSync(
         'git',
-        ['-C', projectPath, 'log', '-p', '--since=14.days', '--diff-filter=M', '--', m],
+        ['-C', projectPath, 'log', '-p', '--since=14.days', '--diff-filter=AM', '--', m],
         { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
       );
     } catch {
