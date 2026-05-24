@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverGitTodos } from './discover-git.js';
+import { discoverGitTodos, discoverGitPrs } from './discover-git.js';
 
 let repo: string;
 
@@ -31,5 +31,25 @@ describe('discoverGitTodos', () => {
   it('returns empty array on non-git directory', async () => {
     const noGit = mkdtempSync(join(tmpdir(), 'glean-nogit-'));
     expect(await discoverGitTodos(noGit)).toEqual([]);
+  });
+});
+
+describe('discoverGitPrs', () => {
+  it('returns [] when gh binary path returns auth-failure exit code', async () => {
+    const cands = await discoverGitPrs(repo, { ghBin: 'node', ghArgs: ['-e', 'process.exit(1)'] });
+    expect(cands).toEqual([]);
+  });
+
+  it('parses gh pr list JSON', async () => {
+    const json = JSON.stringify([
+      { number: 7, title: 'My PR', url: 'https://example/7', updatedAt: '2026-05-20T00:00:00Z' },
+    ]);
+    const cands = await discoverGitPrs(repo, {
+      ghBin: 'node',
+      ghArgs: ['-e', `console.log(${JSON.stringify(json)})`],
+      skipComments: true,
+    });
+    expect(cands.length).toBe(1);
+    expect((cands[0].evidence as any).number).toBe(7);
   });
 });
