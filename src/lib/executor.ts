@@ -16,6 +16,14 @@ export type ExecCtx = {
   templatesDir: string;
   taskTimeoutMs: number;
   env?: NodeJS.ProcessEnv;
+  recordOutcome?: (status: TaskResult['status'], fields: {
+    dossier_path?: string;
+    started_at?: number;
+    ended_at?: number;
+    duration_ms?: number;
+    bytes_written?: number;
+    stderr_rate_limit_hits?: number;
+  }) => void;
 };
 
 export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
@@ -84,13 +92,38 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   stderrStream.end();
   jsonlStream.end();
 
-  const elapsed_ms = Date.now() - start;
+  const startedAt = start;
+  const endedAt = Date.now();
+  const elapsed_ms = endedAt - startedAt;
 
-  if (rateLimited) return { status: 'rate-limit', elapsed_ms };
-  if (timedOut) return { status: 'timeout', elapsed_ms };
+  const finalize = (status: TaskResult['status'], output_path: string | undefined, stderr_tail: string[] | undefined): TaskResult => {
+    let bytes_written: number | undefined;
+    if (output_path) {
+      try { bytes_written = readFileSync(output_path).length; } catch { /* ignore */ }
+    }
+    try {
+      ctx.recordOutcome?.(status, {
+        dossier_path: output_path,
+        started_at: startedAt,
+        ended_at: endedAt,
+        duration_ms: elapsed_ms,
+        bytes_written,
+        stderr_rate_limit_hits: rateLimited ? 1 : 0,
+      });
+    } catch (e) {
+      process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`);
+    }
+    const result: TaskResult = { status, elapsed_ms };
+    if (output_path) result.output_path = output_path;
+    if (stderr_tail) result.stderr_tail = stderr_tail;
+    return result;
+  };
+
+  if (rateLimited) return finalize('rate-limit', undefined, undefined);
+  if (timedOut) return finalize('timeout', undefined, undefined);
   if (exitCode !== 0) {
     const tail = tailLines(readFileSync(stderrPath, 'utf8'), 50);
-    return { status: 'failed', elapsed_ms, stderr_tail: tail };
+    return finalize('failed', undefined, tail);
   }
 
   // Look for output
@@ -100,15 +133,15 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
     if (bytes < 50) {
       const fallback = extractLastAssistantText(jsonlPath);
       writeFileSync(outPath, fallback);
-      return { status: 'ok-fallback', elapsed_ms, output_path: outPath };
+      return finalize('ok-fallback', outPath, undefined);
     }
-    return { status: 'ok', elapsed_ms, output_path: outPath };
+    return finalize('ok', outPath, undefined);
   }
   // No output at all — fallback
   const fallback = extractLastAssistantText(jsonlPath);
   const fallbackPath = join(workDir, 'OUT.md');
   writeFileSync(fallbackPath, fallback);
-  return { status: 'ok-fallback', elapsed_ms, output_path: fallbackPath };
+  return finalize('ok-fallback', fallbackPath, undefined);
 }
 
 const SAFETY_FOOTER = '\n\nspeculative — produce a draft, never push, write findings to `OUT.md` in the current working directory.\n';
