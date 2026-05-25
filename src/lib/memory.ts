@@ -115,6 +115,73 @@ export class Memory {
     ).run(Date.now(), exitReason, runId);
   }
 
+  recordCandidate(
+    runId: string,
+    c: {
+      candidate_slug: string;
+      candidate_type: 'research-dossier' | 'fetch-docs';
+      title: string;
+      source_signal: 'jsonl' | 'git-todo' | 'gh-pr' | 'deps';
+      file_path: string | null;
+      est_value: number;
+      est_tokens: number;
+      priority_rank: number;
+    },
+  ): number {
+    const fingerprint = fingerprintCandidate({
+      project_path: this.projectPathFor(runId),
+      candidate_type: c.candidate_type,
+      file_path: c.file_path,
+      title: c.title,
+    });
+    const info = this.db.prepare(
+      `INSERT INTO candidates
+         (run_id, candidate_slug, fingerprint, candidate_type, title, source_signal,
+          file_path, est_value, est_tokens, priority_rank)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runId, c.candidate_slug, fingerprint, c.candidate_type, c.title, c.source_signal,
+      c.file_path, c.est_value, c.est_tokens, c.priority_rank,
+    );
+    return Number(info.lastInsertRowid);
+  }
+
+  recordOutcome(
+    candidateId: number,
+    outcome: string,
+    fields: {
+      dossier_path?: string;
+      started_at?: number;
+      ended_at?: number;
+      duration_ms?: number;
+      bytes_written?: number;
+      stderr_rate_limit_hits?: number;
+    } = {},
+  ): void {
+    this.db.prepare(
+      `UPDATE candidates
+         SET outcome = ?, dossier_path = ?, started_at = ?, ended_at = ?,
+             duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?
+       WHERE id = ?`,
+    ).run(
+      outcome,
+      fields.dossier_path ?? null,
+      fields.started_at ?? null,
+      fields.ended_at ?? null,
+      fields.duration_ms ?? null,
+      fields.bytes_written ?? null,
+      fields.stderr_rate_limit_hits ?? 0,
+      candidateId,
+    );
+  }
+
+  private projectPathFor(runId: string): string {
+    const row = this.db.prepare('SELECT project_path FROM runs WHERE run_id = ?').get(runId) as
+      { project_path: string } | undefined;
+    if (!row) throw new Error(`memory: unknown run_id ${runId}`);
+    return row.project_path;
+  }
+
   close(): void {
     this.db.close();
   }

@@ -141,3 +141,73 @@ describe('Memory run lifecycle', () => {
     m.close();
   });
 });
+
+describe('Memory candidate lifecycle', () => {
+  it('records a candidate row, returns its integer id, and updates on outcome', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-1', {
+      project_path: 'C:\\Glean',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.2.0',
+    });
+    const candidateId = m.recordCandidate('run-1', {
+      candidate_slug: 'c-1',
+      candidate_type: 'research-dossier',
+      title: 'Handle TODO in src/foo.ts',
+      source_signal: 'git-todo',
+      file_path: 'src/foo.ts',
+      est_value: 0.8,
+      est_tokens: 1200,
+      priority_rank: 0,
+    });
+    expect(typeof candidateId).toBe('number');
+    expect(candidateId).toBeGreaterThan(0);
+
+    const row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
+    expect(row.run_id).toBe('run-1');
+    expect(row.candidate_slug).toBe('c-1');
+    expect(row.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.candidate_type).toBe('research-dossier');
+    expect(row.outcome).toBeNull();
+
+    m.recordOutcome(candidateId, 'ok', {
+      dossier_path: 'C:\\foo\\OUT.md',
+      started_at: 1_700_000_000_000,
+      ended_at: 1_700_000_120_000,
+      duration_ms: 120_000,
+      bytes_written: 4096,
+      stderr_rate_limit_hits: 0,
+    });
+    const after = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
+    expect(after.outcome).toBe('ok');
+    expect(after.dossier_path).toBe('C:\\foo\\OUT.md');
+    expect(after.duration_ms).toBe(120_000);
+    expect(after.bytes_written).toBe(4096);
+    m.close();
+  });
+
+  it('accepts a candidate with null file_path', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-2', {
+      project_path: 'C:\\Glean',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.2.0',
+    });
+    const id = m.recordCandidate('run-2', {
+      candidate_slug: 'c-2',
+      candidate_type: 'fetch-docs',
+      title: 'Pre-fetch docs for lodash',
+      source_signal: 'deps',
+      file_path: null,
+      est_value: 0.3,
+      est_tokens: 600,
+      priority_rank: 1,
+    });
+    expect(id).toBeGreaterThan(0);
+    m.close();
+  });
+});
