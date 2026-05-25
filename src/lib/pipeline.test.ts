@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,5 +59,49 @@ describe('runPipeline', () => {
     expect(summary.ran).toBe(0);
     const candPath = join(root, 'state', summary.run_id, 'candidates.json');
     expect(existsSync(candPath)).toBe(true);
+  });
+
+  it('writes a runs row and candidates rows to memory.db', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-pipe-mem-'));
+    execSync('git init -q', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: x\n');
+    execSync('git add . && git commit -q -m i', { cwd: repo });
+
+    const home = mkdtempSync(join(tmpdir(), 'glean-pipe-mem-home-'));
+    mkdirSync(join(home, 'glean'), { recursive: true });
+    const gleanRoot = join(home, 'glean');
+    const fakeClaude = process.platform === 'win32'
+      ? join(process.cwd(), 'test', 'fixtures', 'fake-claude.cmd')
+      : join(process.cwd(), 'test', 'fixtures', 'fake-claude.sh');
+
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot,
+      claudeBin: fakeClaude,
+      claudeEnv: {
+        ...process.env,
+        FAKE_CLAUDE_SCENARIO: join(process.cwd(), 'test', 'fixtures', 'scenarios', 'clean-exit.yaml'),
+      } as NodeJS.ProcessEnv,
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 60_000,
+      dryRun: false,
+      templatesDir: join(process.cwd(), 'templates'),
+    });
+
+    const { default: Database } = await import('better-sqlite3');
+    const db = new Database(join(gleanRoot, 'memory.db'), { readonly: true });
+    const runs = db.prepare('SELECT * FROM runs').all() as Array<Record<string, unknown>>;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].run_id).toBe(summary.run_id);
+    expect(runs[0].project_path).toBe(repo);
+    expect(runs[0].exit_reason).toBe(summary.reason);
+    expect(runs[0].ended_at).not.toBeNull();
+
+    const candidates = db.prepare('SELECT * FROM candidates ORDER BY priority_rank').all() as Array<Record<string, unknown>>;
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(candidates.every((c) => c.outcome !== null)).toBe(true);
+    db.close();
   });
 });

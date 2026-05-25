@@ -2,8 +2,8 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-25 (post-v0.1.2; second-pass critique review promoted 3 items to Tracked backlog)
-**Current release:** [v0.1.2](https://github.com/Jonny-boy9000/glean/releases/tag/v0.1.2) (commit `0c77f25`)
+**Last updated:** 2026-05-25 (post-v0.2.0; memory substrate shipped)
+**Current release:** [v0.2.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.2.0) (commit `<TBD>`)
 **Branch state:** `main` clean, no in-progress patch
 
 ---
@@ -16,22 +16,14 @@
 
 ## Up next (recommended priority order)
 
-### 1. Persistent memory substrate
-
-**Status:** spec'd in critique, not yet brainstormed for design.
-**Source:** Third-party strategic critique reviewed during v0.1.2 brainstorm. Surfaced in [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
-**Why now:** This is the one strategic shift from the critique that I judged worth doing soon, not later. Retrofitting memory into a stateless system is much harder than starting with it. Every `glean run` today rebuilds context from scratch and discards everything; the lack of accumulated "what does this user keep vs. discard" data prevents any future learning loop.
-**Scope sketch:** ~150 LOC. SQLite store (single file under `%USERPROFILE%\glean\memory.db`). Schema records candidate → outcome (ran/skipped/repaired/dossier-size + token estimates). Pure substrate — no UX change.
-**Doesn't include:** Inbox UI, recommendation, trust gradient, RLHF-on-attention — those build on this foundation but are separate.
-
-### 2. POSIX port (macOS / Linux support)
+### 1. POSIX port (macOS / Linux support)
 
 **Status:** [GitHub issue #1](https://github.com/Jonny-boy9000/glean/issues/1) open, implementation outline filed.
 **Source:** [`docs/superpowers/specs/2026-05-23-glean-mvp-design.md`](./superpowers/specs/2026-05-23-glean-mvp-design.md) §2 (Windows-first decision) — `glean.md` §10 also constrains this.
 **Why:** Unblocks the largest audience segment for any real OSS adoption. Most of the implementation is ~80% path-separator cleanup; the hard part is making `jobobject.ts` POSIX child-tree-kill work via `detached: true` + `process.kill(-pid)`.
 **Scope sketch:** ~200–400 LOC. See the issue body for the file-by-file breakdown.
 
-### 3. File this roadmap's tracked items as GitHub Issues
+### 2. File this roadmap's tracked items as GitHub Issues
 
 **Status:** new (added 2026-05-25).
 **Why:** Right now ROADMAP.md is the only place these items are tracked. For outside contributors and discoverability, each substantive item should be a real GitHub issue with labels (`enhancement`, `bug`, `help wanted`, etc.) and prose context. Issues also let people +1, comment, and signal demand.
@@ -96,6 +88,7 @@ A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 o
 
 ## Done (most recent first — for context only)
 
+- **v0.2.0** (2026-05-25, tag `v0.2.0`) — persistent memory substrate. SQLite-backed run/candidate history at `%USERPROFILE%\glean\memory.db`. Pure infrastructure: no CLI surface, no behavior change. Enables three future learning loops (suppress duds, rank by realized value, adapt budgets). See [v0.2.0 spec](./superpowers/specs/2026-05-25-glean-memory-substrate-design.md), [v0.2.0 plan](./superpowers/plans/2026-05-25-glean-memory-substrate.md).
 - **v0.1.2** (2026-05-25, tag `v0.1.2`) — `discover-deps` parser rewrite using full-file parsing at git boundaries with section-aware scoping. Fixed 32-spurious-candidate regression from v0.1.1 dogfood. See [v0.1.2 spec](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md), [v0.1.2 dogfood report](./open-work/05-v012-dogfood.md).
 - **v0.1.1** (2026-05-24, tag `v0.1.1`) — quality patch: scanner noise filter, multi-signal JSONL discovery, `glean repair`, `--task-timeout`, executor cleanups (slug/timer/sentinel). 10 dogfood fixes. See [v0.1.1 spec](./superpowers/specs/2026-05-24-glean-v011-quality-patch-design.md), [v0.1.1 dogfood report](./open-work/04-v011-dogfood.md).
 - **v0.1.0-mvp** (2026-05-23, tag `v0.1.0-mvp`) — initial MVP. Research-dossier + fetch-docs discovery and execution against a single Windows project. 58 tests, 1178 LOC. See [MVP spec](./superpowers/specs/2026-05-23-glean-mvp-design.md), [MVP dogfood report](./open-work/03-dogfood-results.md).

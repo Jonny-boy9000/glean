@@ -48,6 +48,7 @@ export type Candidate = {
   est_tokens: number;
   rank?: number;
   status: CandidateStatus;
+  candidate_row_id?: number;
 };
 
 export type RunReason =

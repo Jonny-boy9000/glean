@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { v4 as uuid } from 'uuid';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
 import type { Candidate, RunSummary, RunReason } from './types.js';
@@ -11,6 +12,15 @@ import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
 import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir } from './state.js';
 import { repairRecent } from './repair.js';
+import { Memory } from './memory.js';
+
+function gleanVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch { return 'unknown'; }
+}
 
 export type PipelineOpts = {
   projectPath: string;
@@ -43,6 +53,20 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     return summary;
   }
   if (lock.recovered) appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'lock.stale_recovered' });
+
+  let memory: Memory | null = null;
+  try {
+    memory = new Memory(join(opts.gleanRoot, 'memory.db'));
+    memory.recordRun(runId, {
+      project_path: opts.projectPath,
+      budget_seconds: Math.round(opts.budgetMs / 1000),
+      max_parallel: 1,
+      glean_version: gleanVersion(),
+    });
+  } catch (e) {
+    process.stderr.write(`[memory] warning: open/recordRun failed: ${(e as Error).message}\n`);
+    memory = null;
+  }
 
   const repairResult = repairRecent(opts.gleanRoot);
   if (repairResult.repaired.length > 0) {
@@ -80,6 +104,28 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: ranked.length });
 
     writeCandidatesJson(opts.gleanRoot, runId, { ranked, skipped_dedup: skipped });
+
+    if (memory) {
+      for (let i = 0; i < ranked.length; i++) {
+        const c = ranked[i];
+        try {
+          const rowId = memory.recordCandidate(runId, {
+            candidate_slug: c.id,
+            candidate_type: c.type,
+            title: titleFor(c),
+            source_signal: sourceSignalFor(c),
+            file_path: filePathFor(c),
+            est_value: c.est_value,
+            est_tokens: c.est_tokens,
+            priority_rank: i,
+          });
+          c.candidate_row_id = rowId;
+        } catch (e) {
+          process.stderr.write(`[memory] warning: recordCandidate failed: ${(e as Error).message}\n`);
+        }
+      }
+    }
+
     if (opts.dryRun) {
       reason = ranked.length === 0 ? 'no-candidates' : 'completed';
       return finalize();
@@ -105,6 +151,12 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         templatesDir: opts.templatesDir,
         taskTimeoutMs: opts.taskTimeoutMs,
         env: opts.claudeEnv,
+        recordOutcome: memory && c.candidate_row_id !== undefined
+          ? ((status, fields) => {
+              try { memory!.recordOutcome(c.candidate_row_id!, status, fields); }
+              catch (e) { process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`); }
+            })
+          : undefined,
       });
       appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.end', task_id: c.id, status: result.status, elapsed_ms: result.elapsed_ms });
 
@@ -122,6 +174,14 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
 
     return finalize();
   } finally {
+    if (memory) {
+      try {
+        memory.endRun(runId, reason);
+      } catch (e) {
+        process.stderr.write(`[memory] warning: endRun failed: ${(e as Error).message}\n`);
+      }
+      try { memory.close(); } catch { /* ignore */ }
+    }
     releaseLock(opts.gleanRoot);
   }
 
@@ -188,5 +248,23 @@ function titleFor(c: Candidate): string {
     case 'jsonl': return c.evidence.ai_title;
     case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
     case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
+  }
+}
+
+function sourceSignalFor(c: Candidate): 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' {
+  switch (c.evidence.kind) {
+    case 'jsonl': return 'jsonl';
+    case 'todo': return 'git-todo';
+    case 'pr': return 'gh-pr';
+    case 'dep': return 'deps';
+  }
+}
+
+function filePathFor(c: Candidate): string | null {
+  switch (c.evidence.kind) {
+    case 'todo': return c.evidence.file;
+    case 'jsonl': return null;
+    case 'pr': return null;
+    case 'dep': return c.evidence.manifest;
   }
 }

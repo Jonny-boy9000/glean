@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,5 +113,51 @@ describe('executeOne', () => {
     } finally {
       clearSpy.mockRestore();
     }
+  });
+
+  it('invokes recordOutcome callback exactly once with the final status and fields', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-exec-cb-'));
+    execSync('git init -q', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: x\n');
+    execSync('git add . && git commit -q -m i', { cwd: repo });
+
+    const home = mkdtempSync(join(tmpdir(), 'glean-exec-home-'));
+    mkdirSync(join(home, 'glean', 'templates'), { recursive: true });
+    copyFileSync(
+      join(process.cwd(), 'templates', 'research-dossier.md'),
+      join(home, 'glean', 'templates', 'research-dossier.md'),
+    );
+
+    const calls: Array<{ status: string; fields: Record<string, unknown> }> = [];
+    const candidate: Candidate = {
+      id: 'c-1',
+      evidence_hash: 'h1',
+      type: 'research-dossier',
+      project_path: repo,
+      evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: x' }] },
+      est_value: 0.5,
+      est_tokens: 500,
+      status: 'pending',
+    };
+    const fakeClaude = process.platform === 'win32'
+      ? join(process.cwd(), 'test', 'fixtures', 'fake-claude.cmd')
+      : join(process.cwd(), 'test', 'fixtures', 'fake-claude.sh');
+    const result = await executeOne(candidate, {
+      runId: 'r-1',
+      gleanRoot: join(home, 'glean'),
+      claudeBin: fakeClaude,
+      templatesDir: join(process.cwd(), 'templates'),
+      taskTimeoutMs: 60_000,
+      env: {
+        ...process.env,
+        FAKE_CLAUDE_SCENARIO: join(process.cwd(), 'test', 'fixtures', 'scenarios', 'clean-exit.yaml'),
+      },
+      recordOutcome: (status, fields) => calls.push({ status, fields }),
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].status).toBe(result.status);
+    expect(calls[0].fields.duration_ms).toBe(result.elapsed_ms);
   });
 });
