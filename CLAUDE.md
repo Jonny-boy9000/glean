@@ -4,9 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Design complete, no code yet.** The repo currently contains only `glean.md` — the full design spec. There is no `bin/`, `lib/`, build system, or tests. First implementation work will scaffold the MVP described in `glean.md` §6.
+**v0.1.2 shipped** (tag `v0.1.2`, commit `0c77f25` on `main`). 81 tests passing + 1 documented skip. Public repo at https://github.com/Jonny-boy9000/glean.
 
-When asked to "build", "implement", or "start" something here, read `glean.md` end-to-end first. The spec is the source of truth; do not re-derive decisions Jonny has already made.
+The MVP and two quality patches are done. For "what's next" see **[`docs/ROADMAP.md`](./docs/ROADMAP.md)** — that's the single source of truth for planned work. Update it on every release.
+
+When asked to "build", "implement", or "continue" something:
+1. **Read `docs/ROADMAP.md` first** to see what's in the "Up next" queue and what's already been deferred indefinitely.
+2. Then read `glean.md` (the broader vision) and the relevant spec under `docs/superpowers/specs/` for context.
+3. Specs are the source of truth for *what* a release did; the roadmap is the source of truth for *what's coming*.
 
 ## What `glean` is
 
@@ -64,9 +69,18 @@ See `glean.md` §0. Summary:
 - **Base branch is explicit per-project** in `%USERPROFILE%\glean\config.json` (`project_path → base_branch`). No autodetection in MVP; missing entry → skip `draft-impl` for that project with a warning.
 - **Heuristic-only ranking for MVP.** `est_value` from discovery-evidence signal strength; `est_tokens` from template + excerpt size × 1.3. No upfront `claude -p` triage pass unless rankings prove bad post-MVP.
 
-## Files referenced in the spec but not yet created
+## Codebase layout (post-v0.1.2)
 
-`bin/glean` (Node CLI), `lib/discover-jsonl.ts`, `lib/discover-git.ts`, `lib/executor.ts`, `lib/prioritize.ts`, `templates/{draft-impl,draft-pr-reply,research-dossier,fetch-docs}.md`, `README.md`.
+All the files originally listed as "not yet created" now exist on `main`:
+
+- `bin/glean.js` — thin shim, dispatches to `dist/cli.js`
+- `src/cli.ts` — citty CLI with `run`/`stop`/`repair`/`version` subcommands
+- `src/lib/{types,config,state,render,dedup,prioritize,discover-jsonl,discover-git,discover-deps,jobobject,executor,jsonl-extract,repair,pipeline}.ts` — one responsibility per file
+- `templates/{research-dossier,fetch-docs}.md` — bundled prompt templates
+- `test/fixtures/` — fake-claude stub + JSONL session fixtures
+- `test/integration/v01-…v12-….test.ts` — verification-row integration tests
+
+The `draft-impl` and `draft-pr-reply` templates from the original spec list are NOT yet built — those land with the `draft-impl` sub-project (see ROADMAP.md "Deferred sub-projects").
 
 ## Verification checklist (§8)
 
