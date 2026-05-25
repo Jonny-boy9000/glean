@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0 — 2026-05-25
+
+Persistent memory substrate. Pure infrastructure release — no CLI surface, no behavior change to discovery/prioritization/execution.
+
+### Added
+- SQLite-backed run/candidate history store at `%USERPROFILE%\glean\memory.db`. Every `glean run` now records run metadata (project, budget, exit reason, timing) and per-candidate outcomes (rank, fingerprint, status, dossier size, duration).
+- New module `src/lib/memory.ts` exporting the `Memory` class and the `fingerprintCandidate` pure function. Stable cross-run identity via SHA-256 over project + type + file + normalized title.
+- Schema migration `v1` creates `runs` and `candidates` tables with indexes on `fingerprint`, `run_id`, and `started_at`. Designed for breadth: supports three future learning loops (suppress recurring duds, rank by realized value, adapt budgets/timeouts) without committing to any of them now.
+- `better-sqlite3` runtime dependency. Prebuilt Windows x64 + Node 20 binaries install cleanly via `npm install`.
+
+### Why
+Every `glean run` previously rebuilt context from scratch and discarded everything. The substrate must exist *before* any learning loop is built on top, because retrofitting memory after-the-fact requires re-running historical data that will have already been discarded.
+
+### Compatibility
+Non-breaking. Same CLI surface, same config schema. Existing runs continue to work; memory accumulation begins from `0.2.0` forward. If `memory.db` cannot be opened (locked, corrupt, permissions), a `[memory] warning:` is logged to stderr and the run continues normally — the engine never regresses on a memory failure. To wipe history, delete `%USERPROFILE%\glean\memory.db`.
+
+### Tests
+- Suite: 81 + 1 skip → 95 + 1 skip.
+- 10 new unit tests in `src/lib/memory.test.ts` cover fingerprint stability, schema migration, run lifecycle, and candidate lifecycle.
+- 1 new test in `src/lib/executor.test.ts` verifies the optional `recordOutcome` callback fires exactly once per task.
+- 1 new test in `src/lib/pipeline.test.ts` verifies end-to-end DB writes through `runPipeline`.
+- 1 new integration test `test/integration/v13-memory.test.ts` spawns the full CLI and asserts `runs`/`candidates` rows.
+- 1 new integration test `test/integration/v14-memory-failure.test.ts` verifies an unwritable `memory.db` produces a warning but does not break the run.
+
 ## v0.1.2 — 2026-05-25
 
 Single-issue quality patch from the v0.1.1 dogfood findings.
