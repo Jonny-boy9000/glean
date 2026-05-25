@@ -24,6 +24,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "citty": "^0.1.6",
     "fast-glob": "^3.3.2",
     "smol-toml": "^1.6.1",
@@ -32,6 +33,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
     "@types/uuid": "^9.0.7",
     "@typescript-eslint/eslint-plugin": "^6.18.0",
