@@ -87,6 +87,34 @@ export class Memory {
     }
   }
 
+  recordRun(
+    runId: string,
+    run: {
+      project_path: string;
+      budget_seconds: number;
+      max_parallel: number;
+      glean_version: string;
+    },
+  ): void {
+    this.db.prepare(
+      `INSERT INTO runs (run_id, started_at, project_path, budget_seconds, max_parallel, glean_version)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runId,
+      Date.now(),
+      run.project_path,
+      run.budget_seconds,
+      run.max_parallel,
+      run.glean_version,
+    );
+  }
+
+  endRun(runId: string, exitReason: string): void {
+    this.db.prepare(
+      'UPDATE runs SET ended_at = ?, exit_reason = ? WHERE run_id = ?',
+    ).run(Date.now(), exitReason, runId);
+  }
+
   close(): void {
     this.db.close();
   }

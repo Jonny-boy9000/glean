@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fingerprintCandidate } from './memory.js';
 import { Memory } from './memory.js';
+import type { RunReason } from './types.js';
 
 describe('fingerprintCandidate', () => {
   it('returns identical hash for identical input', () => {
@@ -112,5 +113,31 @@ describe('Memory open + migrate', () => {
       .db.pragma('user_version', { simple: true });
     expect(v).toBe(1);
     m2.close();
+  });
+});
+
+describe('Memory run lifecycle', () => {
+  it('records a run and updates ended_at + exit_reason on endRun', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('2026-05-25-1730-abc123', {
+      project_path: 'C:\\Glean',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.2.0',
+    });
+    const before = (m as unknown as { db: { prepare: (s: string) => { get: (k: string) => Record<string, unknown> } } })
+      .db.prepare('SELECT * FROM runs WHERE run_id = ?').get('2026-05-25-1730-abc123');
+    expect(before.project_path).toBe('C:\\Glean');
+    expect(before.budget_seconds).toBe(3600);
+    expect(before.ended_at).toBeNull();
+    expect(before.exit_reason).toBeNull();
+    expect(typeof before.started_at).toBe('number');
+
+    m.endRun('2026-05-25-1730-abc123', 'completed' as RunReason);
+    const after = (m as unknown as { db: { prepare: (s: string) => { get: (k: string) => Record<string, unknown> } } })
+      .db.prepare('SELECT * FROM runs WHERE run_id = ?').get('2026-05-25-1730-abc123');
+    expect(after.ended_at).not.toBeNull();
+    expect(after.exit_reason).toBe('completed');
+    m.close();
   });
 });
