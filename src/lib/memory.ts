@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import type { CandidateType } from './types.js';
 
 export interface FingerprintInput {
   project_path: string;
-  candidate_type: 'research-dossier' | 'fetch-docs';
+  candidate_type: CandidateType;
   file_path: string | null;
   title: string;
 }
