@@ -2,7 +2,7 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-25 (post-v0.1.2)
+**Last updated:** 2026-05-25 (post-v0.1.2; second-pass critique review promoted 3 items to Tracked backlog)
 **Current release:** [v0.1.2](https://github.com/Jonny-boy9000/glean/releases/tag/v0.1.2) (commit `0c77f25`)
 **Branch state:** `main` clean, no in-progress patch
 
@@ -64,6 +64,14 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 - **(Optional) Rename `docs/superpowers/` → `docs/specs/`** — the `superpowers` naming is internal jargon from how the project was built; for outsiders, `docs/specs/` and `docs/plans/` would be more legible. Coordinated rename across ~6 internal references. Critique #12 from the launch review.
 - **Verify GitHub Discussions is enabled** — README's CTA points at `https://github.com/Jonny-boy9000/glean/discussions` but Discussions is opt-in per-repo. Either toggle it on via Settings → Features, or change the CTA to issues-only. 2 min.
 
+### Smaller v0.2-shaped features (promoted 2026-05-25 from "Deferred indefinitely")
+
+A second-pass review of the third-party critique surfaced cheap-first-step versions of three items the original review dismissed wholesale. Each is roughly v0.2-scale: small, defensible, doesn't require any of the bigger product bets (web app, billing layer, OS hooks). Each needs its own brainstorm → spec → plan when prioritized.
+
+- **Output adapters: `glean today` + Notion/Slack/email** (~150 LOC) — addresses "folder is a bad consumption surface" without building a web app. `glean today` pretty-prints the latest INDEX.md inline in the terminal. Optional adapters mirror the same content to a Notion page, Slack channel, or email. Engine unchanged; just adds output surfaces beyond the local folder. (Cheap first step toward what the critique called "inbox UI.")
+- **API-key fallback when Pro/Max rate-limits** (~75 LOC) — adds an `ANTHROPIC_API_KEY` env-var path so glean keeps going when the subscription window closes. Doesn't change the subscription-arbitrage story; just extends the runway for users who happen to have both. Today, a single rate-limit signal halts the entire run; with fallback, longer overnight runs become possible. (Cheap first step toward what the critique called "blended capacity.")
+- **`draft-pr-reply` candidate type** (~200 LOC) — adds a third candidate type alongside `research-dossier` and `fetch-docs`. Was in the original MVP spec §7 template list but cut from scope. Drafts replies to unresolved PR review comments discovered via `gh api`. Pure code addition — no audience pivot required, but creates the *option* to pivot toward PR-heavy users (OSS maintainers, engineering managers) if signal emerges. (Cheap first step toward what the critique called "broader audience.")
+
 ### Needs user action (can't be automated from inside a session)
 
 - **Demo media for README** — screenshot of a rendered `INDEX.md` and a ~20s terminal GIF of `glean run --dry-run`. README has `<!-- TODO -->` placeholders marking exactly where they go. The single biggest lever for landing-page conversion.
@@ -76,11 +84,13 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 
 These are valid long-term product directions identified in the v0.1.2 brainstorm's third-party critique review, but premature for current evidence. Revisit only when (a) the engine has proven product-market fit in its current shape, OR (b) real users ask for them. Documented in [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
 
-- **Inbox UI / web+mobile surface** — Re-theorization 1 from the critique. Folder-of-markdown is currently the consumption surface; a triaged inbox would be better UX for non-devs but is a 10x scope expansion.
-- **Event-driven triggers** — laptop lid close, calendar event ended, PR webhook, etc. Replaces scheduled+manual triggering. All require deep OS/OAuth/webhook integration.
-- **Blended capacity** — user API key + session-driven Pro/Max + included pool, opaque to user. 5x the auth/billing/fallback complexity for a benefit users mostly don't care about until pricing matters.
-- **Trust gradient (read-only → approve → autonomous)** — phased autonomy progression. Requires the persistent memory substrate as a foundation first. Re-theorization 2 from the critique.
-- **Solo-dev wedge → broader audience pivot** — engineering managers, OSS maintainers, founders, researchers as wider markets. Premature until the dev wedge itself is validated beyond one user.
+A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 of these 5 items — see "Smaller v0.2-shaped features" above. The full-scale versions below remain deferred.
+
+- **Inbox UI / web+mobile surface** — Re-theorization 1 from the critique. Folder-of-markdown is currently the consumption surface; a triaged inbox would be better UX for non-devs but is a 10x scope expansion. *Cheaper first step now in Tracked: `glean today` + Notion/Slack/email output adapters.*
+- **Event-driven triggers** — laptop lid close, calendar event ended, PR webhook, etc. Replaces scheduled+manual triggering. All require deep OS/OAuth/webhook integration. *Already partially covered by the **Scheduling** item in Deferred sub-projects above; event-driven is the upgrade of scheduling, not a parallel concern. Do scheduling first.*
+- **Blended capacity** — user API key + session-driven Pro/Max + included pool, opaque to user. 5x the auth/billing/fallback complexity for a benefit users mostly don't care about until pricing matters. *Cheaper first step now in Tracked: API-key fallback when Pro/Max rate-limits.*
+- **Trust gradient (read-only → approve → autonomous)** — phased autonomy progression. Re-theorization 2 from the critique. *Not a standalone deliverable: emerges naturally from the persistent memory substrate (Up Next #1) plus `draft-impl` (Tracked sub-project) once both ship. The trust gradient is how you'd USE those two foundations together, not a separate thing to build.*
+- **Solo-dev wedge → broader audience pivot** — engineering managers, OSS maintainers, founders, researchers as wider markets. Premature until the dev wedge itself is validated beyond one user. *Cheaper first step now in Tracked: `draft-pr-reply` candidate type — creates the option to pivot toward PR-heavy users without committing to the pivot itself.*
 
 ---
 
