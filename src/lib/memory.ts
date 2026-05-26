@@ -252,6 +252,42 @@ export class Memory {
     }>;
   }
 
+  findEnrichmentsBySlugs(slugs: string[]): Map<string, {
+    duration_ms: number | null;
+    bytes_written: number | null;
+    stderr_rate_limit_hits: number;
+    user_rating: 'kept' | 'discarded' | 'actioned' | null;
+  }> {
+    if (slugs.length === 0) return new Map();
+    const placeholders = slugs.map(() => '?').join(',');
+    const rows = this.db.prepare(
+      `SELECT candidate_slug, duration_ms, bytes_written, stderr_rate_limit_hits, user_rating
+         FROM candidates
+        WHERE candidate_slug IN (${placeholders})`,
+    ).all(...slugs) as Array<{
+      candidate_slug: string;
+      duration_ms: number | null;
+      bytes_written: number | null;
+      stderr_rate_limit_hits: number;
+      user_rating: 'kept' | 'discarded' | 'actioned' | null;
+    }>;
+    const m = new Map<string, {
+      duration_ms: number | null;
+      bytes_written: number | null;
+      stderr_rate_limit_hits: number;
+      user_rating: 'kept' | 'discarded' | 'actioned' | null;
+    }>();
+    for (const r of rows) {
+      m.set(r.candidate_slug, {
+        duration_ms: r.duration_ms,
+        bytes_written: r.bytes_written,
+        stderr_rate_limit_hits: r.stderr_rate_limit_hits,
+        user_rating: r.user_rating,
+      });
+    }
+    return m;
+  }
+
   private projectPathFor(runId: string): string {
     const row = this.db.prepare('SELECT project_path FROM runs WHERE run_id = ?').get(runId) as
       { project_path: string } | undefined;

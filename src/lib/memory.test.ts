@@ -517,3 +517,71 @@ describe('Memory migration v3', () => {
     m.close();
   });
 });
+
+describe('Memory enrichment lookup', () => {
+  function seed(m: Memory, runId: string, slug: string, fields: { duration_ms?: number; bytes_written?: number; rate_limit_hits?: number; user_rating?: 'kept' | 'discarded' | 'actioned' | null }): number {
+    m.recordRun(runId, {
+      project_path: 'C:\\proj',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.5.0',
+    });
+    const id = m.recordCandidate(runId, {
+      candidate_slug: slug,
+      candidate_type: 'research-dossier',
+      title: slug,
+      source_signal: 'git-todo',
+      file_path: 'a.ts',
+      est_value: 0.5,
+      est_tokens: 500,
+      priority_rank: 0,
+    });
+    (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare('UPDATE candidates SET outcome=?, dossier_path=?, ended_at=?, duration_ms=?, bytes_written=?, stderr_rate_limit_hits=?, user_rating=? WHERE id=?')
+      .run(
+        'ok', 'OUT.md', Date.now(),
+        fields.duration_ms ?? null,
+        fields.bytes_written ?? null,
+        fields.rate_limit_hits ?? 0,
+        fields.user_rating ?? null,
+        id,
+      );
+    return id;
+  }
+
+  it('returns matching rows in a Map keyed by slug', () => {
+    const m = new Memory(':memory:');
+    seed(m, 'run-e1', 'slug-a', { duration_ms: 120_000, bytes_written: 4096, user_rating: 'kept' });
+    seed(m, 'run-e2', 'slug-b', { rate_limit_hits: 3 });
+    seed(m, 'run-e3', 'slug-c', {});
+
+    const got = m.findEnrichmentsBySlugs(['slug-a', 'slug-b', 'slug-c']);
+    expect(got.size).toBe(3);
+    expect(got.get('slug-a')).toEqual({
+      duration_ms: 120_000,
+      bytes_written: 4096,
+      stderr_rate_limit_hits: 0,
+      user_rating: 'kept',
+    });
+    expect(got.get('slug-b')).toEqual({
+      duration_ms: null,
+      bytes_written: null,
+      stderr_rate_limit_hits: 3,
+      user_rating: null,
+    });
+    expect(got.get('slug-c')).toEqual({
+      duration_ms: null,
+      bytes_written: null,
+      stderr_rate_limit_hits: 0,
+      user_rating: null,
+    });
+    m.close();
+  });
+
+  it('returns empty Map for no matches and for empty input', () => {
+    const m = new Memory(':memory:');
+    expect(m.findEnrichmentsBySlugs(['bogus']).size).toBe(0);
+    expect(m.findEnrichmentsBySlugs([]).size).toBe(0);
+    m.close();
+  });
+});
