@@ -91,14 +91,14 @@ describe('fingerprintCandidate', () => {
 });
 
 describe('Memory open + migrate', () => {
-  it('creates the schema on a fresh DB and sets user_version=1', () => {
+  it('creates the schema on a fresh DB and sets user_version=2', () => {
     const m = new Memory(':memory:');
     const rows = (m as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } })
       .db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
     expect(rows).toEqual([{ name: 'candidates' }, { name: 'runs' }]);
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(1);
+    expect(v).toBe(2);
     m.close();
   });
 
@@ -111,7 +111,7 @@ describe('Memory open + migrate', () => {
     const m2 = new Memory(path);
     const v = (m2 as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(1);
+    expect(v).toBe(2);
     m2.close();
   });
 });
@@ -208,6 +208,73 @@ describe('Memory candidate lifecycle', () => {
       priority_rank: 1,
     });
     expect(id).toBeGreaterThan(0);
+    m.close();
+  });
+});
+
+describe('Memory migration v2', () => {
+  it('creates the dossier_existed_at_7d column on a fresh DB and sets user_version=2', () => {
+    const m = new Memory(':memory:');
+    const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
+      .db.prepare("PRAGMA table_info('candidates')").all();
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('dossier_existed_at_7d');
+    const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
+      .db.pragma('user_version', { simple: true });
+    expect(v).toBe(2);
+    m.close();
+  });
+
+  it('migrates from v1 to v2 on an existing v1 DB', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-mig-v2-'));
+    const path = join(dir, 'memory.db');
+    // First open creates v2 (latest); to simulate "v1 DB", manually create v1 schema
+    // and downgrade user_version before the second open.
+    const Database = (await import('better-sqlite3')).default;
+    const raw = new Database(path);
+    raw.pragma('journal_mode = WAL');
+    raw.exec(`
+      CREATE TABLE runs (
+        run_id          TEXT PRIMARY KEY,
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        project_path    TEXT NOT NULL,
+        budget_seconds  INTEGER NOT NULL,
+        max_parallel    INTEGER NOT NULL,
+        exit_reason     TEXT,
+        glean_version   TEXT NOT NULL
+      );
+      CREATE TABLE candidates (
+        id                       INTEGER PRIMARY KEY,
+        run_id                   TEXT NOT NULL REFERENCES runs(run_id),
+        candidate_slug           TEXT NOT NULL,
+        fingerprint              TEXT NOT NULL,
+        candidate_type           TEXT NOT NULL,
+        title                    TEXT NOT NULL,
+        source_signal            TEXT NOT NULL,
+        file_path                TEXT,
+        est_value                REAL NOT NULL,
+        est_tokens               INTEGER NOT NULL,
+        priority_rank            INTEGER NOT NULL,
+        outcome                  TEXT,
+        dossier_path             TEXT,
+        started_at               INTEGER,
+        ended_at                 INTEGER,
+        duration_ms              INTEGER,
+        bytes_written            INTEGER,
+        stderr_rate_limit_hits   INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    raw.pragma('user_version = 1');
+    raw.close();
+
+    const m = new Memory(path);
+    const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
+      .db.prepare("PRAGMA table_info('candidates')").all();
+    expect(cols.map((c) => c.name)).toContain('dossier_existed_at_7d');
+    const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
+      .db.pragma('user_version', { simple: true });
+    expect(v).toBe(2);
     m.close();
   });
 });

@@ -85,6 +85,17 @@ export class Memory {
         throw e;
       }
     }
+    if (version < 2) {
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec('ALTER TABLE candidates ADD COLUMN dossier_existed_at_7d INTEGER');
+        this.db.pragma('user_version = 2');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   recordRun(
