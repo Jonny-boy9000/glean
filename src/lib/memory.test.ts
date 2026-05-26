@@ -91,14 +91,14 @@ describe('fingerprintCandidate', () => {
 });
 
 describe('Memory open + migrate', () => {
-  it('creates the schema on a fresh DB and sets user_version=1', () => {
+  it('creates the schema on a fresh DB and sets user_version=2', () => {
     const m = new Memory(':memory:');
     const rows = (m as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } })
       .db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
     expect(rows).toEqual([{ name: 'candidates' }, { name: 'runs' }]);
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(1);
+    expect(v).toBe(2);
     m.close();
   });
 
@@ -111,7 +111,7 @@ describe('Memory open + migrate', () => {
     const m2 = new Memory(path);
     const v = (m2 as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(1);
+    expect(v).toBe(2);
     m2.close();
   });
 });
@@ -208,6 +208,153 @@ describe('Memory candidate lifecycle', () => {
       priority_rank: 1,
     });
     expect(id).toBeGreaterThan(0);
+    m.close();
+  });
+});
+
+describe('Memory sweep helpers', () => {
+  it('findCandidatesNeedingSweep returns only eligible rows', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-sweep', {
+      project_path: 'C:\\proj',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.3.0',
+    });
+    const seed = (slug: string, opts: { outcome?: string; dossier_path?: string | null; ended_at?: number | null; existed?: number | null }) => {
+      const id = m.recordCandidate('run-sweep', {
+        candidate_slug: slug,
+        candidate_type: 'research-dossier',
+        title: slug,
+        source_signal: 'git-todo',
+        file_path: 'src/a.ts',
+        est_value: 0.5,
+        est_tokens: 500,
+        priority_rank: 0,
+      });
+      (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+        .db.prepare('UPDATE candidates SET outcome=?, dossier_path=?, ended_at=?, dossier_existed_at_7d=? WHERE id=?')
+        .run(opts.outcome ?? null, opts.dossier_path ?? null, opts.ended_at ?? null, opts.existed ?? null, id);
+      return id;
+    };
+
+    const now = Date.now();
+    const week = 7 * 86_400_000;
+    seed('no-outcome',   { ended_at: now - week - 1000 });
+    seed('no-dossier',   { outcome: 'failed', ended_at: now - week - 1000 });
+    seed('not-ended',    { outcome: 'ok', dossier_path: 'OUT.md', ended_at: null });
+    seed('too-recent',   { outcome: 'ok', dossier_path: 'OUT.md', ended_at: now });
+    seed('already-done', { outcome: 'ok', dossier_path: 'OUT.md', ended_at: now - week - 1000, existed: 1 });
+    const eligibleId = seed('eligible', { outcome: 'ok', dossier_path: 'OUT.md', ended_at: now - week - 1000 });
+
+    const found = m.findCandidatesNeedingSweep(now - week);
+    expect(found).toHaveLength(1);
+    expect(found[0].id).toBe(eligibleId);
+    expect(found[0].dossier_path).toBe('OUT.md');
+    m.close();
+  });
+
+  it('markDossierExists is write-once (NULL column accepts; non-NULL ignored)', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-mark', {
+      project_path: 'C:\\proj',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.3.0',
+    });
+    const id = m.recordCandidate('run-mark', {
+      candidate_slug: 'c',
+      candidate_type: 'research-dossier',
+      title: 'c',
+      source_signal: 'git-todo',
+      file_path: 'a.ts',
+      est_value: 0.5,
+      est_tokens: 500,
+      priority_rank: 0,
+    });
+    (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare('UPDATE candidates SET outcome=?, dossier_path=?, ended_at=? WHERE id=?')
+      .run('ok', 'OUT.md', Date.now() - 8 * 86_400_000, id);
+
+    m.markDossierExists(id, true);
+    let row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT dossier_existed_at_7d FROM candidates WHERE id=?').get(id);
+    expect(row.dossier_existed_at_7d).toBe(1);
+
+    m.markDossierExists(id, false);
+    row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT dossier_existed_at_7d FROM candidates WHERE id=?').get(id);
+    expect(row.dossier_existed_at_7d).toBe(1);
+
+    const found = m.findCandidatesNeedingSweep(Date.now());
+    expect(found.find((c) => c.id === id)).toBeUndefined();
+    m.close();
+  });
+});
+
+describe('Memory migration v2', () => {
+  it('creates the dossier_existed_at_7d column on a fresh DB and sets user_version=2', () => {
+    const m = new Memory(':memory:');
+    const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
+      .db.prepare("PRAGMA table_info('candidates')").all();
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('dossier_existed_at_7d');
+    const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
+      .db.pragma('user_version', { simple: true });
+    expect(v).toBe(2);
+    m.close();
+  });
+
+  it('migrates from v1 to v2 on an existing v1 DB', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-mig-v2-'));
+    const path = join(dir, 'memory.db');
+    // First open creates v2 (latest); to simulate "v1 DB", manually create v1 schema
+    // and downgrade user_version before the second open.
+    const Database = (await import('better-sqlite3')).default;
+    const raw = new Database(path);
+    raw.pragma('journal_mode = WAL');
+    raw.exec(`
+      CREATE TABLE runs (
+        run_id          TEXT PRIMARY KEY,
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        project_path    TEXT NOT NULL,
+        budget_seconds  INTEGER NOT NULL,
+        max_parallel    INTEGER NOT NULL,
+        exit_reason     TEXT,
+        glean_version   TEXT NOT NULL
+      );
+      CREATE TABLE candidates (
+        id                       INTEGER PRIMARY KEY,
+        run_id                   TEXT NOT NULL REFERENCES runs(run_id),
+        candidate_slug           TEXT NOT NULL,
+        fingerprint              TEXT NOT NULL,
+        candidate_type           TEXT NOT NULL,
+        title                    TEXT NOT NULL,
+        source_signal            TEXT NOT NULL,
+        file_path                TEXT,
+        est_value                REAL NOT NULL,
+        est_tokens               INTEGER NOT NULL,
+        priority_rank            INTEGER NOT NULL,
+        outcome                  TEXT,
+        dossier_path             TEXT,
+        started_at               INTEGER,
+        ended_at                 INTEGER,
+        duration_ms              INTEGER,
+        bytes_written            INTEGER,
+        stderr_rate_limit_hits   INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    raw.pragma('user_version = 1');
+    raw.close();
+
+    const m = new Memory(path);
+    const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
+      .db.prepare("PRAGMA table_info('candidates')").all();
+    expect(cols.map((c) => c.name)).toContain('dossier_existed_at_7d');
+    const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
+      .db.pragma('user_version', { simple: true });
+    expect(v).toBe(2);
     m.close();
   });
 });

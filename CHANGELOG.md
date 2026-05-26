@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.0 — 2026-05-26
+
+Passive usefulness telemetry — first step in closing the dossier-quality feedback loop.
+
+### Added
+- Dossier-existence sweep. Every `glean run` now starts with a pass over historical `candidates` rows (7+ days old, `dossier_path` set). For each, `existsSync` checks whether the dossier file is still on disk and writes the result to a new `dossier_existed_at_7d` column. Captures the implicit kept-vs-discarded signal with zero user action.
+- Schema migration `v2` (auto-applied on first open): `ALTER TABLE candidates ADD COLUMN dossier_existed_at_7d INTEGER`.
+- New module `src/lib/sweep.ts` exporting `runDossierExistenceSweep` and `SWEEP_AGE_MS`.
+- Two new `Memory` methods: `findCandidatesNeedingSweep(beforeMs)` and `markDossierExists(candidateId, exists)` (write-once guarded).
+- Sweep results logged to the existing orchestrator log via `appendOrchestratorLog({evt: 'sweep.done', checked, kept, discarded})`.
+
+### Why
+The engine has accumulated run history since v0.2.0 but has no measure of whether the dossiers it produces are actually useful. This release captures the cheapest possible signal — does the file still exist 7 days later — without asking anything of the user. Pairs with the forthcoming `glean rate` (Up next #1) for explicit ratings, and `glean today` enriched with memory.db (Up next #2) to surface both signals back.
+
+### Compatibility
+Non-breaking. Same CLI surface, same config schema. Schema migration is automatic and idempotent on first open. Sweep failures emit `[memory] warning: sweep failed: ...` to stderr and do not affect the run. Pre-v0.3.0 candidate rows that have already passed the 7-day mark stay `NULL` forever — no retroactive sweep. To wipe sweep data only (keep substrate): `sqlite3 %USERPROFILE%\glean\memory.db "UPDATE candidates SET dossier_existed_at_7d = NULL"`.
+
+### Tests
+- Suite: 105 + 1 skip → 115 + 1 skip.
+- 4 new tests in `src/lib/memory.test.ts` covering migration v2 and the two new methods.
+- 6 new tests in `src/lib/sweep.test.ts` covering the orchestrator (empty, kept, discarded, too-recent, already-swept, existsSync-throws).
+
 ## v0.2.1 — 2026-05-26
 
 Read-only terminal view for daily dossiers.

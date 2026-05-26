@@ -85,6 +85,17 @@ export class Memory {
         throw e;
       }
     }
+    if (version < 2) {
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec('ALTER TABLE candidates ADD COLUMN dossier_existed_at_7d INTEGER');
+        this.db.pragma('user_version = 2');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   recordRun(
@@ -173,6 +184,27 @@ export class Memory {
       fields.stderr_rate_limit_hits ?? 0,
       candidateId,
     );
+  }
+
+  findCandidatesNeedingSweep(beforeMs: number): Array<{ id: number; dossier_path: string }> {
+    return this.db.prepare(
+      `SELECT id, dossier_path
+         FROM candidates
+        WHERE outcome IS NOT NULL
+          AND dossier_path IS NOT NULL
+          AND ended_at IS NOT NULL
+          AND ended_at < ?
+          AND dossier_existed_at_7d IS NULL`,
+    ).all(beforeMs) as Array<{ id: number; dossier_path: string }>;
+  }
+
+  markDossierExists(candidateId: number, exists: boolean): void {
+    this.db.prepare(
+      `UPDATE candidates
+          SET dossier_existed_at_7d = ?
+        WHERE id = ?
+          AND dossier_existed_at_7d IS NULL`,
+    ).run(exists ? 1 : 0, candidateId);
   }
 
   private projectPathFor(runId: string): string {
