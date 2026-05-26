@@ -13,6 +13,7 @@ import { executeOne } from './executor.js';
 import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir } from './state.js';
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
+import { runDossierExistenceSweep, SWEEP_AGE_MS } from './sweep.js';
 
 function gleanVersion(): string {
   try {
@@ -66,6 +67,20 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
   } catch (e) {
     process.stderr.write(`[memory] warning: open/recordRun failed: ${(e as Error).message}\n`);
     memory = null;
+  }
+
+  if (memory) {
+    try {
+      const sweep = runDossierExistenceSweep(memory, Date.now(), SWEEP_AGE_MS);
+      appendOrchestratorLog(opts.gleanRoot, runId, {
+        evt: 'sweep.done',
+        checked: sweep.checked,
+        kept: sweep.kept,
+        discarded: sweep.discarded,
+      });
+    } catch (e) {
+      process.stderr.write(`[memory] warning: sweep failed: ${(e as Error).message}\n`);
+    }
   }
 
   const repairResult = repairRecent(opts.gleanRoot);
