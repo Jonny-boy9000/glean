@@ -2,8 +2,8 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-26 (post-v0.2.1; strategic re-prioritization toward usefulness telemetry)
-**Current release:** [v0.2.1](https://github.com/Jonny-boy9000/glean/releases/tag/v0.2.1) (commit `b9c9915`)
+**Last updated:** 2026-05-26 (post-v0.3.0; dossier-existence sweep shipped)
+**Current release:** [v0.3.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.3.0) (commit `<TBD>`)
 **Branch state:** `main` clean, no in-progress patch
 
 ---
@@ -16,37 +16,30 @@
 
 ## Up next (recommended priority order)
 
-> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. Items 1–3 close that gap with telemetry; items 4–5 are the highest-leverage forward-momentum items that benefit from telemetry already being in place. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
+> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. The passive half of that gap shipped in v0.3.0 (dossier-existence sweep). Items 1–2 close the active half (explicit ratings + surfacing telemetry back via `glean today`). Item 3 is the highest-leverage forward-momentum item that benefits from telemetry already being in place. Item 4 is engine durability. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
 
-### 1. Dossier-existence sweep (passive usefulness telemetry)
-
-**Status:** new (added 2026-05-26, post-analysis).
-**Source:** Strategic analysis 2026-05-26 — answers the existential question with zero friction.
-**Why:** Every `glean run` learns nothing about whether past dossiers were useful. A 7-day sweep that checks `dossier_path` existence captures the implicit "kept vs. discarded" signal automatically. If you `rm -rf` a dossier, that's discarded. If it's still there 7 days later, it's at least tolerated. This is the cheapest possible signal — requires zero user action.
-**Scope sketch:** ~75 LOC. Schema migration v2 adds `dossier_existed_at_7d` column. New sweep function runs at start of `pipeline.ts` before discovery. Zero new user surface.
-
-### 2. `glean rate` — active usefulness telemetry
+### 1. `glean rate` — active usefulness telemetry
 
 **Status:** new (added 2026-05-26, post-analysis).
 **Source:** Strategic analysis 2026-05-26 — the deliberate half of the feedback loop.
 **Why:** Passive existence is a noisy signal (might keep a dossier you never opened). An explicit `glean rate <run-id|fingerprint> <kept|discarded|actioned>` takes 5 seconds per dossier you bother to rate and gives ground truth for the eventual ranker.
 **Scope sketch:** ~100 LOC. Schema migration v3 adds `user_rating` column. New CLI subcommand. `glean today` annotates previously-rated dossiers so you don't re-rate what you already judged.
 
-### 3. `glean today` enriched with memory.db
+### 2. `glean today` enriched with memory.db
 
 **Status:** new (added 2026-05-26, post-analysis).
 **Source:** Strategic analysis 2026-05-26 — surfaces telemetry data in the human-facing view.
 **Why:** Items 1 + 2 accumulate data; without surfacing it back to you, the loop never closes. `glean today` is the natural place — it already runs daily. JOIN against memory.db so each entry shows duration, rate-limit hits, bytes written, user rating, and the 7-day existence flag. Suspicious-looking dossiers (tiny bytes, repeated discards) get flagged.
 **Scope sketch:** ~50 LOC delta in `today.ts` + `render-today.ts`. Read-only memory.db consumer.
 
-### 4. `glean peek` + SessionStart hook integration
+### 3. `glean peek` + SessionStart hook integration
 
 **Status:** new (added 2026-05-26, post-analysis). Previously listed under "Deferred sub-projects."
 **Source:** Strategic analysis 2026-05-26 — the highest-leverage missing piece for actually USING dossiers.
-**Why:** The compound-memory-across-sessions usage (dossiers as artifacts of prior thinking that next Claude session can `cat`) requires that the dossier actually lands in the next session's context. `glean peek` is a CWD-scoped variant of `glean today` that auto-detects the current repo, prints the relevant INDEX, exits silently when there's nothing. A one-line Claude Code SessionStart hook config calls `glean peek` and the dossier is loaded into every new session automatically. **Deliberately fourth, not first:** without telemetry first, you'd auto-print dossiers you don't even know are useful.
+**Why:** The compound-memory-across-sessions usage (dossiers as artifacts of prior thinking that next Claude session can `cat`) requires that the dossier actually lands in the next session's context. `glean peek` is a CWD-scoped variant of `glean today` that auto-detects the current repo, prints the relevant INDEX, exits silently when there's nothing. A one-line Claude Code SessionStart hook config calls `glean peek` and the dossier is loaded into every new session automatically. **Deliberately third, not first:** without telemetry first, you'd auto-print dossiers you don't even know are useful.
 **Scope sketch:** ~50 LOC. Pure addition: new subcommand reusing the existing `today.ts` + `render-today.ts` modules.
 
-### 5. API-key fallback when Pro/Max rate-limits
+### 4. API-key fallback when Pro/Max rate-limits
 
 **Status:** promoted from "Smaller v0.2-shaped features" to Up next 2026-05-26.
 **Source:** [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
@@ -80,7 +73,7 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 
 ### Distribution prep (deferred until telemetry validates the core)
 
-These items unblock outside adoption but provide no signal about whether the engine is worth adopting. Deliberately deferred 2026-05-26 in favor of usefulness telemetry (Up next #1–3). Revisit once telemetry shows dossiers are being kept/actioned more often than discarded.
+These items unblock outside adoption but provide no signal about whether the engine is worth adopting. Deliberately deferred 2026-05-26 in favor of usefulness telemetry (the v0.3.0 sweep + Up next #1–2). Revisit once telemetry shows dossiers are being kept/actioned more often than discarded.
 
 - **POSIX port (macOS / Linux support)** — was Up next #1 until 2026-05-26. Implementation outline in [GitHub issue #1](https://github.com/Jonny-boy9000/glean/issues/1). ~200–400 LOC, mostly path-separator cleanup; hard part is `jobobject.ts` POSIX child-tree-kill via `detached: true` + `process.kill(-pid)`. Source: [`docs/superpowers/specs/2026-05-23-glean-mvp-design.md`](./superpowers/specs/2026-05-23-glean-mvp-design.md) §2.
 - **File this roadmap's tracked items as GitHub Issues** — was Up next #2 until 2026-05-26. ~1 hour. One issue per substantive Tracked item (~12 issues). Use `mcp__plugin_github_github__issue_write` or `gh issue create`. Adoption-shaped, not dogfood-shaped.
@@ -89,7 +82,7 @@ These items unblock outside adoption but provide no signal about whether the eng
 
 A second-pass review of the third-party critique surfaced cheap-first-step versions of three items the original review dismissed wholesale. Each is roughly v0.2-scale: small, defensible, doesn't require any of the bigger product bets (web app, billing layer, OS hooks). Each needs its own brainstorm → spec → plan when prioritized.
 
-- **Output adapters: Notion/Slack/email mirrors** (~100 LOC remaining) — the terminal slice (`glean today`) shipped in v0.2.1. What remains: optional adapters that mirror the same content to a Notion page, Slack channel, or email. Each adds OAuth + network surface — only worth doing once `glean today` proves useful in dogfood (telemetry from Up next #1–3 will tell). (Cheap first step toward what the critique called "inbox UI.")
+- **Output adapters: Notion/Slack/email mirrors** (~100 LOC remaining) — the terminal slice (`glean today`) shipped in v0.2.1. What remains: optional adapters that mirror the same content to a Notion page, Slack channel, or email. Each adds OAuth + network surface — only worth doing once `glean today` proves useful in dogfood (the v0.3.0 sweep + the forthcoming `glean rate` will tell). (Cheap first step toward what the critique called "inbox UI.")
 - **`draft-pr-reply` candidate type** (~200 LOC) — adds a third candidate type alongside `research-dossier` and `fetch-docs`. Was in the original MVP spec §7 template list but cut from scope. Drafts replies to unresolved PR review comments discovered via `gh api`. Pure code addition — no audience pivot required, but creates the *option* to pivot toward PR-heavy users (OSS maintainers, engineering managers) if signal emerges. (Cheap first step toward what the critique called "broader audience.")
 
 *(API-key fallback was promoted from this section to Up next #5 on 2026-05-26.)*
@@ -118,6 +111,7 @@ A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 o
 
 ## Done (most recent first — for context only)
 
+- **v0.3.0** (2026-05-26, tag `v0.3.0`) — dossier-existence sweep. Passive usefulness telemetry: every `glean run` checks whether candidate dossiers from 7+ days ago still exist on disk, writes the result to a new `dossier_existed_at_7d` column in `memory.db`. Schema migration v2. No CLI surface, no engine behavior change. First step in answering the strategic analysis's existential question about dossier usefulness. See [v0.3.0 spec](./superpowers/specs/2026-05-26-glean-dossier-sweep-design.md), [v0.3.0 plan](./superpowers/plans/2026-05-26-glean-dossier-sweep.md).
 - **v0.2.1** (2026-05-26, tag `v0.2.1`) — `glean today` terminal subcommand. Scans `~/glean/dossiers/*/<today>/INDEX.md` and prints a grouped, ANSI-colored report to stdout. Read-only, no engine changes. Ships the terminal slice of "Output adapters" — Notion/Slack/email mirrors remain deferred. See [v0.2.1 spec](./superpowers/specs/2026-05-25-glean-today-design.md), [v0.2.1 plan](./superpowers/plans/2026-05-26-glean-today.md).
 - **v0.2.0** (2026-05-25, tag `v0.2.0`) — persistent memory substrate. SQLite-backed run/candidate history at `%USERPROFILE%\glean\memory.db`. Pure infrastructure: no CLI surface, no behavior change. Enables three future learning loops (suppress duds, rank by realized value, adapt budgets). See [v0.2.0 spec](./superpowers/specs/2026-05-25-glean-memory-substrate-design.md), [v0.2.0 plan](./superpowers/plans/2026-05-25-glean-memory-substrate.md).
 - **v0.1.2** (2026-05-25, tag `v0.1.2`) — `discover-deps` parser rewrite using full-file parsing at git boundaries with section-aware scoping. Fixed 32-spurious-candidate regression from v0.1.1 dogfood. See [v0.1.2 spec](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md), [v0.1.2 dogfood report](./open-work/05-v012-dogfood.md).
