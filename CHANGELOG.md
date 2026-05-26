@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.0 — 2026-05-26
+
+Active usefulness telemetry. Closes the active half of the dossier-quality feedback loop, complementing v0.3.0's passive sweep.
+
+### Added
+- `glean rate <id> <kept|discarded|actioned>` subcommand. Writes an explicit user verdict to a new `user_rating` column in `memory.db`. Ratings are mutable — re-rating overwrites the previous value, and `user_rating_at` tracks the latest write.
+- `glean rate --list` flag. Prints the last 20 ratable dossiers (settled candidates with dossier paths) so the user can find what to rate. ANSI-colored when interactive, plain when piped.
+- Schema migration `v3` (auto-applied on first open): adds `user_rating TEXT` and `user_rating_at INTEGER` columns to `candidates`.
+- New module `src/lib/rate.ts` exporting the pure `renderRateList` formatter.
+- Two new `Memory` methods: `setUserRating(candidateId, rating)` and `listRecentRatableCandidates(limit)`.
+
+### Why
+The v0.3.0 sweep captures a passive signal — "did the dossier file still exist after 7 days." That's slow (7-day latency) and noisy (you might keep files you never opened). `glean rate` adds the explicit, immediate ground truth. The two telemetry types are complementary: passive = default behavior, active = deliberate verdict. The eventual ranker will combine both.
+
+### Compatibility
+Non-breaking. Same CLI surface plus one new subcommand. Schema migration is automatic and idempotent on first open. Ratings are mutable; the latest rating wins, previous values are not retained. To wipe ratings only: `sqlite3 %USERPROFILE%\glean\memory.db "UPDATE candidates SET user_rating = NULL, user_rating_at = NULL"`.
+
+### Tests
+- Suite: 115 + 1 skip → 126 + 1 skip.
+- 6 new tests in `src/lib/memory.test.ts` (migration v3 fresh + v2→v3 upgrade, setUserRating success + failure, re-rating, listRecentRatableCandidates filtering/ordering).
+- 3 new tests in `src/lib/rate.test.ts` (empty, plain, color).
+- 2 new tests in `test/integration/v16-rate.test.ts` (round-trip, invalid verdict exits 1).
+
 ## v0.3.0 — 2026-05-26
 
 Passive usefulness telemetry — first step in closing the dossier-quality feedback loop.

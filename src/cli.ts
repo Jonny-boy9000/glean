@@ -7,6 +7,8 @@ import { findTodayDossiers } from './lib/today.js';
 import { renderToday } from './lib/render-today.js';
 import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
+import { Memory } from './lib/memory.js';
+import { renderRateList } from './lib/rate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -92,9 +94,52 @@ const todayCmd = defineCommand({
   },
 });
 
+const rateCmd = defineCommand({
+  meta: { name: 'rate', description: 'Rate a dossier (kept/discarded/actioned), or --list recent dossiers' },
+  args: {
+    list:    { type: 'boolean',    default: false, description: 'Print recent ratable dossiers' },
+    id:      { type: 'positional', required: false, description: 'Candidate id to rate' },
+    verdict: { type: 'positional', required: false, description: 'kept | discarded | actioned' },
+  },
+  async run({ args }) {
+    const memory = new Memory(join(gleanRoot(), 'memory.db'));
+    try {
+      if (args.list) {
+        const rows = memory.listRecentRatableCandidates(20);
+        const useColor = Boolean(process.stdout.isTTY);
+        process.stdout.write(renderRateList(rows, useColor) + '\n');
+        return;
+      }
+      const idStr = args.id as string | undefined;
+      const verdict = args.verdict as string | undefined;
+      if (!idStr || !verdict) {
+        process.stderr.write('usage: glean rate <id> <kept|discarded|actioned>\n       glean rate --list\n');
+        process.exit(1);
+      }
+      const id = Number(idStr);
+      if (!Number.isInteger(id) || id <= 0) {
+        process.stderr.write(`error: invalid id '${idStr}'\n`);
+        process.exit(1);
+      }
+      if (verdict !== 'kept' && verdict !== 'discarded' && verdict !== 'actioned') {
+        process.stderr.write(`error: unknown verdict '${verdict}' — use one of: kept, discarded, actioned\n`);
+        process.exit(1);
+      }
+      const result = memory.setUserRating(id, verdict);
+      if (!result.updated) {
+        process.stderr.write(`error: no candidate with id ${id}\n`);
+        process.exit(1);
+      }
+      process.stdout.write(`rated ${id} (${result.title}) as ${verdict}\n`);
+    } finally {
+      memory.close();
+    }
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd },
 });
 
 export function main(argv: string[]): void {
