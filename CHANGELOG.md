@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.5.0 — 2026-05-26
+
+`glean today` enriched with telemetry from `memory.db`. Closes the feedback loop: v0.3.0's passive sweep and v0.4.0's active ratings now become visible at the same place the user looks every day.
+
+### Added
+- Optional third line per entry in `glean today` output. Surfaces: duration (e.g. `12m`), output bytes (e.g. `4.2KB`), rate-limit hits (only when > 0, e.g. `1 rate-limit hit`), and user rating (e.g. `rated: kept` / `rated: discarded`). Bullet-separated, dim by default, with green/red color for the rating segment.
+- New `Memory.findEnrichmentsBySlugs(slugs)` method — single batched lookup keyed by candidate slug.
+- `task_id` is now preserved on `IndexEntry` (from the existing INDEX.md frontmatter). Used as the join key with memory.db.
+
+### Why
+Until this release, the data from v0.3.0 (dossier-existence sweep) and v0.4.0 (`glean rate`) accumulated silently in `memory.db` with no daily-rhythm surface. `glean today` now shows what the engine knows about each dossier without changing the existing two-line layout — the third line only appears when there's something to show.
+
+### Compatibility
+Non-breaking. Same CLI surface, same exit codes, same empty-case message. Silent degradation when `memory.db` is missing or unreadable — entries render as in v0.2.1 with no warning. Failed/no-output entries get no enrichment line (timing without context is misleading). The `dossier_existed_at_7d` column is still populated by the v0.3.0 sweep but is NOT shown in this release — it's always NULL for today's brand-new entries; a future historical-viewer subproject will surface it for past dates.
+
+INDEX.md entries without a `task_id` field are now silently skipped at parse time. In practice every entry written since v0.1.0-mvp has had `task_id` — this is a defensive guard against corrupt files.
+
+### Tests
+- Suite: 126 + 1 skip → 136 + 1 skip.
+- 2 new tests in `src/lib/memory.test.ts` (`findEnrichmentsBySlugs` matching and empty-input).
+- 4 new tests in `src/lib/today.test.ts` (task_id preservation × 2; enrichment merge × 2).
+- 4 new tests in `src/lib/render-today.test.ts` (enrichment line plain × 2; color × 1; no-output exclusion × 1).
+- Existing `test/integration/v15-today.test.ts` extended to seed memory.db and assert the enrichment line.
+
 ## v0.4.0 — 2026-05-26
 
 Active usefulness telemetry. Closes the active half of the dossier-quality feedback loop, complementing v0.3.0's passive sweep.

@@ -67,3 +67,88 @@ describe('renderToday', () => {
     expect(s).not.toContain('C:\\Users\\u\\glean\\dossiers');
   });
 });
+
+describe('renderToday enrichment line', () => {
+  it('appends a third line with duration, bytes, and rating (plain mode)', () => {
+    const r: TodayReport = {
+      date: '2026-05-26',
+      projects: [{
+        project_slug: 'glean',
+        entries: [{
+          title: 'Handle TODO',
+          status: 'ok',
+          output: 'C:\\u\\glean\\dossiers\\g\\OUT.md',
+          type: 'research-dossier',
+          task_id: 't1',
+          duration_ms: 720_000,    // 12m
+          bytes_written: 4300,     // 4.2KB
+          user_rating: 'kept',
+        }],
+      }],
+    };
+    const s = renderToday(r, false);
+    expect(s).toContain('12m');
+    expect(s).toContain('4.2KB');
+    expect(s).toContain('rated: kept');
+    expect(s).toMatch(/12m\s*·\s*4\.2KB\s*·\s*rated: kept/);
+  });
+
+  it('omits the enrichment line when no fields apply', () => {
+    const r: TodayReport = {
+      date: '2026-05-26',
+      projects: [{
+        project_slug: 'glean',
+        entries: [{
+          title: 'No data',
+          status: 'ok',
+          output: 'OUT.md',
+          type: 'research-dossier',
+          task_id: 't2',
+        }],
+      }],
+    };
+    const s = renderToday(r, false);
+    expect(s).not.toContain('·');
+    expect(s).not.toContain('rated:');
+  });
+
+  it('emits red ANSI for a discarded rating in color mode', () => {
+    const r: TodayReport = {
+      date: '2026-05-26',
+      projects: [{
+        project_slug: 'glean',
+        entries: [{
+          title: 'Bad',
+          status: 'ok',
+          output: 'OUT.md',
+          type: 'research-dossier',
+          task_id: 't3',
+          duration_ms: 30_000,
+          user_rating: 'discarded',
+        }],
+      }],
+    };
+    const s = renderToday(r, true);
+    expect(s).toMatch(/\x1b\[31m.*rated: discarded.*\x1b\[0m/);
+  });
+
+  it('omits enrichment line for failed entries with no output', () => {
+    const r: TodayReport = {
+      date: '2026-05-26',
+      projects: [{
+        project_slug: 'glean',
+        entries: [{
+          title: 'Bad task',
+          status: 'failed',
+          output: '',
+          type: 'research-dossier',
+          task_id: 't4',
+          duration_ms: 30_000,
+        }],
+      }],
+    };
+    const s = renderToday(r, false);
+    expect(s).toContain('(no output)');
+    expect(s).not.toMatch(/30s|30\s*·/);
+  });
+});
