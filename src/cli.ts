@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { runPipeline } from './lib/pipeline.js';
+import { findTodayDossiers } from './lib/today.js';
+import { renderToday } from './lib/render-today.js';
 import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
 
@@ -81,9 +83,18 @@ const repairCmd = defineCommand({
   },
 });
 
+const todayCmd = defineCommand({
+  meta: { name: 'today', description: 'Show today\'s glean dossiers across all projects' },
+  async run() {
+    const report = findTodayDossiers(gleanRoot());
+    const useColor = Boolean(process.stdout.isTTY);
+    process.stdout.write(renderToday(report, useColor) + '\n');
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd },
 });
 
 export function main(argv: string[]): void {

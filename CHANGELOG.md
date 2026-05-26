@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.1 — 2026-05-26
+
+Read-only terminal view for daily dossiers.
+
+### Added
+- `glean today` subcommand. Scans `~/glean/dossiers/*/<today>/INDEX.md` across all projects, parses each YAML frontmatter, and prints a grouped report to stdout. ANSI-colored when interactive (`process.stdout.isTTY`), plain when piped or redirected. No flags in this release.
+- New modules `src/lib/today.ts` (scanner — returns a structured `TodayReport`) and `src/lib/render-today.ts` (formatter — takes report + `useColor`, returns the string to print). Pure, side-effect-free, fully unit-tested.
+
+### Why
+The previous consumption surface was "open `~/glean/dossiers/<project>/<date>/INDEX.md` in an editor." `glean today` collapses that to a single command. This is the terminal slice of the broader "Output adapters" Tracked item; the Notion / Slack / email mirrors remain deferred.
+
+### Compatibility
+Non-breaking. Same CLI surface plus one new subcommand. No engine changes — `pipeline.ts`, `executor.ts`, discovery modules, and `memory.db` are untouched. Empty-case (`No glean dossiers for <date>.`) exits 0.
+
+### Tests
+- Suite: 95 + 1 skip → 105 + 1 skip.
+- 4 new scanner unit tests in `src/lib/today.test.ts`.
+- 4 new formatter unit tests in `src/lib/render-today.test.ts`.
+- 2 new CLI integration tests in `test/integration/v15-today.test.ts`.
+
 ## v0.2.0 — 2026-05-25
 
 Persistent memory substrate. Pure infrastructure release — no CLI surface, no behavior change to discovery/prioritization/execution.
