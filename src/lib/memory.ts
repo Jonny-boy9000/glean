@@ -96,6 +96,18 @@ export class Memory {
         throw e;
       }
     }
+    if (version < 3) {
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating TEXT');
+        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating_at INTEGER');
+        this.db.pragma('user_version = 3');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   recordRun(
