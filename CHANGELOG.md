@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.6.0 — 2026-05-26
+
+`glean peek` subcommand plus a SessionStart hook recipe — closes the compound-memory-across-sessions loop.
+
+### Added
+- `glean peek` subcommand. CWD-scoped variant of `glean today`. Walks up from the current directory to find the enclosing git repo, slugs the root, and prints just that project's today-dossier using the existing renderer. Silent exit (0) when nothing applies — no `.git`, no matching dossier, any error: all degrade to empty stdout + exit 0.
+- New module `src/lib/peek.ts` exporting `findGitRoot(start)` and `findPeekDossier(gleanRoot, cwd)`.
+- `projectSlug` helper extracted from inline copies in `pipeline.ts` and `executor.ts` to a single shared export in `src/lib/state.ts`. No behavior change.
+
+### SessionStart hook recipe
+Add this to `~/.claude/settings.json` (or merge into your existing `hooks` object):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "glean peek" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Whenever you start a new Claude Code session inside a repo with a recent dossier, the hook runs `glean peek` and the dossier lands in the session's initial context. No dossier = empty output = no injection.
+
+### Why
+v0.5.0 made telemetry visible via `glean today`. v0.6.0 closes the dossier-as-compound-memory loop: every new Claude session in a repo with a recent dossier starts pre-loaded with that context. The user no longer has to remember to `cat` an INDEX file.
+
+### Compatibility
+Non-breaking. Same CLI surface plus one new subcommand. No schema change, no engine change. The `projectSlug` refactor is behaviorally identical (both inline copies were byte-identical). Peek's exit-0-silent contract is unconditional — any error in walk-up, scan, or render produces empty stdout, never a hook failure.
+
+### Tests
+- Suite: 136 + 1 skip → 143 + 1 skip.
+- 4 new tests in `src/lib/peek.test.ts` (findGitRoot walk-up × 2, findPeekDossier match + no-match).
+- 3 new tests in `test/integration/v17-peek.test.ts` (in-repo with dossier, no .git, no matching dossier).
+
 ## v0.5.0 — 2026-05-26
 
 `glean today` enriched with telemetry from `memory.db`. Closes the feedback loop: v0.3.0's passive sweep and v0.4.0's active ratings now become visible at the same place the user looks every day.

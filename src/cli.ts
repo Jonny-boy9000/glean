@@ -9,6 +9,7 @@ import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
 import { Memory } from './lib/memory.js';
 import { renderRateList } from './lib/rate.js';
+import { findPeekDossier } from './lib/peek.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -137,9 +138,26 @@ const rateCmd = defineCommand({
   },
 });
 
+const peekCmd = defineCommand({
+  meta: {
+    name: 'peek',
+    description: 'Print the current repo\'s today-dossier (CWD-scoped variant of `glean today`). Silent when nothing applies. Designed for SessionStart hook use.',
+  },
+  async run() {
+    try {
+      const report = findPeekDossier(gleanRoot(), process.cwd());
+      if (report === null) return;  // exit 0, no output
+      const useColor = Boolean(process.stdout.isTTY);
+      process.stdout.write(renderToday(report, useColor) + '\n');
+    } catch {
+      // Silent: exit 0 no matter what. Hook commands must never break a session.
+    }
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd },
 });
 
 export function main(argv: string[]): void {

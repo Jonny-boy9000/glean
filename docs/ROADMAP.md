@@ -2,8 +2,8 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-26 (post-v0.5.0; `glean today` enriched shipped)
-**Current release:** [v0.5.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.5.0) (commit `94502b4`)
+**Last updated:** 2026-05-26 (post-v0.6.0; `glean peek` + SessionStart hook shipped)
+**Current release:** [v0.6.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.6.0) (commit `<TBD>`)
 **Branch state:** `main` clean, no in-progress patch
 
 ---
@@ -16,16 +16,9 @@
 
 ## Up next (recommended priority order)
 
-> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. Both halves of the telemetry pair shipped (v0.3.0 passive sweep + v0.4.0 `glean rate` active ratings) and v0.5.0 surfaces both back in `glean today`. Item 1 is now the highest-leverage forward-momentum item (compound memory across sessions). Item 2 is engine durability. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
+> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. Both halves of the telemetry pair shipped (v0.3.0 passive sweep + v0.4.0 `glean rate` active ratings), v0.5.0 surfaces both back in `glean today`, and v0.6.0 closes the compound-memory-across-sessions loop via `glean peek` + SessionStart hook. Item 1 (now the only Up next item) is engine durability via API-key fallback. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
 
-### 1. `glean peek` + SessionStart hook integration
-
-**Status:** new (added 2026-05-26, post-analysis). Previously listed under "Deferred sub-projects."
-**Source:** Strategic analysis 2026-05-26 — the highest-leverage missing piece for actually USING dossiers.
-**Why:** The compound-memory-across-sessions usage (dossiers as artifacts of prior thinking that next Claude session can `cat`) requires that the dossier actually lands in the next session's context. `glean peek` is a CWD-scoped variant of `glean today` that auto-detects the current repo, prints the relevant INDEX, exits silently when there's nothing. A one-line Claude Code SessionStart hook config calls `glean peek` and the dossier is loaded into every new session automatically. **Why now:** telemetry from v0.3.0/v0.4.0/v0.5.0 is in place, so when peek lands you can validate which dossiers are worth auto-printing.
-**Scope sketch:** ~50 LOC. Pure addition: new subcommand reusing the existing `today.ts` + `render-today.ts` modules.
-
-### 2. API-key fallback when Pro/Max rate-limits
+### 1. API-key fallback when Pro/Max rate-limits
 
 **Status:** promoted from "Smaller v0.2-shaped features" to Up next 2026-05-26.
 **Source:** [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
@@ -59,7 +52,7 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 
 ### Distribution prep (deferred until telemetry validates the core)
 
-These items unblock outside adoption but provide no signal about whether the engine is worth adopting. Deliberately deferred 2026-05-26 in favor of usefulness telemetry (the v0.3.0 sweep + v0.4.0 ratings + v0.5.0 surfacing — all shipped). Revisit once telemetry shows dossiers are being kept/actioned more often than discarded.
+These items unblock outside adoption but provide no signal about whether the engine is worth adopting. Deliberately deferred 2026-05-26 in favor of usefulness telemetry and compound-memory loop (the v0.3.0 sweep + v0.4.0 ratings + v0.5.0 surfacing + v0.6.0 peek — all shipped). Revisit once telemetry shows dossiers are being kept/actioned more often than discarded.
 
 - **POSIX port (macOS / Linux support)** — was Up next #1 until 2026-05-26. Implementation outline in [GitHub issue #1](https://github.com/Jonny-boy9000/glean/issues/1). ~200–400 LOC, mostly path-separator cleanup; hard part is `jobobject.ts` POSIX child-tree-kill via `detached: true` + `process.kill(-pid)`. Source: [`docs/superpowers/specs/2026-05-23-glean-mvp-design.md`](./superpowers/specs/2026-05-23-glean-mvp-design.md) §2.
 - **File this roadmap's tracked items as GitHub Issues** — was Up next #2 until 2026-05-26. ~1 hour. One issue per substantive Tracked item (~12 issues). Use `mcp__plugin_github_github__issue_write` or `gh issue create`. Adoption-shaped, not dogfood-shaped.
@@ -97,6 +90,7 @@ A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 o
 
 ## Done (most recent first — for context only)
 
+- **v0.6.0** (2026-05-26, tag `v0.6.0`) — `glean peek` subcommand + SessionStart hook recipe. CWD-scoped variant of `glean today` designed for hook use: walks up for `.git`, prints the matching project's today-dossier, exits 0 silent in every failure case. Closes the compound-memory-across-sessions loop. See [v0.6.0 spec](./superpowers/specs/2026-05-26-glean-peek-design.md), [v0.6.0 plan](./superpowers/plans/2026-05-26-glean-peek.md).
 - **v0.5.0** (2026-05-26, tag `v0.5.0`) — `glean today` enriched with memory.db. Surfaces duration, output bytes, rate-limit hits, and user rating as an optional third line per entry. Read-only enhancement; engine and INDEX.md untouched. Silent degradation when memory.db is absent. Closes the telemetry feedback loop by making v0.3.0/v0.4.0 signals visible at the daily-rhythm surface. See [v0.5.0 spec](./superpowers/specs/2026-05-26-glean-today-enriched-design.md), [v0.5.0 plan](./superpowers/plans/2026-05-26-glean-today-enriched.md).
 - **v0.4.0** (2026-05-26, tag `v0.4.0`) — `glean rate` subcommand for active usefulness telemetry. Writes `kept`/`discarded`/`actioned` verdicts to a new `user_rating` column; `glean rate --list` prints recent ratable dossiers. Schema migration v3. Pairs with the v0.3.0 passive sweep for complete dossier-quality measurement. See [v0.4.0 spec](./superpowers/specs/2026-05-26-glean-rate-design.md), [v0.4.0 plan](./superpowers/plans/2026-05-26-glean-rate.md).
 - **v0.3.0** (2026-05-26, tag `v0.3.0`) — dossier-existence sweep. Passive usefulness telemetry: every `glean run` checks whether candidate dossiers from 7+ days ago still exist on disk, writes the result to a new `dossier_existed_at_7d` column in `memory.db`. Schema migration v2. No CLI surface, no engine behavior change. First step in answering the strategic analysis's existential question about dossier usefulness. See [v0.3.0 spec](./superpowers/specs/2026-05-26-glean-dossier-sweep-design.md), [v0.3.0 plan](./superpowers/plans/2026-05-26-glean-dossier-sweep.md).

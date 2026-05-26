@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 import type { Candidate, TaskResult } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
+import { projectSlug } from './state.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -190,10 +191,6 @@ function slugify(c: Candidate): string {
     return `${base}-L${line}`;
   }
   return base;
-}
-
-function projectSlug(p: string): string {
-  return basename(p).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
