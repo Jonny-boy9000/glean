@@ -3,7 +3,7 @@
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
 **Last updated:** 2026-05-26 (post-v0.3.0; dossier-existence sweep shipped)
-**Current release:** [v0.3.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.3.0) (commit `<TBD>`)
+**Current release:** [v0.3.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.3.0) (commit `21225d6`)
 **Branch state:** `main` clean, no in-progress patch
 
 ---
