@@ -1,6 +1,6 @@
 {
   "name": "glean",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Consume idle Claude Pro/Max capacity for speculative prep work between sessions",
   "type": "module",
   "bin": {
