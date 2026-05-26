@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex */
 import { describe, it, expect } from 'vitest';
 import { renderToday } from './render-today.js';
 import type { TodayReport } from './today.js';
