@@ -20,6 +20,7 @@ describe('verification 15: glean today CLI', () => {
       '    status: ok',
       '    output: "C:\\\\Users\\\\u\\\\glean\\\\dossiers\\\\demoproj\\\\' + today + '\\\\x\\\\OUT.md"',
       '    type: research-dossier',
+      '    task_id: "task-1"',
       '---',
       '',
       '# body ignored',

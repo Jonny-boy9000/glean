@@ -14,6 +14,11 @@ export type IndexEntry = {
   status: IndexEntryStatus;
   output: string;
   type: 'research-dossier' | 'fetch-docs';
+  task_id: string;                                                 // required join key
+  duration_ms?: number;                                            // optional, from memory.db (Task 4)
+  bytes_written?: number;                                          // optional, from memory.db (Task 4)
+  rate_limit_hits?: number;                                        // optional, from memory.db (Task 4)
+  user_rating?: 'kept' | 'discarded' | 'actioned' | null;          // optional, from memory.db (Task 4)
 };
 
 export type ProjectGroup = {
@@ -65,11 +70,13 @@ function parseIndex(path: string): { project_path?: string; entries: IndexEntry[
     if (!raw || typeof raw !== 'object') continue;
     const e = raw as Record<string, unknown>;
     if (typeof e.title !== 'string' || typeof e.status !== 'string') continue;
+    if (typeof e.task_id !== 'string') continue;                      // skip entries without task_id
     entries.push({
       title: e.title,
       status: e.status as IndexEntryStatus,
       output: typeof e.output === 'string' ? e.output : '',
       type: e.type === 'fetch-docs' ? 'fetch-docs' : 'research-dossier',
+      task_id: e.task_id,
     });
   }
   return { project_path: fm.project_path, entries };
