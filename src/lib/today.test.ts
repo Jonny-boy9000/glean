@@ -121,3 +121,76 @@ describe('findTodayDossiers task_id preservation', () => {
     expect(r.projects[0].entries[0].task_id).toBe('task-x');
   });
 });
+
+describe('findTodayDossiers enrichment merge', () => {
+  it('attaches memory.db enrichment to entries by task_id', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-today-enr-'));
+
+    // Create a real memory.db using the Memory class.
+    const dbPath = join(root, 'memory.db');
+    const { Memory } = await import('./memory.js');
+    const mem = new Memory(dbPath);
+    mem.recordRun('r-1', { project_path: 'C:\\proj', budget_seconds: 3600, max_parallel: 1, glean_version: '0.5.0' });
+    const id = mem.recordCandidate('r-1', {
+      candidate_slug: 'task-enr-1',
+      candidate_type: 'research-dossier',
+      title: 'Has enrichment',
+      source_signal: 'git-todo',
+      file_path: 'a.ts',
+      est_value: 0.5,
+      est_tokens: 500,
+      priority_rank: 0,
+    });
+    (mem as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare('UPDATE candidates SET outcome=?, dossier_path=?, ended_at=?, duration_ms=?, bytes_written=?, stderr_rate_limit_hits=?, user_rating=? WHERE id=?')
+      .run('ok', 'OUT.md', Date.now(), 720_000, 4300, 1, 'kept', id);
+    mem.close();
+
+    // INDEX.md with the matching task_id
+    const dir = join(root, 'dossiers', 'proj', '2026-05-26');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'INDEX.md'), [
+      '---',
+      'run_id: r-1',
+      'entries:',
+      '  - task_id: "task-enr-1"',
+      '    title: "Has enrichment"',
+      '    status: ok',
+      '    output: "OUT.md"',
+      '    type: research-dossier',
+      '---',
+      '',
+    ].join('\n'));
+
+    const r = findTodayDossiers(root, '2026-05-26');
+    const entry = r.projects[0].entries[0];
+    expect(entry.duration_ms).toBe(720_000);
+    expect(entry.bytes_written).toBe(4300);
+    expect(entry.rate_limit_hits).toBe(1);
+    expect(entry.user_rating).toBe('kept');
+  });
+
+  it('returns entries with no enrichment fields when memory.db is absent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-today-nodb-'));
+    const dir = join(root, 'dossiers', 'proj', '2026-05-26');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'INDEX.md'), [
+      '---',
+      'run_id: r-1',
+      'entries:',
+      '  - task_id: "task-x"',
+      '    title: "No memory.db"',
+      '    status: ok',
+      '    output: "OUT.md"',
+      '    type: research-dossier',
+      '---',
+      '',
+    ].join('\n'));
+
+    const r = findTodayDossiers(root, '2026-05-26');
+    const entry = r.projects[0].entries[0];
+    expect(entry.duration_ms).toBeUndefined();
+    expect(entry.bytes_written).toBeUndefined();
+    expect(entry.user_rating).toBeUndefined();
+  });
+});

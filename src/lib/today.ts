@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { Memory } from './memory.js';
 
 export type IndexEntryStatus =
   | 'ok'
@@ -52,6 +53,34 @@ export function findTodayDossiers(gleanRoot: string, date?: string): TodayReport
       project_path: parsed.project_path,
       entries: parsed.entries,
     });
+  }
+
+  // Enrich entries with memory.db data when available. Silent on failure —
+  // glean today should still work without telemetry, no stderr noise.
+  const dbPath = join(gleanRoot, 'memory.db');
+  if (existsSync(dbPath)) {
+    try {
+      const memory = new Memory(dbPath);
+      try {
+        const allSlugs: string[] = [];
+        for (const p of projects) for (const e of p.entries) allSlugs.push(e.task_id);
+        const enrichments = memory.findEnrichmentsBySlugs(allSlugs);
+        for (const p of projects) {
+          for (const e of p.entries) {
+            const enr = enrichments.get(e.task_id);
+            if (!enr) continue;
+            if (enr.duration_ms !== null) e.duration_ms = enr.duration_ms;
+            if (enr.bytes_written !== null) e.bytes_written = enr.bytes_written;
+            e.rate_limit_hits = enr.stderr_rate_limit_hits;
+            e.user_rating = enr.user_rating;
+          }
+        }
+      } finally {
+        memory.close();
+      }
+    } catch {
+      // Silent degradation.
+    }
   }
 
   return { date: targetDate, projects };
