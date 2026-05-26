@@ -2,7 +2,7 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-26 (post-v0.2.1; `glean today` shipped)
+**Last updated:** 2026-05-26 (post-v0.2.1; strategic re-prioritization toward usefulness telemetry)
 **Current release:** [v0.2.1](https://github.com/Jonny-boy9000/glean/releases/tag/v0.2.1) (commit `b9c9915`)
 **Branch state:** `main` clean, no in-progress patch
 
@@ -16,19 +16,42 @@
 
 ## Up next (recommended priority order)
 
-### 1. POSIX port (macOS / Linux support)
+> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. Items 1–3 close that gap with telemetry; items 4–5 are the highest-leverage forward-momentum items that benefit from telemetry already being in place. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
 
-**Status:** [GitHub issue #1](https://github.com/Jonny-boy9000/glean/issues/1) open, implementation outline filed.
-**Source:** [`docs/superpowers/specs/2026-05-23-glean-mvp-design.md`](./superpowers/specs/2026-05-23-glean-mvp-design.md) §2 (Windows-first decision) — `glean.md` §10 also constrains this.
-**Why:** Unblocks the largest audience segment for any real OSS adoption. Most of the implementation is ~80% path-separator cleanup; the hard part is making `jobobject.ts` POSIX child-tree-kill work via `detached: true` + `process.kill(-pid)`.
-**Scope sketch:** ~200–400 LOC. See the issue body for the file-by-file breakdown.
+### 1. Dossier-existence sweep (passive usefulness telemetry)
 
-### 2. File this roadmap's tracked items as GitHub Issues
+**Status:** new (added 2026-05-26, post-analysis).
+**Source:** Strategic analysis 2026-05-26 — answers the existential question with zero friction.
+**Why:** Every `glean run` learns nothing about whether past dossiers were useful. A 7-day sweep that checks `dossier_path` existence captures the implicit "kept vs. discarded" signal automatically. If you `rm -rf` a dossier, that's discarded. If it's still there 7 days later, it's at least tolerated. This is the cheapest possible signal — requires zero user action.
+**Scope sketch:** ~75 LOC. Schema migration v2 adds `dossier_existed_at_7d` column. New sweep function runs at start of `pipeline.ts` before discovery. Zero new user surface.
 
-**Status:** new (added 2026-05-25).
-**Why:** Right now ROADMAP.md is the only place these items are tracked. For outside contributors and discoverability, each substantive item should be a real GitHub issue with labels (`enhancement`, `bug`, `help wanted`, etc.) and prose context. Issues also let people +1, comment, and signal demand.
-**Scope:** ~1 hour. Use the existing `mcp__plugin_github_github__issue_write` tooling (or `gh issue create` if installed). One issue per "Up next" item and one per "Deferred sub-projects" item — about 12 issues total. Link each issue back to its originating doc.
-**Don't file:** hygiene items (those are self-contained tasks for whoever's already in the repo), deferred-indefinitely items (those signal noise, not direction).
+### 2. `glean rate` — active usefulness telemetry
+
+**Status:** new (added 2026-05-26, post-analysis).
+**Source:** Strategic analysis 2026-05-26 — the deliberate half of the feedback loop.
+**Why:** Passive existence is a noisy signal (might keep a dossier you never opened). An explicit `glean rate <run-id|fingerprint> <kept|discarded|actioned>` takes 5 seconds per dossier you bother to rate and gives ground truth for the eventual ranker.
+**Scope sketch:** ~100 LOC. Schema migration v3 adds `user_rating` column. New CLI subcommand. `glean today` annotates previously-rated dossiers so you don't re-rate what you already judged.
+
+### 3. `glean today` enriched with memory.db
+
+**Status:** new (added 2026-05-26, post-analysis).
+**Source:** Strategic analysis 2026-05-26 — surfaces telemetry data in the human-facing view.
+**Why:** Items 1 + 2 accumulate data; without surfacing it back to you, the loop never closes. `glean today` is the natural place — it already runs daily. JOIN against memory.db so each entry shows duration, rate-limit hits, bytes written, user rating, and the 7-day existence flag. Suspicious-looking dossiers (tiny bytes, repeated discards) get flagged.
+**Scope sketch:** ~50 LOC delta in `today.ts` + `render-today.ts`. Read-only memory.db consumer.
+
+### 4. `glean peek` + SessionStart hook integration
+
+**Status:** new (added 2026-05-26, post-analysis). Previously listed under "Deferred sub-projects."
+**Source:** Strategic analysis 2026-05-26 — the highest-leverage missing piece for actually USING dossiers.
+**Why:** The compound-memory-across-sessions usage (dossiers as artifacts of prior thinking that next Claude session can `cat`) requires that the dossier actually lands in the next session's context. `glean peek` is a CWD-scoped variant of `glean today` that auto-detects the current repo, prints the relevant INDEX, exits silently when there's nothing. A one-line Claude Code SessionStart hook config calls `glean peek` and the dossier is loaded into every new session automatically. **Deliberately fourth, not first:** without telemetry first, you'd auto-print dossiers you don't even know are useful.
+**Scope sketch:** ~50 LOC. Pure addition: new subcommand reusing the existing `today.ts` + `render-today.ts` modules.
+
+### 5. API-key fallback when Pro/Max rate-limits
+
+**Status:** promoted from "Smaller v0.2-shaped features" to Up next 2026-05-26.
+**Source:** [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
+**Why:** Engine durability. When `claude -p` returns rate-limit stderr, fall back to `ANTHROPIC_API_KEY` (if env var is set) for the rest of the budget. Doesn't change the subscription-arbitrage premise; just stops a single rate-limit signal from killing an overnight run. Doesn't help answer the existential question, but is the most defensible "make existing runs more useful" item once telemetry is in place.
+**Scope sketch:** ~75 LOC. Pure executor addition; deny-list and safety story unchanged.
 
 ---
 
@@ -40,8 +63,7 @@ These are the "real features" deferred from MVP. Each is substantial enough to d
 
 - **`draft-impl` worktree drafting** — Claude writes speculative code into `git worktree`-based `prep/*` branches. The `base_branch` field already in `config.json` for forward-compat. Biggest single feature by code volume (~1000–1500 LOC). Design sketch in `glean.md` §5.3.
 - **Scheduling** — Windows Task Scheduler / launchd / cron integration so glean runs automatically Thursday evening. Design sketch in `glean.md` §5.5. ~400–600 LOC.
-- **`glean discard` / `glean gc` / `glean peek` subcommands** — discard a run by ID, garbage-collect dossiers older than 21 days, peek at today's INDEX from inside a session hook. ~300 LOC.
-- **SessionStart hook** — auto-print today's INDEX when `cd`-ing into a repo that has a recent dossier. Pairs with `glean peek`.
+- **`glean discard` / `glean gc` subcommands** — discard a run by ID, garbage-collect dossiers older than 21 days. ~200 LOC. (`glean peek` and the SessionStart hook were split out and promoted to Up next #4 on 2026-05-26.)
 - **Resume after crash** — currently a crash abandons the run; stale-lock recovery only lets you start a fresh one. Resume would pick up where the loop left off using `candidates.json` partial state. ~200 LOC.
 - **Rate-limit back-off ladder + circuit breaker** — currently glean stops on first rate-limit signal. The original MVP design has a 60/300/900/1800s back-off ladder and a 3-hits-in-30-min circuit. Worth it for longer unattended runs.
 - **Multi-project per run** — accept `--project` more than once, interleave candidates across projects, shared budget.
@@ -56,19 +78,27 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 - **(Optional) Rename `docs/superpowers/` → `docs/specs/`** — the `superpowers` naming is internal jargon from how the project was built; for outsiders, `docs/specs/` and `docs/plans/` would be more legible. Coordinated rename across ~6 internal references. Critique #12 from the launch review.
 - **Verify GitHub Discussions is enabled** — README's CTA points at `https://github.com/Jonny-boy9000/glean/discussions` but Discussions is opt-in per-repo. Either toggle it on via Settings → Features, or change the CTA to issues-only. 2 min.
 
+### Distribution prep (deferred until telemetry validates the core)
+
+These items unblock outside adoption but provide no signal about whether the engine is worth adopting. Deliberately deferred 2026-05-26 in favor of usefulness telemetry (Up next #1–3). Revisit once telemetry shows dossiers are being kept/actioned more often than discarded.
+
+- **POSIX port (macOS / Linux support)** — was Up next #1 until 2026-05-26. Implementation outline in [GitHub issue #1](https://github.com/Jonny-boy9000/glean/issues/1). ~200–400 LOC, mostly path-separator cleanup; hard part is `jobobject.ts` POSIX child-tree-kill via `detached: true` + `process.kill(-pid)`. Source: [`docs/superpowers/specs/2026-05-23-glean-mvp-design.md`](./superpowers/specs/2026-05-23-glean-mvp-design.md) §2.
+- **File this roadmap's tracked items as GitHub Issues** — was Up next #2 until 2026-05-26. ~1 hour. One issue per substantive Tracked item (~12 issues). Use `mcp__plugin_github_github__issue_write` or `gh issue create`. Adoption-shaped, not dogfood-shaped.
+
 ### Smaller v0.2-shaped features (promoted 2026-05-25 from "Deferred indefinitely")
 
 A second-pass review of the third-party critique surfaced cheap-first-step versions of three items the original review dismissed wholesale. Each is roughly v0.2-scale: small, defensible, doesn't require any of the bigger product bets (web app, billing layer, OS hooks). Each needs its own brainstorm → spec → plan when prioritized.
 
-- **Output adapters: Notion/Slack/email mirrors** (~100 LOC remaining) — the terminal slice (`glean today`) shipped in v0.2.1. What remains: optional adapters that mirror the same content to a Notion page, Slack channel, or email. Each adds OAuth + network surface — only worth doing once `glean today` proves useful in dogfood. (Cheap first step toward what the critique called "inbox UI.")
-- **API-key fallback when Pro/Max rate-limits** (~75 LOC) — adds an `ANTHROPIC_API_KEY` env-var path so glean keeps going when the subscription window closes. Doesn't change the subscription-arbitrage story; just extends the runway for users who happen to have both. Today, a single rate-limit signal halts the entire run; with fallback, longer overnight runs become possible. (Cheap first step toward what the critique called "blended capacity.")
+- **Output adapters: Notion/Slack/email mirrors** (~100 LOC remaining) — the terminal slice (`glean today`) shipped in v0.2.1. What remains: optional adapters that mirror the same content to a Notion page, Slack channel, or email. Each adds OAuth + network surface — only worth doing once `glean today` proves useful in dogfood (telemetry from Up next #1–3 will tell). (Cheap first step toward what the critique called "inbox UI.")
 - **`draft-pr-reply` candidate type** (~200 LOC) — adds a third candidate type alongside `research-dossier` and `fetch-docs`. Was in the original MVP spec §7 template list but cut from scope. Drafts replies to unresolved PR review comments discovered via `gh api`. Pure code addition — no audience pivot required, but creates the *option* to pivot toward PR-heavy users (OSS maintainers, engineering managers) if signal emerges. (Cheap first step toward what the critique called "broader audience.")
+
+*(API-key fallback was promoted from this section to Up next #5 on 2026-05-26.)*
 
 ### Needs user action (can't be automated from inside a session)
 
 - **Demo media for README** — screenshot of a rendered `INDEX.md` and a ~20s terminal GIF of `glean run --dry-run`. README has `<!-- TODO -->` placeholders marking exactly where they go. The single biggest lever for landing-page conversion.
 - **`npm publish`** — package.json builds correctly; needs the user's npm login. Reduces install from 5 commands to 1 (`npm i -g glean`).
-- **POSIX port real-machine validation** — once the code is written (Up Next #2), it needs testing on actual macOS/Linux machines. Windows-only sessions can write the code but can't validate it.
+- **POSIX port real-machine validation** — once the code is written (see "Distribution prep" in Tracked backlog), it needs testing on actual macOS/Linux machines. Windows-only sessions can write the code but can't validate it.
 
 ---
 
