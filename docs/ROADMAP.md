@@ -2,8 +2,8 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-25 (post-v0.2.0; memory substrate shipped)
-**Current release:** [v0.2.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.2.0) (commit `793492e`)
+**Last updated:** 2026-05-26 (post-v0.2.1; `glean today` shipped)
+**Current release:** [v0.2.1](https://github.com/Jonny-boy9000/glean/releases/tag/v0.2.1) (commit `<TBD>`)
 **Branch state:** `main` clean, no in-progress patch
 
 ---
@@ -60,7 +60,7 @@ Single self-contained tasks. Bundle into the next release or a doc-only patch.
 
 A second-pass review of the third-party critique surfaced cheap-first-step versions of three items the original review dismissed wholesale. Each is roughly v0.2-scale: small, defensible, doesn't require any of the bigger product bets (web app, billing layer, OS hooks). Each needs its own brainstorm → spec → plan when prioritized.
 
-- **Output adapters: `glean today` + Notion/Slack/email** (~150 LOC) — addresses "folder is a bad consumption surface" without building a web app. `glean today` pretty-prints the latest INDEX.md inline in the terminal. Optional adapters mirror the same content to a Notion page, Slack channel, or email. Engine unchanged; just adds output surfaces beyond the local folder. (Cheap first step toward what the critique called "inbox UI.")
+- **Output adapters: Notion/Slack/email mirrors** (~100 LOC remaining) — the terminal slice (`glean today`) shipped in v0.2.1. What remains: optional adapters that mirror the same content to a Notion page, Slack channel, or email. Each adds OAuth + network surface — only worth doing once `glean today` proves useful in dogfood. (Cheap first step toward what the critique called "inbox UI.")
 - **API-key fallback when Pro/Max rate-limits** (~75 LOC) — adds an `ANTHROPIC_API_KEY` env-var path so glean keeps going when the subscription window closes. Doesn't change the subscription-arbitrage story; just extends the runway for users who happen to have both. Today, a single rate-limit signal halts the entire run; with fallback, longer overnight runs become possible. (Cheap first step toward what the critique called "blended capacity.")
 - **`draft-pr-reply` candidate type** (~200 LOC) — adds a third candidate type alongside `research-dossier` and `fetch-docs`. Was in the original MVP spec §7 template list but cut from scope. Drafts replies to unresolved PR review comments discovered via `gh api`. Pure code addition — no audience pivot required, but creates the *option* to pivot toward PR-heavy users (OSS maintainers, engineering managers) if signal emerges. (Cheap first step toward what the critique called "broader audience.")
 
@@ -88,6 +88,7 @@ A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 o
 
 ## Done (most recent first — for context only)
 
+- **v0.2.1** (2026-05-26, tag `v0.2.1`) — `glean today` terminal subcommand. Scans `~/glean/dossiers/*/<today>/INDEX.md` and prints a grouped, ANSI-colored report to stdout. Read-only, no engine changes. Ships the terminal slice of "Output adapters" — Notion/Slack/email mirrors remain deferred. See [v0.2.1 spec](./superpowers/specs/2026-05-25-glean-today-design.md), [v0.2.1 plan](./superpowers/plans/2026-05-26-glean-today.md).
 - **v0.2.0** (2026-05-25, tag `v0.2.0`) — persistent memory substrate. SQLite-backed run/candidate history at `%USERPROFILE%\glean\memory.db`. Pure infrastructure: no CLI surface, no behavior change. Enables three future learning loops (suppress duds, rank by realized value, adapt budgets). See [v0.2.0 spec](./superpowers/specs/2026-05-25-glean-memory-substrate-design.md), [v0.2.0 plan](./superpowers/plans/2026-05-25-glean-memory-substrate.md).
 - **v0.1.2** (2026-05-25, tag `v0.1.2`) — `discover-deps` parser rewrite using full-file parsing at git boundaries with section-aware scoping. Fixed 32-spurious-candidate regression from v0.1.1 dogfood. See [v0.1.2 spec](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md), [v0.1.2 dogfood report](./open-work/05-v012-dogfood.md).
 - **v0.1.1** (2026-05-24, tag `v0.1.1`) — quality patch: scanner noise filter, multi-signal JSONL discovery, `glean repair`, `--task-timeout`, executor cleanups (slug/timer/sentinel). 10 dogfood fixes. See [v0.1.1 spec](./superpowers/specs/2026-05-24-glean-v011-quality-patch-design.md), [v0.1.1 dogfood report](./open-work/04-v011-dogfood.md).
