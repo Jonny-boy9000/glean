@@ -1,10 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import type { RunSummary } from './types.js';
 
 export function gleanRoot(): string {
   const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
   return join(home, 'glean');
+}
+
+export function projectSlug(projectPath: string): string {
+  return basename(projectPath).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 export function ensureDefaultConfig(root: string): { created: boolean; path: string } {

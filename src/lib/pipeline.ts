@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { join, basename, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuid } from 'uuid';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
@@ -10,7 +10,7 @@ import { discoverDeps } from './discover-deps.js';
 import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
-import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir } from './state.js';
+import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir, projectSlug } from './state.js';
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
 import { runDossierExistenceSweep, SWEEP_AGE_MS } from './sweep.js';
@@ -224,10 +224,6 @@ function newRunId(): string {
   const ymd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const hms = `${pad(d.getHours())}${pad(d.getMinutes())}`;
   return `${ymd}-${hms}-${uuid().slice(0, 6)}`;
-}
-
-function projectSlug(p: string): string {
-  return basename(p).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
