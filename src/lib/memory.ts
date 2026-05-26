@@ -219,6 +219,39 @@ export class Memory {
     ).run(exists ? 1 : 0, candidateId);
   }
 
+  setUserRating(candidateId: number, rating: 'kept' | 'discarded' | 'actioned'): { updated: boolean; title: string | null } {
+    const row = this.db.prepare('SELECT title FROM candidates WHERE id = ?').get(candidateId) as { title: string } | undefined;
+    if (!row) return { updated: false, title: null };
+    this.db.prepare('UPDATE candidates SET user_rating = ?, user_rating_at = ? WHERE id = ?')
+      .run(rating, Date.now(), candidateId);
+    return { updated: true, title: row.title };
+  }
+
+  listRecentRatableCandidates(limit: number): Array<{
+    id: number;
+    title: string;
+    candidate_type: 'research-dossier' | 'fetch-docs';
+    ended_at: number;
+    dossier_path: string;
+    user_rating: 'kept' | 'discarded' | 'actioned' | null;
+  }> {
+    return this.db.prepare(
+      `SELECT id, title, candidate_type, ended_at, dossier_path, user_rating
+         FROM candidates
+        WHERE outcome IS NOT NULL
+          AND dossier_path IS NOT NULL
+        ORDER BY ended_at DESC
+        LIMIT ?`,
+    ).all(limit) as Array<{
+      id: number;
+      title: string;
+      candidate_type: 'research-dossier' | 'fetch-docs';
+      ended_at: number;
+      dossier_path: string;
+      user_rating: 'kept' | 'discarded' | 'actioned' | null;
+    }>;
+  }
+
   private projectPathFor(runId: string): string {
     const row = this.db.prepare('SELECT project_path FROM runs WHERE run_id = ?').get(runId) as
       { project_path: string } | undefined;

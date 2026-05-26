@@ -359,6 +359,96 @@ describe('Memory migration v2', () => {
   });
 });
 
+describe('Memory rating helpers', () => {
+  function seedCandidate(m: Memory, runId: string, slug: string, opts?: { outcome?: string; dossier_path?: string | null; ended_at?: number | null; title?: string }): number {
+    m.recordRun(runId, {
+      project_path: 'C:\\proj',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.4.0',
+    });
+    const id = m.recordCandidate(runId, {
+      candidate_slug: slug,
+      candidate_type: 'research-dossier',
+      title: opts?.title ?? slug,
+      source_signal: 'git-todo',
+      file_path: 'a.ts',
+      est_value: 0.5,
+      est_tokens: 500,
+      priority_rank: 0,
+    });
+    if (opts) {
+      (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+        .db.prepare('UPDATE candidates SET outcome=?, dossier_path=?, ended_at=? WHERE id=?')
+        .run(opts.outcome ?? 'ok', opts.dossier_path ?? 'OUT.md', opts.ended_at ?? Date.now(), id);
+    }
+    return id;
+  }
+
+  it('setUserRating returns {updated: true, title} and writes the row on success', () => {
+    const m = new Memory(':memory:');
+    const id = seedCandidate(m, 'run-r1', 'c1', { title: 'My TODO' });
+    const r = m.setUserRating(id, 'kept');
+    expect(r).toEqual({ updated: true, title: 'My TODO' });
+    const row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT user_rating, user_rating_at FROM candidates WHERE id=?').get(id);
+    expect(row.user_rating).toBe('kept');
+    expect(typeof row.user_rating_at).toBe('number');
+    expect(row.user_rating_at).toBeGreaterThan(Date.now() - 5000);
+    m.close();
+  });
+
+  it('setUserRating returns {updated: false, title: null} for a missing id', () => {
+    const m = new Memory(':memory:');
+    const r = m.setUserRating(999, 'kept');
+    expect(r).toEqual({ updated: false, title: null });
+    m.close();
+  });
+
+  it('re-rating overwrites the previous value and timestamp', async () => {
+    const m = new Memory(':memory:');
+    const id = seedCandidate(m, 'run-r2', 'c2');
+    m.setUserRating(id, 'kept');
+    const row1 = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT user_rating, user_rating_at FROM candidates WHERE id=?').get(id);
+    await new Promise((res) => setTimeout(res, 5));
+    m.setUserRating(id, 'discarded');
+    const row2 = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT user_rating, user_rating_at FROM candidates WHERE id=?').get(id);
+    expect(row2.user_rating).toBe('discarded');
+    expect(row2.user_rating_at as number).toBeGreaterThanOrEqual(row1.user_rating_at as number);
+    m.close();
+  });
+
+  it('listRecentRatableCandidates filters by outcome+dossier_path and orders by ended_at DESC', () => {
+    const m = new Memory(':memory:');
+    const now = Date.now();
+    seedCandidate(m, 'run-l1', 'older', { ended_at: now - 10_000 });
+    seedCandidate(m, 'run-l2', 'newer', { ended_at: now });
+    const noOutId = m.recordCandidate('run-l1', {
+      candidate_slug: 'no-outcome', candidate_type: 'research-dossier', title: 'no-outcome',
+      source_signal: 'git-todo', file_path: 'a.ts', est_value: 0.5, est_tokens: 500, priority_rank: 1,
+    });
+    (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare('UPDATE candidates SET dossier_path=?, ended_at=? WHERE id=?')
+      .run('OUT.md', now, noOutId);
+    const noDossierId = m.recordCandidate('run-l1', {
+      candidate_slug: 'no-dossier', candidate_type: 'research-dossier', title: 'no-dossier',
+      source_signal: 'git-todo', file_path: 'a.ts', est_value: 0.5, est_tokens: 500, priority_rank: 2,
+    });
+    (m as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare('UPDATE candidates SET outcome=?, ended_at=? WHERE id=?')
+      .run('failed', now, noDossierId);
+
+    const rows = m.listRecentRatableCandidates(20);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].title).toBe('newer');
+    expect(rows[1].title).toBe('older');
+    expect(rows[0].user_rating).toBeNull();
+    m.close();
+  });
+});
+
 describe('Memory migration v3', () => {
   it('creates user_rating and user_rating_at columns on a fresh DB and sets user_version=3', () => {
     const m = new Memory(':memory:');
