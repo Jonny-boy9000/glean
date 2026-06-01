@@ -39,6 +39,7 @@ export type PipelineOpts = {
   baseBranch?: string;   // per-project base branch for draft-impl (config.json) — single-project fallback
   baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
   testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
+  testCommandFor?: (projectPath: string) => string | undefined; // per-project RAW test_command — glean runs it post-commit to capture test status
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -198,6 +199,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         baseBranch: opts.baseBranch,
         baseBranchFor: opts.baseBranchFor,
         testCommandAllow: opts.testCommandAllow,
+        testCommandFor: opts.testCommandFor,
         recordOutcome: memory && c.candidate_row_id !== undefined
           ? ((status, fields) => {
               try { memory!.recordOutcome(c.candidate_row_id!, status, fields); }

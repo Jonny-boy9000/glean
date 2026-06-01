@@ -433,6 +433,89 @@ describe('executeOne', () => {
     }
   });
 
+  // ── draft-impl deterministic test-status capture (v0.7.1) ──────────────────
+  // After a draft session commits, glean itself runs the project's test_command
+  // in the worktree and records the outcome. exit 0 → 'pass', non-zero → 'fail',
+  // no test_command OR unrunnable → 'none'. A throwing/failing test run must
+  // NEVER crash the executor.
+  function draftRepo(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-tests-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+    return repo;
+  }
+  function draftCandidate(repo: string, id: string): Candidate {
+    return {
+      id, evidence_hash: 'h', type: 'draft-impl',
+      project_path: repo,
+      evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: implement feature' }] },
+      est_value: 50, est_tokens: 1000, status: 'pending',
+    };
+  }
+  function draftCtx(repo: string, root: string, testCommand: string | undefined) {
+    return {
+      runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000, baseBranch: 'main',
+      testCommandFor: (_p: string) => testCommand,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+    };
+  }
+
+  it('draft-impl: a passing test_command yields output.tests === "pass"', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const result = await executeOne(draftCandidate(repo, 'dt-pass'), draftCtx(repo, root, 'node -e "process.exit(0)"'));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('pass');
+  });
+
+  it('draft-impl: a failing test_command yields output.tests === "fail"', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const result = await executeOne(draftCandidate(repo, 'dt-fail'), draftCtx(repo, root, 'node -e "process.exit(1)"'));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('fail');
+  });
+
+  it('draft-impl: no test_command configured yields output.tests === "none"', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const result = await executeOne(draftCandidate(repo, 'dt-none'), draftCtx(repo, root, undefined));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('none');
+  });
+
+  it('draft-impl: an unrunnable test_command yields "none" and never crashes the run', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const result = await executeOne(
+      draftCandidate(repo, 'dt-throw'),
+      draftCtx(repo, root, 'glean-nonexistent-binary-xyz --no-such-flag'),
+    );
+    // The run still succeeds (a commit landed); the test status degrades to 'none'.
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('none');
+  });
+
+  it('draft-impl: the captured tests status is forwarded to recordOutcome (draft_tests)', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const calls: Array<{ status: string; fields: Record<string, unknown> }> = [];
+    const ctx = { ...draftCtx(repo, root, 'node -e "process.exit(0)"'), recordOutcome: (status: string, fields: Record<string, unknown>) => calls.push({ status, fields }) };
+    const result = await executeOne(draftCandidate(repo, 'dt-rec'), ctx);
+    expect(result.status).toBe('ok');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].fields.draft_tests).toBe('pass');
+  });
+
   it('invokes recordOutcome callback exactly once with the final status and fields', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-exec-cb-'));
     execSync('git init -q', { cwd: repo });

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
-import type { Candidate, TaskResult, TaskOutput } from './types.js';
+import type { Candidate, TaskResult, TaskOutput, DraftTestStatus } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
@@ -31,6 +31,12 @@ export type ExecCtx = {
   // (config.json projects[path].test_command, normalized to Bash(...) prefixes).
   // Absent → DEFAULT_TEST_COMMAND_ALLOW (npm/node toolchain).
   testCommandAllow?: readonly string[];
+  // Per-project RAW test_command (config.json projects[path].test_command),
+  // resolved by the candidate's OWN project_path. glean runs this itself in the
+  // draft worktree AFTER the session commits to capture a deterministic test
+  // status. Absent / unrunnable → 'none'. (The spawned session also runs tests,
+  // but glean owns the surfaced result.)
+  testCommandFor?: (projectPath: string) => string | undefined;
   recordOutcome?: (status: TaskResult['status'], fields: {
     dossier_path?: string;
     started_at?: number;
@@ -42,6 +48,7 @@ export type ExecCtx = {
     draft_insertions?: number;
     draft_deletions?: number;
     prep_branch?: string;
+    draft_tests?: string;
   }) => void;
 };
 
@@ -229,6 +236,18 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
 
   // Did anything land on the prep branch beyond base?
   const stat = diffStat(main, base, branch);
+
+  const hasCommit = commitsBeyondBase(main, base, branch) > 0;
+
+  // glean's OWN deterministic test check: only when a real commit landed do we
+  // run the project's test_command IN the worktree and record pass/fail/none.
+  // The spawned model also ran tests inside its session, but glean can't see that
+  // result — so glean owns the surfaced status by running the command itself.
+  // Never let a test run throw out of the executor (runTestCommand catches → 'none').
+  const tests: DraftTestStatus = hasCommit
+    ? runTestCommand(ctx.testCommandFor?.(c.project_path), worktree, ctx.taskTimeoutMs)
+    : 'none';
+
   const finalize = (status: TaskResult['status'], output: TaskOutput | undefined, stderr_tail?: string[]): TaskResult => {
     try {
       ctx.recordOutcome?.(status, {
@@ -236,6 +255,7 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
         stderr_rate_limit_hits: spawn.rateLimited ? 1 : 0,
         draft_files: stat?.files, draft_insertions: stat?.insertions, draft_deletions: stat?.deletions,
         prep_branch: output?.kind === 'branch' ? output.branch : undefined,
+        draft_tests: output?.kind === 'branch' ? output.tests : undefined,
       });
     } catch (e) {
       process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`);
@@ -246,7 +266,6 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     return result;
   };
 
-  const hasCommit = commitsBeyondBase(main, base, branch) > 0;
   // F4: a real commit whose diff stat could not be read is NOT a clean success.
   // Coercing a null stat into a 0-file 'ok' would hide a measurement failure and
   // mislead the receipt. Treat (commit present, stat unreadable) as a failure so
@@ -254,30 +273,88 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   const statUnreadable = hasCommit && stat === null;
   if (spawn.rateLimited) {
     return hasCommit && !statUnreadable
-      ? finalize('rate-limit', branchOutput(branch, base, worktree, stat))
+      ? finalize('rate-limit', branchOutput(branch, base, worktree, stat, tests))
       : finalize('rate-limit', undefined);
   }
   if (spawn.timedOut) {
     return hasCommit && !statUnreadable
-      ? finalize('timeout', branchOutput(branch, base, worktree, stat))
+      ? finalize('timeout', branchOutput(branch, base, worktree, stat, tests))
       : finalize('timeout', undefined);
   }
   if (statUnreadable) {
     return finalize('failed', undefined, ['draft-impl: commit landed but diff stat was unreadable']);
   }
   if (hasCommit) {
-    return finalize('ok', branchOutput(branch, base, worktree, stat));
+    return finalize('ok', branchOutput(branch, base, worktree, stat, tests));
   }
   // Nothing committed and tree clean → failed, keep the worktree for inspection.
   const tail = (() => { try { return tailLines(readFileSync(spawn.stderrPath, 'utf8'), 20); } catch { return undefined; } })();
   return finalize('failed', undefined, tail);
 }
 
-function branchOutput(branch: string, base: string, worktree: string, stat: DiffStat | null): TaskOutput {
+function branchOutput(branch: string, base: string, worktree: string, stat: DiffStat | null, tests: DraftTestStatus): TaskOutput {
   return {
     kind: 'branch', branch, base, worktree,
     files: stat?.files ?? 0, insertions: stat?.insertions ?? 0, deletions: stat?.deletions ?? 0,
+    tests,
   };
+}
+
+// Run the project's per-project `test_command` INSIDE the draft worktree to
+// capture a deterministic pass/fail. This is glean's OWN check — the spawned
+// `claude -p` session also runs tests, but its result is invisible to glean, so
+// glean re-runs and owns the surfaced status.
+//   exit 0       → 'pass'
+//   non-zero     → 'fail'
+//   no command   → 'none'
+//   unrunnable / throw / timeout → 'none' (NEVER crash the executor)
+// The run is bounded by a sane cap (min of the task timeout and 5 min) so a
+// hanging test suite cannot stall the whole pipeline.
+const TEST_RUN_CAP_MS = 5 * 60_000;
+function runTestCommand(testCommand: string | undefined, worktree: string, taskTimeoutMs: number): DraftTestStatus {
+  const cmd = testCommand?.trim();
+  if (!cmd) return 'none';
+  // Distinguish "test_command is not runnable on this machine" from "tests
+  // failed": under `shell: true` a missing program returns exit 1 (cmd.exe /
+  // sh), indistinguishable from a real failure by exit code alone. So resolve
+  // the FIRST token (the program) on PATH first — if it isn't resolvable, this
+  // is 'none' (not run), never 'fail'.
+  if (!isProgramRunnable(firstToken(cmd))) return 'none';
+  try {
+    const timeout = Math.min(taskTimeoutMs > 0 ? taskTimeoutMs : TEST_RUN_CAP_MS, TEST_RUN_CAP_MS);
+    const res = spawnSync(cmd, {
+      cwd: worktree,
+      shell: true,           // resolve PATH + allow "npm test"-style commands
+      timeout,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    // spawnSync sets .error on spawn failure (ENOENT) or timeout (ETIMEDOUT).
+    if (res.error) return 'none';
+    // A killed/timed-out child has signal set and status null → treat as 'none'.
+    if (res.status === null) return 'none';
+    return res.status === 0 ? 'pass' : 'fail';
+  } catch {
+    return 'none';
+  }
+}
+
+// First whitespace-delimited token of a command line (the program name).
+function firstToken(cmd: string): string {
+  return cmd.split(/\s+/)[0] ?? '';
+}
+
+// True if `program` resolves to an executable on PATH (where/which). Used to map
+// an unrunnable test_command to 'none' rather than a misleading 'fail'.
+function isProgramRunnable(program: string): boolean {
+  if (!program) return false;
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const out = execFileSync(finder, [program], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 type DiffStat = { files: number; insertions: number; deletions: number };

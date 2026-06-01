@@ -44,6 +44,9 @@ const runCmd = defineCommand({
     // Per-project test_command scopes the draft-impl Bash allow-list (CRITICAL 1).
     const { testCommandAllowFor } = await import('./lib/deny.js');
     const testCommandAllow = testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
+    // Raw per-project test_command — glean runs it itself in the draft worktree
+    // after the session commits, to capture a deterministic pass/fail/none.
+    const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const summary = await runPipeline({
@@ -58,6 +61,7 @@ const runCmd = defineCommand({
       baseBranch,
       baseBranchFor,
       testCommandAllow,
+      testCommandFor,
     });
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
