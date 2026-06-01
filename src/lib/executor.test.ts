@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { executeOne } from './executor.js';
+import { executeOne, __diffStat, __commitsBeyondBase } from './executor.js';
 import * as jobobject from './jobobject.js';
 import type { Candidate } from './types.js';
 
@@ -273,6 +273,106 @@ describe('executeOne', () => {
     let listed = '';
     try { listed = execSync('git worktree list', { cwd: repo, encoding: 'utf8' }); } catch { /* ignore */ }
     expect(listed).not.toContain('prep/glean-draft-2');
+  });
+
+  it('F4: diffStat and commitsBeyondBase use the SAME two-dot base..branch range', () => {
+    // draft-impl provisions `worktree add -b branch base`, so base never advances
+    // during a run — base IS the branch point. Both helpers must read the same
+    // two-dot `base..branch` range so the commit count and the diff stat answer
+    // one consistent "what did the prep branch add" question (no three-dot drift).
+    const repo = mkdtempSync(join(tmpdir(), 'glean-f4-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), 'base\n');
+    execSync('git add . && git commit -q -m base', { cwd: repo });
+    // branch off base, add ONE commit touching ONE file
+    execSync('git checkout -q -b prep/x', { cwd: repo });
+    writeFileSync(join(repo, 'b.ts'), 'branchonly\n');
+    execSync('git add . && git commit -q -m branchcommit', { cwd: repo });
+
+    const commits = __commitsBeyondBase(repo, 'main', 'prep/x');
+    const stat = __diffStat(repo, 'main', 'prep/x');
+    expect(commits).toBe(1);
+    expect(stat).not.toBeNull();
+    expect(stat!.files).toBe(1); // exactly b.ts
+
+    // Both helpers must read the literal two-dot range string (no '...').
+    const diffSrc = __diffStat.impl.toString();
+    const commitSrc = __commitsBeyondBase.impl.toString();
+    expect(diffSrc).toContain('${base}..${branch}');
+    expect(diffSrc).not.toContain('${base}...${branch}');
+    expect(commitSrc).toContain('${base}..${branch}');
+  });
+
+  it('F3: auto-commit does NOT blanket-stage an unrelated tracked file a test run rewrote', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-f3-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    // A tracked lockfile/snapshot that a test run might rewrite — unrelated to the TODO.
+    writeFileSync(join(repo, 'lock.json'), '{"v":1}\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    const root = tmpRoot();
+    const result = await executeOne(
+      {
+        id: 'f3', evidence_hash: 'h', type: 'draft-impl',
+        project_path: repo,
+        evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: implement feature' }] },
+        est_value: 50, est_tokens: 1000, status: 'pending',
+      },
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000, baseBranch: 'main',
+        // This scenario edits a.ts + rewrites lock.json but does NOT commit, so
+        // the auto-commit fallback runs. The unrelated lock.json must not land.
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-noncommit-dirty.yaml') },
+      },
+    );
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    const tree = execSync(`git show --stat ${result.output.branch}`, { cwd: repo, encoding: 'utf8' });
+    // the evidence file the model edited landed...
+    expect(tree).toContain('a.ts');
+    // ...but the unrelated tracked file the "test run" rewrote did NOT.
+    expect(tree).not.toContain('lock.json');
+  });
+
+  it('F4: a real commit with an unreadable diff stat does NOT report a clean ok', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-f4-null-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    // Force diffStat to return null even though commitsBeyondBase sees a commit.
+    const origDiff = __diffStat.impl;
+    __diffStat.impl = () => null;
+    try {
+      const root = tmpRoot();
+      const result = await executeOne(
+        {
+          id: 'f4-null', evidence_hash: 'h', type: 'draft-impl',
+          project_path: repo,
+          evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO' }] },
+          est_value: 50, est_tokens: 1000, status: 'pending',
+        },
+        {
+          runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+          templatesDir: join(__dirname, '..', '..', 'templates'),
+          taskTimeoutMs: 30_000, baseBranch: 'main',
+          env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+        },
+      );
+      // A commit landed but the stat was unreadable — must NOT be a clean 'ok'.
+      expect(result.status).toBe('failed');
+    } finally {
+      __diffStat.impl = origDiff;
+    }
   });
 
   it('invokes recordOutcome callback exactly once with the final status and fields', async () => {

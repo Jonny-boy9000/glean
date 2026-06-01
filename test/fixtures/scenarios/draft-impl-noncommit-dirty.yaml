@@ -1,0 +1,15 @@
+# Model edits the evidence file (a.ts) and a test run rewrites a tracked
+# lockfile (lock.json), but the model does NOT commit. The auto-commit fallback
+# must stage only the evidence file, not the unrelated lock.json (F3).
+write_files:
+  - path: a.ts
+    content: |
+      // implemented feature
+      export function feature() { return 'ok'; }
+  - path: lock.json
+    content: |
+      {"v":2,"rewritten":"by-test-run"}
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}'
+exit_code: 0

@@ -204,11 +204,14 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
 
   const elapsed_ms = Date.now() - start;
 
+  // F3: scope the auto-commit to the TODO's evidence file (+ new untracked
+  // source), never blanket-stage tracked modifications.
+  const evidenceFiles = c.evidence.kind === 'todo' ? [c.evidence.file] : [];
   if (spawn.rateLimited || spawn.timedOut) {
     // Even on interruption, try to salvage whatever was committed/edited.
-    autoCommitIfDirty(worktree);
+    autoCommitIfDirty(worktree, evidenceFiles);
   } else if (spawn.exitCode === 0) {
-    autoCommitIfDirty(worktree);
+    autoCommitIfDirty(worktree, evidenceFiles);
   }
 
   // Did anything land on the prep branch beyond base?
@@ -231,15 +234,23 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   };
 
   const hasCommit = commitsBeyondBase(main, base, branch) > 0;
+  // F4: a real commit whose diff stat could not be read is NOT a clean success.
+  // Coercing a null stat into a 0-file 'ok' would hide a measurement failure and
+  // mislead the receipt. Treat (commit present, stat unreadable) as a failure so
+  // status reflects reality; the worktree is kept for manual inspection.
+  const statUnreadable = hasCommit && stat === null;
   if (spawn.rateLimited) {
-    return hasCommit
+    return hasCommit && !statUnreadable
       ? finalize('rate-limit', branchOutput(branch, base, worktree, stat))
       : finalize('rate-limit', undefined);
   }
   if (spawn.timedOut) {
-    return hasCommit
+    return hasCommit && !statUnreadable
       ? finalize('timeout', branchOutput(branch, base, worktree, stat))
       : finalize('timeout', undefined);
+  }
+  if (statUnreadable) {
+    return finalize('failed', undefined, ['draft-impl: commit landed but diff stat was unreadable']);
   }
   if (hasCommit) {
     return finalize('ok', branchOutput(branch, base, worktree, stat));
@@ -258,12 +269,15 @@ function branchOutput(branch: string, base: string, worktree: string, stat: Diff
 
 type DiffStat = { files: number; insertions: number; deletions: number };
 
-// git -C <main> diff --stat <base>...<branch>. All linked worktrees share one
-// object store so this reads correctly from the main dir regardless of where
-// the worktree lives (works on Windows).
-function diffStat(main: string, base: string, branch: string): DiffStat | null {
+// F4: use TWO-dot `base..branch` (branch-relative: what the prep branch added
+// beyond base) for BOTH the diff stat and the commit count, so they answer the
+// same "did anything land on the prep branch" question. Three-dot (symmetric)
+// would fold in base-only changes when base has advanced past the branch point.
+// All linked worktrees share one object store, so reading from the main dir
+// works regardless of where the worktree lives (Windows-safe).
+function diffStatImpl(main: string, base: string, branch: string): DiffStat | null {
   try {
-    const out = execFileSync('git', ['-C', main, 'diff', '--numstat', `${base}...${branch}`], { encoding: 'utf8' });
+    const out = execFileSync('git', ['-C', main, 'diff', '--numstat', `${base}..${branch}`], { encoding: 'utf8' });
     let files = 0, insertions = 0, deletions = 0;
     for (const line of out.split(/\r?\n/)) {
       if (!line.trim()) continue;
@@ -276,30 +290,53 @@ function diffStat(main: string, base: string, branch: string): DiffStat | null {
   } catch { return null; }
 }
 
-function commitsBeyondBase(main: string, base: string, branch: string): number {
+// Injectable wrappers so tests can force a parse failure (null stat) and verify
+// it is surfaced rather than coerced into a clean 0-file success.
+function diffStat(main: string, base: string, branch: string): DiffStat | null {
+  return diffStat.impl(main, base, branch);
+}
+diffStat.impl = diffStatImpl;
+
+function commitsBeyondBaseImpl(main: string, base: string, branch: string): number {
   try {
     const out = execFileSync('git', ['-C', main, 'rev-list', '--count', `${base}..${branch}`], { encoding: 'utf8' });
     return Number(out.trim()) || 0;
   } catch { return 0; }
 }
+function commitsBeyondBase(main: string, base: string, branch: string): number {
+  return commitsBeyondBase.impl(main, base, branch);
+}
+commitsBeyondBase.impl = commitsBeyondBaseImpl;
 
-// Auto-commit fallback for when the session edited but did not commit. Stages:
-//   - all tracked modifications/deletions (`git add -u`), plus
-//   - new source files the model created, EXCLUDING anything the project's
-//     .gitignore or our .git/info/exclude (prompt.md/OUT.md, see
-//     excludeFromWorktree) ignores.
-// We deliberately avoid a blanket `git add -A`: a test run inside the worktree
-// can leave non-gitignored stray dirs (coverage/, dist/) that should not pollute
-// the draft. Untracked files are enumerated and added by name so the staged set
-// is explicit. Best-effort: a clean tree is a no-op.
-function autoCommitIfDirty(worktree: string): void {
+// Test-only handles (prefixed __ to signal "do not use in production code").
+export const __diffStat = diffStat;
+export const __commitsBeyondBase = commitsBeyondBase;
+
+// Auto-commit fallback for when the session edited but did not commit.
+//
+// F3: we deliberately do NOT blanket-stage tracked modifications (`git add -u`).
+// A test run inside the worktree can rewrite a TRACKED snapshot/lockfile that is
+// unrelated to the TODO; `git add -u` would silently land it in the user's draft.
+// Instead we scope staging to:
+//   - the evidence file(s) for the TODO (the file the model was asked to change), and
+//   - new (untracked) non-ignored source files the model created (honors
+//     .gitignore + our .git/info/exclude, so prompt.md/OUT.md and coverage/dist
+//     stay out).
+// Other tracked files the model deliberately touched are still picked up: the
+// model is instructed to `git add` them itself, and any it staged before the
+// kill survive (we never `git reset`). This keeps the auto-commit set explicit —
+// no unrelated or secret file lands silently. Best-effort: clean tree is a no-op.
+function autoCommitIfDirty(worktree: string, evidenceFiles: string[]): void {
   try {
     const status = execFileSync('git', ['-C', worktree, 'status', '--porcelain'], { encoding: 'utf8' });
     if (!status.trim()) return;
-    // Stage tracked modifications/deletions.
-    execFileSync('git', ['-C', worktree, 'add', '-u'], { stdio: 'ignore' });
-    // Stage untracked-but-not-ignored files explicitly (honors .gitignore +
-    // .git/info/exclude because --others --exclude-standard filters them out).
+    // Stage the evidence file(s) the model was asked to change (if present/dirty).
+    for (const f of evidenceFiles) {
+      if (!f) continue;
+      try { execFileSync('git', ['-C', worktree, 'add', '--', f], { stdio: 'ignore' }); } catch { /* missing/clean */ }
+    }
+    // Stage untracked-but-not-ignored files explicitly (new source the model
+    // created). --others --exclude-standard filters .gitignore + info/exclude.
     const untracked = execFileSync(
       'git', ['-C', worktree, 'ls-files', '--others', '--exclude-standard'],
       { encoding: 'utf8' },
