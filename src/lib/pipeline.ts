@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuid } from 'uuid';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
-import type { Candidate, RunSummary, RunReason } from './types.js';
+import type { Candidate, RunSummary, RunReason, TaskResult } from './types.js';
 import { discoverJsonl } from './discover-jsonl.js';
 import { discoverGit } from './discover-git.js';
 import { discoverDeps } from './discover-deps.js';
@@ -185,7 +185,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       else if (result.status === 'failed') failed++;
       else ran++;
 
-      if (result.output_path) appendIndex(opts.gleanRoot, projSlug, runId, c, result);
+      if (result.output) appendIndex(opts.gleanRoot, projSlug, runId, c, result);
     }
 
     return finalize();
@@ -227,7 +227,7 @@ function newRunId(): string {
   return `${ymd}-${hms}-${uuid().slice(0, 6)}`;
 }
 
-function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: { status: string; output_path?: string }): void {
+function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: TaskResult): void {
   const dir = join(root, 'dossiers', projSlug, today());
   mkdirSync(dir, { recursive: true });
   const indexPath = join(dir, 'INDEX.md');
@@ -240,15 +240,61 @@ function appendIndex(root: string, projSlug: string, runId: string, c: Candidate
   } else {
     frontmatter = { run_id: runId, project_path: c.project_path, generated_at: new Date().toISOString(), entries: [] };
   }
-  (frontmatter.entries as unknown[]).push({
-    task_id: c.id, evidence_hash: c.evidence_hash, type: c.type,
-    title: titleFor(c), output: result.output_path ?? '', status: result.status,
-  });
+  (frontmatter.entries as unknown[]).push(indexEntryFor(c, result));
   const yaml = yamlStringify(frontmatter);
-  writeFileSync(indexPath, `---\n${yaml}---\n\n# Glean dossier — ${today()}\n\n${renderHumanList(frontmatter.entries as { title: string; output: string; status: string; evidence_hash: string }[])}`);
+  writeFileSync(indexPath, `---\n${yaml}---\n\n# Glean dossier — ${today()}\n\n${renderHumanList(frontmatter.entries as IndexEntryRecord[])}`);
 }
 
-function renderHumanList(entries: { title: string; output: string; status: string }[]): string {
-  return entries.map((e, i) => `${i + 1}. **${e.title}** — ${e.status}\n   - Read: \`${e.output}\``).join('\n\n');
+type IndexEntryRecord = {
+  task_id: string;
+  evidence_hash: string;
+  type: Candidate['type'];
+  title: string;
+  status: string;
+  // file result
+  output?: string;
+  // branch result (draft-impl)
+  branch?: string;
+  base?: string;
+  worktree?: string;
+  files?: number;
+  insertions?: number;
+  deletions?: number;
+};
+
+// Build the persisted INDEX entry. File results carry an `output` path;
+// branch results (draft-impl) carry the prep branch + worktree + diff stat so
+// the renderer can emit the correct review/discard commands (T11).
+function indexEntryFor(c: Candidate, result: TaskResult): IndexEntryRecord {
+  const baseRec = {
+    task_id: c.id, evidence_hash: c.evidence_hash, type: c.type,
+    title: titleFor(c), status: result.status,
+  };
+  if (result.output?.kind === 'branch') {
+    const b = result.output;
+    return {
+      ...baseRec,
+      branch: b.branch, base: b.base, worktree: b.worktree,
+      files: b.files, insertions: b.insertions, deletions: b.deletions,
+    };
+  }
+  return { ...baseRec, output: result.output?.kind === 'file' ? result.output.path : '' };
+}
+
+function renderHumanList(entries: IndexEntryRecord[]): string {
+  return entries.map((e, i) => `${i + 1}. ${renderEntry(e)}`).join('\n\n');
+}
+
+function renderEntry(e: IndexEntryRecord): string {
+  if (e.type === 'draft-impl' && e.branch) {
+    const stat = `+${e.insertions ?? 0} / -${e.deletions ?? 0} across ${e.files ?? 0} file(s)`;
+    // Review: the prep branch is already checked out in the linked worktree, so
+    // `git checkout <branch>` in the main repo FAILS — cd into the worktree instead.
+    const review = `cd ${e.worktree ?? ''}`;
+    // Discard: a plain rm -rf leaves a dangling worktree registration.
+    const discard = `git -C <main> worktree remove --force ${e.worktree ?? ''} && git -C <main> branch -D ${e.branch}`;
+    return `**${e.title}** — ${e.status} — branch \`${e.branch}\` (${stat})\n   - Review: \`${review}\`\n   - Discard: \`${discard}\``;
+  }
+  return `**${e.title}** — ${e.status}\n   - Read: \`${e.output ?? ''}\``;
 }
 

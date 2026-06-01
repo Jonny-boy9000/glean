@@ -117,7 +117,7 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
       process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`);
     }
     const result: TaskResult = { status, elapsed_ms };
-    if (output_path) result.output_path = output_path;
+    if (output_path) result.output = { kind: 'file', path: output_path };
     if (stderr_tail) result.stderr_tail = stderr_tail;
     return result;
   };

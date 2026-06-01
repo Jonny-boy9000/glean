@@ -39,8 +39,10 @@ describe('executeOne', () => {
       env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
     });
     expect(result.status).toBe('ok');
-    expect(existsSync(result.output_path!)).toBe(true);
-    expect(readFileSync(result.output_path!, 'utf8')).toContain('fake dossier');
+    expect(result.output?.kind).toBe('file');
+    const filePath = result.output?.kind === 'file' ? result.output.path : undefined;
+    expect(existsSync(filePath!)).toBe(true);
+    expect(readFileSync(filePath!, 'utf8')).toContain('fake dossier');
   });
 
   it('detects rate-limit and returns rate-limit status', async () => {
@@ -93,9 +95,11 @@ describe('executeOne', () => {
     };
     const r1 = await executeOne(c1, ctx);
     const r2 = await executeOne(c2, ctx);
-    expect(r1.output_path).not.toEqual(r2.output_path);
-    expect(r1.output_path).toMatch(/-L42/);
-    expect(r2.output_path).toMatch(/-L99/);
+    const p1 = r1.output?.kind === 'file' ? r1.output.path : '';
+    const p2 = r2.output?.kind === 'file' ? r2.output.path : '';
+    expect(p1).not.toEqual(p2);
+    expect(p1).toMatch(/-L42/);
+    expect(p2).toMatch(/-L99/);
   });
 
   it('clears the timeout handle on normal exit (no dangling timers)', async () => {

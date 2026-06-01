@@ -80,9 +80,17 @@ export type GleanConfig = {
   projects?: Record<string, { base_branch?: string }>;
 };
 
+// Discriminated output of a task (T7).
+// - 'file':   a dossier/fetch-docs run wrote a markdown file at `path`.
+// - 'branch': a draft-impl run committed to `branch` (off `base`) in a linked
+//             worktree; the diff-stat fields feed the receipt/INDEX.
+export type TaskOutput =
+  | { kind: 'file'; path: string }
+  | { kind: 'branch'; branch: string; base: string; worktree: string; files: number; insertions: number; deletions: number };
+
 export type TaskResult = {
   status: 'ok' | 'ok-fallback' | 'timeout' | 'failed' | 'rate-limit';
   elapsed_ms: number;
-  output_path?: string;
+  output?: TaskOutput;
   stderr_tail?: string[];
 };
