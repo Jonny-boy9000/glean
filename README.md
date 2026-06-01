@@ -13,8 +13,10 @@ You're on a Claude Pro or Max subscription. The weekly rate-limit window resets 
 
 > *gleaning* (n.) — the practice of gathering leftover crops from the field after the main harvest. `glean` does the same with unused capacity at the tail of your weekly rate-limit window.
 
-<!-- TODO: drop in screenshot of a rendered INDEX.md here (the Monday-morning payoff) -->
-<!-- TODO: drop in a ~20s terminal GIF of `glean run --dry-run` showing the ranked candidate list -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/glean-morning.png" alt="glean morning receipt: an AI-drafted branch with a verified 'tests: pass', main branch untouched" width="760">
+</p>
+<p align="center"><em><code>glean morning</code> — the Monday-morning payoff: a reviewable draft branch with a verified <code>tests: pass</code>, your <code>main</code> never touched.</em></p>
 
 ---
 
