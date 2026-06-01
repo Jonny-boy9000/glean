@@ -7,6 +7,7 @@ import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
+import { titleFor, today } from './candidate-meta.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -175,15 +176,6 @@ function hydrateEvidence(c: Candidate, _ctx: ExecCtx): Candidate {
   return cloned;
 }
 
-function titleFor(c: Candidate): string {
-  switch (c.evidence.kind) {
-    case 'todo': return `Handle TODO in ${c.evidence.file}`;
-    case 'jsonl': return c.evidence.ai_title;
-    case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
-    case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
-  }
-}
-
 function slugify(c: Candidate): string {
   const base = titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   if (c.evidence.kind === 'todo') {
@@ -192,8 +184,6 @@ function slugify(c: Candidate): string {
   }
   return base;
 }
-
-function today(): string { return new Date().toISOString().slice(0, 10); }
 
 function tailLines(s: string, n: number): string[] {
   const lines = s.split(/\r?\n/);

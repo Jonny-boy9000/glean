@@ -14,6 +14,7 @@ import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidate
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
 import { runDossierExistenceSweep, SWEEP_AGE_MS } from './sweep.js';
+import { titleFor, today, sourceSignalFor, filePathFor } from './candidate-meta.js';
 
 function gleanVersion(): string {
   try {
@@ -226,8 +227,6 @@ function newRunId(): string {
   return `${ymd}-${hms}-${uuid().slice(0, 6)}`;
 }
 
-function today(): string { return new Date().toISOString().slice(0, 10); }
-
 function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: { status: string; output_path?: string }): void {
   const dir = join(root, 'dossiers', projSlug, today());
   mkdirSync(dir, { recursive: true });
@@ -253,29 +252,3 @@ function renderHumanList(entries: { title: string; output: string; status: strin
   return entries.map((e, i) => `${i + 1}. **${e.title}** — ${e.status}\n   - Read: \`${e.output}\``).join('\n\n');
 }
 
-function titleFor(c: Candidate): string {
-  switch (c.evidence.kind) {
-    case 'todo': return `Handle TODO in ${c.evidence.file}`;
-    case 'jsonl': return c.evidence.ai_title;
-    case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
-    case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
-  }
-}
-
-function sourceSignalFor(c: Candidate): 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' {
-  switch (c.evidence.kind) {
-    case 'jsonl': return 'jsonl';
-    case 'todo': return 'git-todo';
-    case 'pr': return 'gh-pr';
-    case 'dep': return 'deps';
-  }
-}
-
-function filePathFor(c: Candidate): string | null {
-  switch (c.evidence.kind) {
-    case 'todo': return c.evidence.file;
-    case 'jsonl': return null;
-    case 'pr': return null;
-    case 'dep': return c.evidence.manifest;
-  }
-}
