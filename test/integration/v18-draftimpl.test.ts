@@ -42,7 +42,7 @@ function runGlean(repo: string, home: string, scenarioFile: string) {
   });
 }
 
-function readIndexEntries(home: string, repo: string): Array<Record<string, unknown>> {
+function readIndexEntries(home: string): Array<Record<string, unknown>> {
   const dossiers = join(home, 'glean', 'dossiers');
   const slugs = readdirSync(dossiers);
   for (const slug of slugs) {
@@ -89,7 +89,7 @@ describe('verification 18: draft-impl end-to-end', () => {
     expect(tree).toContain('feature.ts');
 
     // INDEX entry diff stat matches the actual branch diff
-    const entries = readIndexEntries(home, repo);
+    const entries = readIndexEntries(home);
     const branchEntry = entries.find((e) => e.type === 'draft-impl');
     expect(branchEntry).toBeTruthy();
     const numstat = execSync(`git diff --numstat main...${branchName}`, { cwd: repo, encoding: 'utf8' })
