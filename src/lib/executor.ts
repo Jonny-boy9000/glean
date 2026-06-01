@@ -309,9 +309,14 @@ function excludeFromWorktree(main: string, worktree: string, patterns: string[])
 // steps don't fail with "Another git process seems to be running".
 function clearStaleIndexLock(main: string, worktree: string): void {
   try {
-    const lockRel = execFileSync('git', ['-C', worktree, 'rev-parse', '--git-path', 'index.lock'], { encoding: 'utf8' }).trim();
-    const lockPath = join(worktree, lockRel);
-    if (existsSync(lockPath)) {
+    // --path-format=absolute makes the returned path unambiguous; git -C runs in
+    // the worktree so this resolves to the linked worktree's own index.lock.
+    const lockPath = execFileSync(
+      'git',
+      ['-C', worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (lockPath && existsSync(lockPath)) {
       rmSync(lockPath, { force: true });
       process.stderr.write(`[draft-impl] cleared stale index.lock in ${worktree}\n`);
     }

@@ -161,6 +161,42 @@ describe('executeOne', () => {
     expect(execSync('git rev-parse main', { cwd: repo, encoding: 'utf8' }).trim()).toBe(mainHead);
   });
 
+  it('draft-impl: recovers from a stale index.lock left by a killed child (T8)', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-lock-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    const root = tmpRoot();
+    const result = await executeOne(
+      {
+        id: 'draft-lock', evidence_hash: 'h', type: 'draft-impl',
+        project_path: repo,
+        evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO' }] },
+        est_value: 50, est_tokens: 1000, status: 'pending',
+      },
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000, baseBranch: 'main',
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-lock-leftover.yaml') },
+      },
+    );
+
+    // No crash; the stale lock was cleared so the auto-commit fallback succeeded.
+    expect(result.status).toBe('ok');
+    expect(result.output?.kind).toBe('branch');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    // the leftover lock is gone
+    const lockAbs = execSync('git rev-parse --path-format=absolute --git-path index.lock', { cwd: result.output.worktree, encoding: 'utf8' }).trim();
+    expect(existsSync(lockAbs)).toBe(false);
+    // the edited file was committed
+    const committed = execSync('git show --stat prep/glean-draft-lock', { cwd: repo, encoding: 'utf8' });
+    expect(committed).toContain('feature.ts');
+  });
+
   it('draft-impl: skips with a warning when base_branch is not configured', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-draft-nobase-'));
     execSync('git init -q -b main', { cwd: repo });

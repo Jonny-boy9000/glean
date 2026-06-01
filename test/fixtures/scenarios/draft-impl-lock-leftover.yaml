@@ -1,0 +1,15 @@
+# Simulates a child killed mid-commit: it edited a file and left a stale
+# index.lock behind WITHOUT completing the commit. The executor must clear the
+# lock and still auto-commit the dirty tree into a coherent branch result.
+write_files:
+  - path: feature.ts
+    content: |
+      export const feature = 'half-written';
+shell_commands:
+  # Create a stale lock at the worktree's real index path (linked worktree:
+  # .git is a file, so resolve the gitdir). Leaves it behind uncommitted.
+  - git rev-parse --git-path index.lock
+  - node -e "const{execSync}=require('child_process');const p=execSync('git rev-parse --git-path index.lock').toString().trim();require('fs').writeFileSync(p,'')"
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+exit_code: 0
