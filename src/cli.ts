@@ -207,10 +207,13 @@ const scheduleCmd = defineCommand({
   args: {
     action: { type: 'positional', required: true, description: 'enable | disable | status' },
     project: { type: 'string', required: false, description: 'Project path to target (required for enable)' },
-    day: { type: 'string', default: DEFAULT_DAY, description: `Day of week for the weekly trigger (default: ${DEFAULT_DAY})` },
-    time: { type: 'string', default: DEFAULT_TIME, description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME})` },
-    'repeat-minutes': { type: 'string', default: String(DEFAULT_REPEAT_MINUTES), description: `Repetition interval in minutes (default: ${DEFAULT_REPEAT_MINUTES})` },
-    'duration-hours': { type: 'string', default: String(DEFAULT_DURATION_HOURS), description: `Repetition window duration in hours (default: ${DEFAULT_DURATION_HOURS})` },
+    // No citty `default:` here — defaults are applied AFTER the config fallback
+    // below, so a config-file drain_trigger is reachable (citty defaults would
+    // otherwise always populate args.* and shadow the config).
+    day: { type: 'string', description: `Day of week for the weekly trigger (default: ${DEFAULT_DAY})` },
+    time: { type: 'string', description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME})` },
+    'repeat-minutes': { type: 'string', description: `Repetition interval in minutes (default: ${DEFAULT_REPEAT_MINUTES})` },
+    'duration-hours': { type: 'string', description: `Repetition window duration in hours (default: ${DEFAULT_DURATION_HOURS})` },
   },
   async run({ args }) {
     const action = (args.action as string).toLowerCase();
@@ -239,10 +242,10 @@ const scheduleCmd = defineCommand({
       // Read drain_trigger overrides from config; CLI flags take precedence.
       const cfgTrigger = cfg.drain_trigger ?? {};
 
-      const day           = args.day           as string ?? cfgTrigger.day            ?? DEFAULT_DAY;
-      const time          = args.time          as string ?? cfgTrigger.time           ?? DEFAULT_TIME;
-      const repeatMinutes = Number(args['repeat-minutes'] ?? cfgTrigger.repeat_minutes ?? DEFAULT_REPEAT_MINUTES);
-      const durationHours = Number(args['duration-hours'] ?? cfgTrigger.duration_hours ?? DEFAULT_DURATION_HOURS);
+      const day           = (args.day  as string | undefined) ?? cfgTrigger.day  ?? DEFAULT_DAY;
+      const time          = (args.time as string | undefined) ?? cfgTrigger.time ?? DEFAULT_TIME;
+      const repeatMinutes = Number((args['repeat-minutes'] as string | undefined) ?? cfgTrigger.repeat_minutes ?? DEFAULT_REPEAT_MINUTES);
+      const durationHours = Number((args['duration-hours'] as string | undefined) ?? cfgTrigger.duration_hours ?? DEFAULT_DURATION_HOURS);
 
       // Resolve the project path: --project flag beats config keys (use first configured if only one).
       let projectPath = args.project ? resolve(args.project as string) : '';

@@ -70,10 +70,14 @@ const PARSERS: readonly Parser[] = [
   parseWallClock,
 ];
 
-// Parser 1 — bare ISO 8601 timestamp anywhere in the text.
-// Matches: "2026-06-03T11:00:00Z", "2026-06-03T11:00:00.000Z", etc.
+// Parser 1 — ISO 8601 timestamp WITH an explicit timezone (Z or ±HH:MM).
+// A zone designator is REQUIRED: `new Date("2026-06-03T11:00:00")` (no zone)
+// would be parsed as machine-LOCAL time, silently offsetting reset_at from the
+// intended UTC. Requiring a zone means a naive timestamp falls through to the
+// other parsers / ambiguous rather than being misread.
+// Matches: "2026-06-03T11:00:00Z", "...00.000Z", "...00+03:00", "...00+0300".
 function parseIsoTimestamp(text: string, _nowMs: number): Date | null {
-  const m = text.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\b/);
+  const m = text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/);
   if (!m) return null;
   const d = new Date(m[1]);
   return Number.isFinite(d.getTime()) ? d : null;

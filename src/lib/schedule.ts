@@ -71,17 +71,20 @@ $ErrorActionPreference = 'Stop'
 
 $action = New-ScheduledTaskAction \`
   -Execute "${safeNode}" \`
-  -Argument "\\"${safeCli}\\" run --drain --project \\"${safeProject}\\""
+  -Argument "\`"${safeCli}\`" run --drain --project \`"${safeProject}\`""
 
 $trigger = New-ScheduledTaskTrigger \`
   -Weekly \`
   -DaysOfWeek ${day} \`
   -At "${time}"
 
-# Attach a repetition so the drain retries/continues across the session window.
-$trigger.Repetition.Interval = ${repeatInterval}
-$trigger.Repetition.Duration = ${repeatDuration}
-$trigger.Repetition.StopAtDurationEnd = $false
+# Repetition sub-properties (.Repetition.Interval/.Duration) are READ-ONLY on a
+# weekly trigger in PowerShell 7 — assigning them throws. The reliable pattern is
+# to build the repetition from a throwaway -Once trigger and assign the whole
+# .Repetition object. Verified live against PowerShell 7 (Interval=PT1H etc.).
+$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At "${time}" \`
+  -RepetitionInterval ${repeatInterval} \`
+  -RepetitionDuration ${repeatDuration}).Repetition
 
 $settings = New-ScheduledTaskSettingsSet \`
   -StartWhenAvailable \`
@@ -94,18 +97,9 @@ $settings = New-ScheduledTaskSettingsSet \`
 $principal = New-ScheduledTaskPrincipal \`
   -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) \`
   -LogonType Interactive \`
-  -RunLevel Highest
+  -RunLevel Limited
 
-# Create the task folder if it doesn't exist yet.
-$svc = New-Object -ComObject Schedule.Service
-$svc.Connect()
-try {
-  $svc.GetFolder("\\Glean") | Out-Null
-} catch {
-  $root = $svc.GetFolder("\\")
-  $root.CreateFolder("Glean") | Out-Null
-}
-
+# Register-ScheduledTask -Force auto-creates the \\Glean subfolder; no COM needed.
 Register-ScheduledTask \`
   -TaskName "${TASK_NAME}" \`
   -Action $action \`

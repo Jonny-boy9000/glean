@@ -45,7 +45,9 @@ export function acquireLock(root: string, runId: string): LockResult {
     try {
       const existing = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid: number; run_id: string; started_at: string };
       const ageMs = Date.now() - new Date(existing.started_at).getTime();
-      const isStaleByAge = ageMs > STALE_LOCK_MS;
+      // A non-finite age means started_at is missing/unparseable → treat as
+      // stale (a lock we can't date is not trustworthy), not as live.
+      const isStaleByAge = !Number.isFinite(ageMs) || ageMs > STALE_LOCK_MS;
       if (!isStaleByAge && isPidAlive(existing.pid)) {
         return { acquired: false, reason: 'busy', holder: existing };
       }
@@ -139,8 +141,15 @@ export function readDrainState(root: string): ReadDrainStateResult {
 export function atomicWriteFileSync(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, contents);
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, contents);
+    renameSync(tmp, path);
+  } catch (e) {
+    // On a failed write/rename (e.g. disk full) don't leave an orphaned temp
+    // file behind — the destination is untouched (atomicity preserved).
+    try { unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
 }
 
 export function writeDrainState(root: string, state: DrainState): void {

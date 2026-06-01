@@ -185,3 +185,41 @@ describe('buildRegisterScript — pure function contract', () => {
     expect(a).not.toBe(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Live PowerShell validity (Windows only). String-presence tests cannot catch
+// PowerShell quoting errors or read-only-property assignments — these two bugs
+// both shipped past the toContain() checks and were only caught by actually
+// parsing + constructing in PowerShell. This block runs the generated script up
+// to (but NOT including) Register-ScheduledTask, so it builds the action/trigger/
+// settings/principal objects (pure, in-memory) without registering anything.
+// ---------------------------------------------------------------------------
+
+describe('buildRegisterScript — live PowerShell validity', () => {
+  const winOnly = process.platform === 'win32' ? it : it.skip;
+
+  winOnly('parses as valid PowerShell (no quoting errors), even with spaced paths', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const script = buildRegisterScript(makeOpts({
+      cliEntry: 'C:\\Program Files\\glean\\bin\\glean.js',
+      projectPath: 'C:\\My Projects\\app',
+    }));
+    // [ScriptBlock]::Create throws on a syntax error; no execution happens.
+    const probe = `$ErrorActionPreference='Stop'; [ScriptBlock]::Create(@'\n${script}\n'@) | Out-Null; Write-Output 'OK'`;
+    const out = execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', probe], {
+      encoding: 'utf8', windowsHide: true,
+    });
+    expect(out.trim()).toBe('OK');
+  });
+
+  winOnly('constructs the action/trigger/settings/principal without error', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const full = buildRegisterScript(makeOpts({ projectPath: 'C:\\My Projects\\app' }));
+    // Everything before the registration call: pure in-memory object construction.
+    const construct = full.split('Register-ScheduledTask')[0] + '\nWrite-Output "BUILT"';
+    const out = execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', construct], {
+      encoding: 'utf8', windowsHide: true,
+    });
+    expect(out).toContain('BUILT');
+  });
+});
