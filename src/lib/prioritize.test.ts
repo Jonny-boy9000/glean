@@ -48,6 +48,13 @@ describe('prioritize', () => {
     expect(ranked[0].type).toBe('research-dossier');
   });
 
+  it('weights draft-impl at 1.0 (>  fetch-docs at equal value)', () => {
+    const d = c({ type: 'draft-impl', est_value: 30, est_tokens: 1000 });
+    const f = c({ type: 'fetch-docs', est_value: 30, est_tokens: 1000, evidence: { kind: 'dep', manifest: 'package.json', package: 'p', added_at: 'now' } });
+    const ranked = prioritize([f, d], 60 * 60_000, 0);
+    expect(ranked[0].type).toBe('draft-impl');
+  });
+
   it('keeps only fetch-docs when <5 min remains', () => {
     const r = c({ type: 'research-dossier' });
     const f = c({ type: 'fetch-docs', evidence: { kind: 'dep', manifest: 'package.json', package: 'p', added_at: 'now' } });

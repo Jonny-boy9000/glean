@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { Memory } from './memory.js';
+import type { CandidateType } from './types.js';
 
 export type IndexEntryStatus =
   | 'ok'
@@ -14,7 +15,7 @@ export type IndexEntry = {
   title: string;
   status: IndexEntryStatus;
   output: string;
-  type: 'research-dossier' | 'fetch-docs';
+  type: CandidateType;
   task_id: string;                                                 // required join key
   duration_ms?: number;                                            // optional, from memory.db (Task 4)
   bytes_written?: number;                                          // optional, from memory.db (Task 4)
@@ -104,7 +105,7 @@ function parseIndex(path: string): { project_path?: string; entries: IndexEntry[
       title: e.title,
       status: e.status as IndexEntryStatus,
       output: typeof e.output === 'string' ? e.output : '',
-      type: e.type === 'fetch-docs' ? 'fetch-docs' : 'research-dossier',
+      type: e.type === 'fetch-docs' || e.type === 'draft-impl' ? e.type : 'research-dossier',
       task_id: e.task_id,
     });
   }

@@ -1,7 +1,9 @@
+import type { CandidateType } from './types.js';
+
 type Row = {
   id: number;
   title: string;
-  candidate_type: 'research-dossier' | 'fetch-docs';
+  candidate_type: CandidateType;
   ended_at: number;
   dossier_path: string;
   user_rating: 'kept' | 'discarded' | 'actioned' | null;

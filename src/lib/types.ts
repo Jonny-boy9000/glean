@@ -1,4 +1,4 @@
-export type CandidateType = 'research-dossier' | 'fetch-docs';
+export type CandidateType = 'research-dossier' | 'fetch-docs' | 'draft-impl';
 
 export type EvidenceTodo = {
   kind: 'todo';
