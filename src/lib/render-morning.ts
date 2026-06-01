@@ -34,6 +34,9 @@ export type MorningReport = {
   rate_limit_hits: number;
   branches: MorningBranchEntry[];
   files: MorningFileEntry[];
+  // T6: number of drain-window bursts aggregated into this report. Absent (or 1)
+  // means single-run mode (bare `glean run` receipt — byte-identical to pre-T6).
+  bursts?: number;
 };
 
 type Painter = {
@@ -82,6 +85,17 @@ export function renderMorning(report: MorningReport, useColor: boolean): string 
   const mins = elapsedMinutes(report.started_at, report.ended_at);
   const hitsNoun = report.rate_limit_hits === 1 ? 'rate-limit hit' : 'rate-limit hits';
   lines.push(c.dim(`${mins} min spent · ${report.rate_limit_hits} ${hitsNoun}`));
+
+  // T6: drain-window coverage line — only emitted when bursts field is present.
+  if (report.bursts !== undefined) {
+    if (report.bursts === 0) {
+      lines.push(c.dim('Coverage: 0 bursts — nothing ran this window.'));
+    } else {
+      const noun = report.bursts === 1 ? 'burst' : 'bursts';
+      lines.push(c.dim(`Coverage: woke for ${report.bursts} ${noun} this window.`));
+    }
+  }
+
   lines.push(outcomeLine(report.exit_reason, c));
 
   return lines.join('\n');
@@ -129,8 +143,9 @@ function renderFile(f: MorningFileEntry, c: Painter, lines: string[]): void {
   lines.push(`      ${c.dim(outputDisplay)}`);
 }
 
-// exit_reason → an honest, plain phrase. The v0.7 engine has NO weekly-drain
-// signal (cut to v0.8), so NONE of these may claim the week was drained.
+// exit_reason → an honest, plain phrase.
+// CRITICAL honesty rule: ONLY 'weekly-drained' may claim the week was drained.
+// Every other reason must NOT use the words "drained", "weekly", or "whole week".
 function outcomeLine(reason: string | null, c: Painter): string {
   switch (reason) {
     case 'completed':
@@ -145,6 +160,18 @@ function outcomeLine(reason: string | null, c: Painter): string {
       return c.dim('Outcome: no candidates — nothing to work on this run.');
     case 'lock-busy':
       return c.dim('Outcome: another glean run held the lock.');
+    // v0.8 drain exit reasons (T6 shared contract):
+    case 'weekly-drained':
+      // THE ONLY phrase allowed to claim the week was drained.
+      return c.green('Outcome: drained weekly capacity (hit the weekly limit).');
+    case 'session-paused':
+      return c.dim('Outcome: paused at the session limit — will resume next window.');
+    case 'no-progress':
+      return c.dim('Outcome: stopped early: no new work produced.');
+    case 'ambiguous-signal':
+      return c.dim('Outcome: stopped early: unrecognized rate-limit signal.');
+    case 'discovery-failed':
+      return c.dim('Outcome: stopped early: discovery failed (transient).');
     default:
       return c.dim(`Outcome: ${reason ?? 'unknown'}.`);
   }

@@ -800,3 +800,130 @@ describe('Memory enrichment lookup', () => {
     m.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// T6: getRunsWithCandidatesSince
+// ---------------------------------------------------------------------------
+
+describe('Memory getRunsWithCandidatesSince (T6)', () => {
+  // Helper: record a run with overridden started_at (which recordRun sets to
+  // Date.now() internally). We patch the row directly after insertion.
+  function seedRun(
+    m: Memory,
+    runId: string,
+    startedAt: number,
+    opts: {
+      exit_reason?: string;
+      project_path?: string;
+      candidates?: Array<{ slug: string; type?: string; rate_limit_hits?: number; dossier_path?: string }>;
+    } = {},
+  ): void {
+    const db = (m as unknown as { db: {
+      prepare: (s: string) => { run: (...a: unknown[]) => void; get: (...a: unknown[]) => Record<string, unknown> };
+    } }).db;
+    m.recordRun(runId, {
+      project_path: opts.project_path ?? 'C:\\Proj',
+      budget_seconds: 3600,
+      max_parallel: 1,
+      glean_version: '0.8.0',
+    });
+    // Overwrite started_at and exit_reason (recordRun uses Date.now()).
+    db.prepare('UPDATE runs SET started_at = ?, exit_reason = ? WHERE run_id = ?')
+      .run(startedAt, opts.exit_reason ?? 'completed', runId);
+
+    for (const c of opts.candidates ?? []) {
+      const id = m.recordCandidate(runId, {
+        candidate_slug: c.slug,
+        candidate_type: (c.type ?? 'research-dossier') as import('./types.js').CandidateType,
+        title: `Title for ${c.slug}`,
+        source_signal: 'git-todo',
+        file_path: 'src/a.ts',
+        est_value: 0.5,
+        est_tokens: 500,
+        priority_rank: 0,
+      });
+      m.recordOutcome(id, 'ok', {
+        dossier_path: c.dossier_path ?? `C:\\glean\\dossiers\\proj\\${c.slug}\\OUT.md`,
+        stderr_rate_limit_hits: c.rate_limit_hits ?? 0,
+      });
+    }
+  }
+
+  it('returns empty array when no runs meet the since threshold', () => {
+    const m = new Memory(':memory:');
+    const future = Date.now() + 1_000_000;
+    seedRun(m, 'run-old', Date.now() - 1_000_000);
+    expect(m.getRunsWithCandidatesSince(future)).toHaveLength(0);
+    m.close();
+  });
+
+  it('returns only runs with started_at >= sinceMs, ordered ASC', () => {
+    const m = new Memory(':memory:');
+    const now = Date.now();
+    const t0 = now - 3000;
+    const t1 = now - 2000;
+    const t2 = now - 1000;
+
+    seedRun(m, 'run-a', t0);
+    seedRun(m, 'run-b', t1);
+    seedRun(m, 'run-c', t2);
+
+    const sinceMs = t1;  // include t1 and t2, exclude t0
+    const result = m.getRunsWithCandidatesSince(sinceMs);
+    expect(result).toHaveLength(2);
+    expect(result[0].run.run_id).toBe('run-b');
+    expect(result[1].run.run_id).toBe('run-c');
+    // Check ASC order by started_at
+    expect(result[0].run.started_at).toBeLessThanOrEqual(result[1].run.started_at);
+    m.close();
+  });
+
+  it('attaches the correct candidates to each run', () => {
+    const m = new Memory(':memory:');
+    const now = Date.now();
+    seedRun(m, 'run-x', now - 2000, {
+      candidates: [{ slug: 'x-c1', rate_limit_hits: 2 }, { slug: 'x-c2' }],
+    });
+    seedRun(m, 'run-y', now - 1000, {
+      candidates: [{ slug: 'y-c1' }],
+    });
+
+    const result = m.getRunsWithCandidatesSince(now - 3000);
+    expect(result).toHaveLength(2);
+    expect(result[0].run.run_id).toBe('run-x');
+    expect(result[0].candidates).toHaveLength(2);
+    expect(result[0].candidates.find((c) => c.candidate_slug === 'x-c1')?.stderr_rate_limit_hits).toBe(2);
+    expect(result[1].run.run_id).toBe('run-y');
+    expect(result[1].candidates).toHaveLength(1);
+    m.close();
+  });
+
+  it('returns all runs when sinceMs = 0 (the epoch)', () => {
+    const m = new Memory(':memory:');
+    seedRun(m, 'run-p', Date.now() - 5000);
+    seedRun(m, 'run-q', Date.now() - 4000);
+    expect(m.getRunsWithCandidatesSince(0)).toHaveLength(2);
+    m.close();
+  });
+
+  it('includes the exit_reason on each run row', () => {
+    const m = new Memory(':memory:');
+    const now = Date.now();
+    seedRun(m, 'run-d1', now - 2000, { exit_reason: 'session-paused' });
+    seedRun(m, 'run-d2', now - 1000, { exit_reason: 'weekly-drained' });
+
+    const result = m.getRunsWithCandidatesSince(now - 3000);
+    expect(result[0].run.exit_reason).toBe('session-paused');
+    expect(result[1].run.exit_reason).toBe('weekly-drained');
+    m.close();
+  });
+
+  it('returns a run with zero candidates when none were recorded', () => {
+    const m = new Memory(':memory:');
+    seedRun(m, 'run-empty', Date.now() - 1000);
+    const result = m.getRunsWithCandidatesSince(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].candidates).toHaveLength(0);
+    m.close();
+  });
+});
