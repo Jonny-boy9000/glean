@@ -106,25 +106,35 @@ export async function runDrain(
 
   // ── 6. Fold the burst outcome back into drain state ────────────────────────
   // Re-clone so we never mutate the object returned by readDrainState in place.
-  const next: DrainState = { ...state, completed_task_ids: [...state.completed_task_ids] };
+  // The skip-set is keyed on the STABLE evidence_hash (candidate ids are random
+  // uuids regenerated each discovery, so they cannot match across bursts). Union
+  // in the hashes this burst completed so a re-entry does NOT redo them — without
+  // this, draft-impl re-drafts the same top TODO into a fresh worktree on every
+  // tick of the window, wasting the very capacity the drain exists to spend.
+  const next: DrainState = {
+    ...state,
+    completed_task_ids: dedupe([
+      ...state.completed_task_ids,
+      ...(summary.completed_evidence_hashes ?? []),
+    ]),
+  };
 
   // Productivity bookkeeping: a burst that ran >0 tasks resets the counter; a
-  // 0-task burst increments it (used by guard 3d and ambiguous handling below).
-  if (summary.ran > 0) {
-    next.unproductive_reentries = 0;
-  } else {
-    next.unproductive_reentries = state.unproductive_reentries + 1;
-  }
+  // 0-task burst increments it (used by guard 3d).
+  next.unproductive_reentries = summary.ran > 0 ? 0 : state.unproductive_reentries + 1;
 
   const cls = summary.classification;
+
   if (cls?.kind === 'session') {
-    next.next_eligible_at = cls.reset_at ?? new Date(now() + SESSION_FALLBACK_MS).toISOString();
+    next.consecutive_ambiguous = 0;
+    next.next_eligible_at = sessionNextEligible(cls.reset_at, now);
     writeDrainState(opts.gleanRoot, next);
     summary.reason = 'session-paused';
     return summary;
   }
 
   if (cls?.kind === 'weekly') {
+    next.consecutive_ambiguous = 0;
     next.week_exhausted = true;
     next.last_observed_weekly_reset = cls.reset_at ?? new Date(now() + DRAIN_DURATION_MS).toISOString();
     writeDrainState(opts.gleanRoot, next);
@@ -133,11 +143,13 @@ export async function runDrain(
   }
 
   if (cls?.kind === 'ambiguous') {
-    // First ambiguous rate-limit: treat as a session retry — pause briefly and
-    // try again next tick. A SECOND ambiguous in a row (no productive burst
-    // cleared the counter between them) means we can't make sense of the signal
-    // → stop the window with 'ambiguous-signal'.
-    if (state.unproductive_reentries >= 1) {
+    // First ambiguous rate-limit: pause briefly and retry next tick. A SECOND
+    // ambiguous IN A ROW means the signal is unreadable → stop the window.
+    // Tracked by a DEDICATED counter (not unproductive_reentries, which any
+    // 0-task burst would trip) so the one-retry grace is reliable.
+    const priorAmbiguous = state.consecutive_ambiguous ?? 0;
+    next.consecutive_ambiguous = priorAmbiguous + 1;
+    if (priorAmbiguous >= 1) {
       writeDrainState(opts.gleanRoot, next);
       summary.reason = 'ambiguous-signal';
       return summary;
@@ -149,10 +161,24 @@ export async function runDrain(
   }
 
   // No rate-limit classification (completed / budget-exhausted / no-candidates /
-  // stop-sentinel from the burst itself / etc.) — just persist the updated
-  // productivity counter and return the burst's own reason unchanged.
+  // stop-sentinel from the burst itself / etc.) — reset the ambiguous streak,
+  // persist the updated counters, return the burst's own reason unchanged.
+  next.consecutive_ambiguous = 0;
   writeDrainState(opts.gleanRoot, next);
   return summary;
+}
+
+function dedupe(arr: readonly string[]): string[] {
+  return [...new Set(arr)];
+}
+
+// A session pause must never schedule the next tick in the past: a reset_at that
+// is already <= now (clock skew, or a just-passed wall-clock time) would clear
+// guard 3c immediately and spin. Floor to now + SESSION_FALLBACK_MS.
+function sessionNextEligible(resetAt: string | null, now: () => number): string {
+  const resetMs = resetAt ? Date.parse(resetAt) : NaN;
+  if (Number.isFinite(resetMs) && resetMs > now()) return resetAt as string;
+  return new Date(now() + SESSION_FALLBACK_MS).toISOString();
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -167,6 +193,7 @@ function freshWindow(now: () => number): DrainState {
     last_observed_weekly_reset: null,
     completed_task_ids: [],
     unproductive_reentries: 0,
+    consecutive_ambiguous: 0,
     schema: 1,
   };
 }

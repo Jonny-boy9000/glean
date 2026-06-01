@@ -57,6 +57,9 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
   // classified session/weekly/ambiguous signal to the drain wrapper.
   let classification: RateLimitClassification | undefined;
   const completedSet = new Set(opts.completedTaskIds ?? []);
+  // STABLE evidence_hashes executed this burst — surfaced on the summary so the
+  // drain wrapper can skip them on re-entry (candidate ids are random per run).
+  const completedHashes: string[] = [];
 
   const lock = acquireLock(opts.gleanRoot, runId);
   if (!lock.acquired) {
@@ -204,9 +207,10 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
 
     for (const c of finalRanked) {
       // v0.8 drain: skip candidates already completed in an earlier burst of this
-      // drain window (inert when completedTaskIds is empty / bare `glean run`).
-      if (completedSet.has(c.id)) {
-        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.skip_completed', task_id: c.id });
+      // drain window, keyed on the STABLE evidence_hash (candidate ids are random
+      // per discovery). Inert when completedTaskIds is empty / bare `glean run`.
+      if (completedSet.has(c.evidence_hash)) {
+        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.skip_completed', evidence_hash: c.evidence_hash });
         continue;
       }
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
@@ -240,6 +244,10 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
           : undefined,
       });
       appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.end', task_id: c.id, status: result.status, elapsed_ms: result.elapsed_ms });
+      // Record the executed candidate (any status, incl. the rate-limited one
+      // that breaks the loop) so a drain re-entry won't redo it — in particular a
+      // draft-impl that already provisioned a worktree must not be re-drafted.
+      completedHashes.push(c.evidence_hash);
 
       if (result.status === 'rate-limit') {
         reason = 'rate-limit';
@@ -280,6 +288,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       exit_code: exitCode,
     };
     if (classification) summary.classification = classification;
+    if (completedHashes.length > 0) summary.completed_evidence_hashes = completedHashes;
     writeSummary(opts.gleanRoot, runId, summary);
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'run.end', reason, ran, failed, timed_out });
     return summary;

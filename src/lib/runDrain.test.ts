@@ -303,15 +303,57 @@ describe('runDrain — post-burst state transitions', () => {
 
   it('second ambiguous in a row → ambiguous-signal stop', async () => {
     const root = tmpRoot();
-    // unproductive_reentries already 1 (a prior unproductive/ambiguous tick) AND
-    // next_eligible_at in the past so the eligibility guard lets the burst run.
+    // consecutive_ambiguous already 1 (a prior ambiguous tick) AND next_eligible_at
+    // in the past so the eligibility guard lets the burst run.
     writeDrainState(root, existingState({
-      unproductive_reentries: 1,
+      consecutive_ambiguous: 1,
       next_eligible_at: new Date(T0 - 1000).toISOString(),
     }));
     const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: AMBIGUOUS_CLS }));
     const summary = await runDrain(opts(root), clockAt(T0), fn);
     expect(summary.reason).toBe('ambiguous-signal');
+  });
+
+  it('an unproductive (non-ambiguous) tick does NOT trip the ambiguous-in-a-row stop', async () => {
+    const root = tmpRoot();
+    // unproductive_reentries high but consecutive_ambiguous 0 → a FIRST ambiguous
+    // signal must still get its one-retry grace (session-paused, not stopped).
+    writeDrainState(root, existingState({
+      unproductive_reentries: 2,
+      consecutive_ambiguous: 0,
+      next_eligible_at: new Date(T0 - 1000).toISOString(),
+    }));
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: AMBIGUOUS_CLS }));
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(summary.reason).toBe('session-paused');
+  });
+
+  it('completed evidence hashes are unioned into the skip-set across bursts (C1)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ completed_task_ids: ['hashA'] }));
+    const { fn, calls } = fakeBurst(baseSummary({
+      reason: 'rate-limit', ran: 1, classification: SESSION_CLS,
+      completed_evidence_hashes: ['hashB', 'hashA'],
+    }));
+    await runDrain(opts(root), clockAt(T0), fn);
+    // The burst was handed the prior skip-set...
+    expect(calls[0].completedTaskIds).toEqual(['hashA']);
+    // ...and the new hashes were merged + deduped into persisted state.
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect([...read.state.completed_task_ids].sort()).toEqual(['hashA', 'hashB']);
+  });
+
+  it('a session reset_at in the past is floored to now + SESSION_FALLBACK (no spin) (I2)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({}));
+    const pastReset: RateLimitClassification = { kind: 'session', reset_at: new Date(T0 - 99_000).toISOString(), reset_horizon: 'hours' };
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: pastReset }));
+    await runDrain(opts(root), clockAt(T0), fn);
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    // Not the past reset_at — floored forward so guard 3c won't fire immediately.
+    expect(read.state.next_eligible_at).toBe(new Date(T0 + SESSION_FALLBACK_MS).toISOString());
   });
 
   it('lock-busy → returns summary unchanged, budget.json untouched', async () => {

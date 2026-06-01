@@ -67,7 +67,13 @@ export function renderMorning(report: MorningReport, useColor: boolean): string 
   const c = useColor ? ANSI : PLAIN;
   const lines: string[] = [];
 
-  lines.push(c.bold(`GLEAN — while you slept (run ${report.run_id})`));
+  // T6: a 0-burst window (laptop asleep all window) has no real run_id — don't
+  // render a fake "(run (none))". Otherwise show the run id as before.
+  lines.push(c.bold(
+    report.bursts === 0
+      ? 'GLEAN — while you slept'
+      : `GLEAN — while you slept (run ${report.run_id})`,
+  ));
   lines.push(c.dim(`  ${describeWhen(report.started_at, report.ended_at)}`));
   lines.push('');
 

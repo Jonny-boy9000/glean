@@ -13,28 +13,32 @@ import { classifyRateLimit, type RateLimitClassification } from './classify.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
-// Read the last ~4KB of the captured stderr file and classify the rate-limit
-// signal (session vs weekly vs ambiguous). Tolerant of a missing/unreadable
-// file — a rate-limit we can't re-read from disk degrades to 'ambiguous' rather
-// than crashing the run. Only called when spawn.rateLimited is true.
+// Classify the rate-limit signal (session vs weekly vs ambiguous) from the
+// spawn's in-memory stderr tail, falling back to the captured file only if empty.
+// Tolerant of missing stderr — an unreadable signal degrades to 'ambiguous'
+// rather than crashing the run. Only called when spawn.rateLimited is true.
 const STDERR_TAIL_BYTES = 4096;
-function classifySpawnStderr(stderrPath: string): RateLimitClassification {
-  let text = '';
-  try {
-    const size = statSync(stderrPath).size;
-    const fd = openSync(stderrPath, 'r');
+function classifySpawnStderr(spawn: SpawnOutcome): RateLimitClassification {
+  // Prefer the in-memory tail captured during streaming (no flush race). Only
+  // fall back to re-reading the file if it's somehow empty.
+  let text = spawn.stderrText ?? '';
+  if (!text) {
     try {
-      const start = Math.max(0, size - STDERR_TAIL_BYTES);
-      const len = size - start;
-      const buf = Buffer.alloc(len);
-      readSync(fd, buf, 0, len, start);
-      text = buf.toString('utf8');
-    } finally {
-      closeSync(fd);
+      const size = statSync(spawn.stderrPath).size;
+      const fd = openSync(spawn.stderrPath, 'r');
+      try {
+        const start = Math.max(0, size - STDERR_TAIL_BYTES);
+        const len = size - start;
+        const buf = Buffer.alloc(len);
+        readSync(fd, buf, 0, len, start);
+        text = buf.toString('utf8');
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // Missing/unreadable stderr — classifyRateLimit('') returns ambiguous.
+      text = '';
     }
-  } catch {
-    // Missing/unreadable stderr — classifyRateLimit('') returns ambiguous.
-    text = '';
   }
   return classifyRateLimit(text);
 }
@@ -95,6 +99,10 @@ type SpawnOutcome = {
   rateLimited: boolean;
   timedOut: boolean;
   stderrPath: string;
+  // In-memory tail of stderr captured DURING streaming. Classifying this avoids a
+  // flush race: stderrStream.end() is async, so re-reading the file immediately
+  // could miss the final chunk and spuriously degrade session/weekly to ambiguous.
+  stderrText: string;
   jsonlPath: string;
   // F7: true once runClaude has awaited job.exit AND any kill() — the entire
   // spawned process tree is confirmed dead, so the worktree's index.lock (if any)
@@ -156,7 +164,7 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
     if (stderr_tail) result.stderr_tail = stderr_tail;
     // v0.8: surface the classified rate-limit signal so the drain wrapper can
     // decide session-paused vs weekly-drained vs ambiguous.
-    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn.stderrPath);
+    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn);
     return result;
   };
 
@@ -323,7 +331,7 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     if (output) result.output = output;
     if (stderr_tail) result.stderr_tail = stderr_tail;
     // v0.8: surface the classified rate-limit signal (drain wrapper consumes it).
-    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn.stderrPath);
+    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn);
     return result;
   };
 
@@ -635,6 +643,9 @@ async function runClaude(
   const stderrStream = createWriteStream(stderrPath);
   const jsonlStream = createWriteStream(jsonlPath);
   let rateLimited = false;
+  // Bounded in-memory tail of stderr — classified for the rate-limit signal so we
+  // never depend on the async file flush completing before we read it back.
+  let stderrText = '';
 
   // Pass prompt via stdin to avoid Windows command-line length limits (~8191 chars).
   // --verbose is required for --output-format stream-json in -p (print) mode.
@@ -668,6 +679,7 @@ async function runClaude(
   job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
   job.child.stderr?.on('data', (chunk: Buffer) => {
     stderrStream.write(chunk);
+    stderrText = (stderrText + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
     if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
       rateLimited = true;
       kills.push(job.kill());
@@ -696,7 +708,7 @@ async function runClaude(
 
   // We reach here only after job.exit resolved and (above) all kills were
   // awaited, so the spawned process tree is fully dead.
-  return { exitCode, rateLimited, timedOut, stderrPath, jsonlPath, descendantsDead: true };
+  return { exitCode, rateLimited, timedOut, stderrPath, stderrText, jsonlPath, descendantsDead: true };
 }
 
 const SAFETY_FOOTER = '\n\nspeculative — produce a draft, never push, write findings to `OUT.md` in the current working directory.\n';

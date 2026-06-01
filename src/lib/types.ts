@@ -86,6 +86,10 @@ export type RunSummary = {
   // v0.8: when a run ends on a rate-limit, the classified signal (session vs
   // weekly vs ambiguous) the drain wrapper uses to decide the next move.
   classification?: import('./classify.js').RateLimitClassification;
+  // v0.8: STABLE evidence_hashes the burst executed this run. The drain wrapper
+  // unions these into its skip-set so a re-entry does not redo completed work
+  // (candidate ids are random per discovery and cannot match across bursts).
+  completed_evidence_hashes?: string[];
 };
 
 export type DrainTrigger = {

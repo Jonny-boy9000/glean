@@ -8,8 +8,12 @@ export type DrainState = {
   next_eligible_at: string | null;        // ISO UTC; when the session window reopens
   week_exhausted: boolean;
   last_observed_weekly_reset: string | null;
-  completed_task_ids: string[];
+  completed_task_ids: string[];           // STABLE evidence_hashes completed this window
   unproductive_reentries: number;
+  // Consecutive ambiguous (unclassifiable) rate-limit signals. Tracked separately
+  // from unproductive_reentries so the one-retry grace before stopping is reliable.
+  // Optional for backward-compat with budget.json written before this field.
+  consecutive_ambiguous?: number;
   schema: 1;
 };
 
