@@ -553,6 +553,71 @@ describe('Memory migration v3', () => {
   });
 });
 
+describe('Memory migration v4 idempotency (F6)', () => {
+  it('does not brick on a half-migrated v3 DB that already has the v4 columns', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-mig-v4-half-'));
+    const path = join(dir, 'memory.db');
+    const Database = (await import('better-sqlite3')).default;
+    const raw = new Database(path);
+    raw.pragma('journal_mode = WAL');
+    raw.exec(`
+      CREATE TABLE runs (
+        run_id          TEXT PRIMARY KEY,
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        project_path    TEXT NOT NULL,
+        budget_seconds  INTEGER NOT NULL,
+        max_parallel    INTEGER NOT NULL,
+        exit_reason     TEXT,
+        glean_version   TEXT NOT NULL
+      );
+      CREATE TABLE candidates (
+        id                       INTEGER PRIMARY KEY,
+        run_id                   TEXT NOT NULL REFERENCES runs(run_id),
+        candidate_slug           TEXT NOT NULL,
+        fingerprint              TEXT NOT NULL,
+        candidate_type           TEXT NOT NULL,
+        title                    TEXT NOT NULL,
+        source_signal            TEXT NOT NULL,
+        file_path                TEXT,
+        est_value                REAL NOT NULL,
+        est_tokens               INTEGER NOT NULL,
+        priority_rank            INTEGER NOT NULL,
+        outcome                  TEXT,
+        dossier_path             TEXT,
+        started_at               INTEGER,
+        ended_at                 INTEGER,
+        duration_ms              INTEGER,
+        bytes_written            INTEGER,
+        stderr_rate_limit_hits   INTEGER NOT NULL DEFAULT 0,
+        dossier_existed_at_7d    INTEGER,
+        user_rating              TEXT,
+        user_rating_at           INTEGER,
+        draft_files              INTEGER
+      );
+    `);
+    // Half-migrated: user_version still 3, but draft_files (a v4 column) is
+    // already present — the old migration would ADD COLUMN draft_files, throw
+    // "duplicate column name", ROLLBACK, rethrow, and brick every future open.
+    raw.pragma('user_version = 3');
+    raw.close();
+
+    // Must NOT throw, and must finish at v4 with all four columns present.
+    const m = new Memory(path);
+    const db = (m as unknown as { db: {
+      pragma: (s: string, o?: { simple: boolean }) => unknown;
+      prepare: (s: string) => { all: () => Array<{ name: string }> };
+    } }).db;
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
+    expect(cols).toContain('draft_files');
+    expect(cols).toContain('draft_insertions');
+    expect(cols).toContain('draft_deletions');
+    expect(cols).toContain('prep_branch');
+    m.close();
+  });
+});
+
 describe('Memory enrichment lookup', () => {
   function seed(m: Memory, runId: string, slug: string, fields: { duration_ms?: number; bytes_written?: number; rate_limit_hits?: number; user_rating?: 'kept' | 'discarded' | 'actioned' | null }): number {
     m.recordRun(runId, {

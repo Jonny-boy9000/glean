@@ -72,6 +72,19 @@ export class Memory {
     this.migrate();
   }
 
+  // True if `table` already has a column named `column`. Used to make ADD COLUMN
+  // migrations idempotent (F6): a half-migrated DB (version bump didn't commit but
+  // the ALTER did, or a manual edit) must not brick on "duplicate column name".
+  private hasColumn(table: string, column: string): boolean {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return cols.some((c) => c.name === column);
+  }
+
+  private addColumnIfMissing(table: string, column: string, ddlType: string): void {
+    if (this.hasColumn(table, column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddlType}`);
+  }
+
   private migrate(): void {
     const version = this.db.pragma('user_version', { simple: true }) as number;
     if (version < 1) {
@@ -85,10 +98,14 @@ export class Memory {
         throw e;
       }
     }
+    // F6: each ADD COLUMN is guarded by addColumnIfMissing so a half-migrated DB
+    // (the ALTER landed but the user_version bump didn't commit, or a column was
+    // added out of band) re-runs cleanly instead of throwing "duplicate column
+    // name", rolling back, and bricking every future open.
     if (version < 2) {
       this.db.exec('BEGIN');
       try {
-        this.db.exec('ALTER TABLE candidates ADD COLUMN dossier_existed_at_7d INTEGER');
+        this.addColumnIfMissing('candidates', 'dossier_existed_at_7d', 'INTEGER');
         this.db.pragma('user_version = 2');
         this.db.exec('COMMIT');
       } catch (e) {
@@ -99,8 +116,8 @@ export class Memory {
     if (version < 3) {
       this.db.exec('BEGIN');
       try {
-        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating TEXT');
-        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating_at INTEGER');
+        this.addColumnIfMissing('candidates', 'user_rating', 'TEXT');
+        this.addColumnIfMissing('candidates', 'user_rating_at', 'INTEGER');
         this.db.pragma('user_version = 3');
         this.db.exec('COMMIT');
       } catch (e) {
@@ -112,10 +129,10 @@ export class Memory {
       // v4 (T12): draft-impl diff-stat columns so the receipt can read branch results.
       this.db.exec('BEGIN');
       try {
-        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_files INTEGER');
-        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_insertions INTEGER');
-        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_deletions INTEGER');
-        this.db.exec('ALTER TABLE candidates ADD COLUMN prep_branch TEXT');
+        this.addColumnIfMissing('candidates', 'draft_files', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'draft_insertions', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'draft_deletions', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'prep_branch', 'TEXT');
         this.db.pragma('user_version = 4');
         this.db.exec('COMMIT');
       } catch (e) {
