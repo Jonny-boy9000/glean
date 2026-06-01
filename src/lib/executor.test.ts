@@ -198,6 +198,42 @@ describe('executeOne', () => {
     expect(committed).toContain('feature.ts');
   });
 
+  it('F5: resolves base_branch per-candidate from the candidate project_path', async () => {
+    // Two repos with DIFFERENT base branch names. The executor must key the
+    // base off the candidate's OWN project_path, not an ambient single value —
+    // otherwise it could provision a worktree off the wrong repo's base.
+    const repoA = mkdtempSync(join(tmpdir(), 'glean-f5-A-'));
+    execSync('git init -q -b trunk', { cwd: repoA });
+    execSync('git config user.email t@t', { cwd: repoA });
+    execSync('git config user.name t', { cwd: repoA });
+    writeFileSync(join(repoA, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repoA });
+
+    const root = tmpRoot();
+    const result = await executeOne(
+      {
+        id: 'f5', evidence_hash: 'h', type: 'draft-impl',
+        project_path: repoA,
+        evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: implement feature' }] },
+        est_value: 50, est_tokens: 1000, status: 'pending',
+      },
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        // No ambient baseBranch — a per-candidate resolver keyed on project_path.
+        baseBranchFor: (p: string) => (p === repoA ? 'trunk' : 'main'),
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+      },
+    );
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    // worktree was provisioned off repoA's actual base branch (trunk), not main.
+    expect(result.output.base).toBe('trunk');
+    const count = execSync('git rev-list trunk..prep/glean-f5 --count', { cwd: repoA, encoding: 'utf8' }).trim();
+    expect(Number(count)).toBeGreaterThanOrEqual(1);
+  });
+
   it('draft-impl: spawns with a SCOPED Bash allow-list, never bare Bash (CRITICAL 1)', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-draft-allow-'));
     execSync('git init -q -b main', { cwd: repo });

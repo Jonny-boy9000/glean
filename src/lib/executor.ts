@@ -21,7 +21,12 @@ export type ExecCtx = {
   env?: NodeJS.ProcessEnv;
   // Per-project base branch (from config.json projects[path].base_branch).
   // Required for draft-impl; if absent, draft-impl candidates are skipped.
+  // F5: prefer baseBranchFor (resolved per-candidate by the candidate's OWN
+  // project_path) over the ambient baseBranch, so a multi-project run can't
+  // provision a worktree off the wrong repo's base. baseBranch remains as a
+  // single-project fallback.
   baseBranch?: string;
+  baseBranchFor?: (projectPath: string) => string | undefined;
   // Per-project scoped test-command allow-list prefixes for draft-impl
   // (config.json projects[path].test_command, normalized to Bash(...) prefixes).
   // Absent → DEFAULT_TEST_COMMAND_ALLOW (npm/node toolchain).
@@ -147,12 +152,14 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     return result;
   };
 
+  // F5: resolve base_branch from the candidate's OWN project_path (not an
+  // ambient single value). Fall back to the legacy ambient baseBranch.
+  const base = ctx.baseBranchFor?.(c.project_path) ?? ctx.baseBranch;
   // Guard: draft-impl requires a configured base_branch. Skip (failed) otherwise.
-  if (!ctx.baseBranch) {
+  if (!base) {
     process.stderr.write(`[draft-impl] skipping ${c.id}: no base_branch configured for ${c.project_path}\n`);
     return finalizeFail('failed', ['no base_branch configured for this project']);
   }
-  const base = ctx.baseBranch;
   const main = c.project_path;
   const branch = `prep/glean-${c.id}`;
   const slug = slugify(c);

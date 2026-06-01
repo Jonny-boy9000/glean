@@ -36,7 +36,8 @@ export type PipelineOpts = {
   templatesDir: string;
   projectsRoot?: string; // override for tests
   ghBin?: string;
-  baseBranch?: string;   // per-project base branch for draft-impl (config.json)
+  baseBranch?: string;   // per-project base branch for draft-impl (config.json) — single-project fallback
+  baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
   testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
 };
 
@@ -195,6 +196,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         taskTimeoutMs: opts.taskTimeoutMs,
         env: opts.claudeEnv,
         baseBranch: opts.baseBranch,
+        baseBranchFor: opts.baseBranchFor,
         testCommandAllow: opts.testCommandAllow,
         recordOutcome: memory && c.candidate_row_id !== undefined
           ? ((status, fields) => {
