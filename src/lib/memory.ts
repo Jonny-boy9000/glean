@@ -140,6 +140,20 @@ export class Memory {
         throw e;
       }
     }
+    if (version < 5) {
+      // v5 (v0.7.1): glean's own deterministic test-status capture for draft-impl.
+      // After a draft session commits, glean runs the project's test_command in
+      // the worktree and stores the outcome here ('pass' | 'fail' | 'none').
+      this.db.exec('BEGIN');
+      try {
+        this.addColumnIfMissing('candidates', 'draft_tests', 'TEXT');
+        this.db.pragma('user_version = 5');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   recordRun(
@@ -216,13 +230,16 @@ export class Memory {
       draft_insertions?: number;
       draft_deletions?: number;
       prep_branch?: string;
+      // draft-impl deterministic test status (v5): 'pass' | 'fail' | 'none'.
+      draft_tests?: string;
     } = {},
   ): void {
     this.db.prepare(
       `UPDATE candidates
          SET outcome = ?, dossier_path = ?, started_at = ?, ended_at = ?,
              duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?,
-             draft_files = ?, draft_insertions = ?, draft_deletions = ?, prep_branch = ?
+             draft_files = ?, draft_insertions = ?, draft_deletions = ?, prep_branch = ?,
+             draft_tests = ?
        WHERE id = ?`,
     ).run(
       outcome,
@@ -236,6 +253,7 @@ export class Memory {
       fields.draft_insertions ?? null,
       fields.draft_deletions ?? null,
       fields.prep_branch ?? null,
+      fields.draft_tests ?? null,
       candidateId,
     );
   }
@@ -352,6 +370,8 @@ export class Memory {
       draft_insertions: number | null;
       draft_deletions: number | null;
       prep_branch: string | null;
+      // null on rows written before the v5 migration (genuinely unknown).
+      draft_tests: string | null;
     }>;
   } | null {
     const run = this.db.prepare(
@@ -371,7 +391,7 @@ export class Memory {
     const candidates = this.db.prepare(
       `SELECT candidate_slug, candidate_type, title, outcome, dossier_path,
               stderr_rate_limit_hits, draft_files, draft_insertions,
-              draft_deletions, prep_branch
+              draft_deletions, prep_branch, draft_tests
          FROM candidates
         WHERE run_id = ?
         ORDER BY priority_rank ASC, id ASC`,
@@ -386,6 +406,7 @@ export class Memory {
       draft_insertions: number | null;
       draft_deletions: number | null;
       prep_branch: string | null;
+      draft_tests: string | null;
     }>;
 
     return { run, candidates };
