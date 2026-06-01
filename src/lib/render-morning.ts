@@ -140,11 +140,14 @@ function outcomeLine(reason: string | null, c: Painter): string {
   }
 }
 
+// Surface the captured deterministic test status verbatim (pass | fail | none).
+// 'unknown' is ONLY for runs recorded before the v5 migration, where the field
+// is genuinely absent — never for a configured-but-skipped test.
 function describeTest(s: MorningBranchEntry['test_status']): string {
   switch (s) {
     case 'pass': return 'pass';
     case 'fail': return 'fail';
-    case 'none': return 'not run';
+    case 'none': return 'none';
     default:     return 'unknown';
   }
 }

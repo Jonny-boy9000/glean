@@ -46,7 +46,10 @@ export function findMorningRun(gleanRoot: string): MorningReport | null {
           insertions: c.draft_insertions ?? idx?.insertions ?? 0,
           deletions: c.draft_deletions ?? idx?.deletions ?? 0,
           status: c.outcome ?? 'unknown',
-          test_status: 'unknown',
+          // draft_tests is glean's own deterministic test check (v5). A NULL value
+          // means the row predates the migration → genuinely 'unknown'. A present
+          // value is surfaced verbatim ('pass' | 'fail' | 'none').
+          test_status: normalizeTestStatus(c.draft_tests),
         });
       } else if (c.dossier_path) {
         const idx = indexEntries.get(c.candidate_slug);
@@ -73,6 +76,13 @@ export function findMorningRun(gleanRoot: string): MorningReport | null {
   } finally {
     memory.close();
   }
+}
+
+// Map the DB draft_tests column to the renderer's test_status. Only a NULL (or
+// unrecognized) value — a pre-v5 row — degrades to 'unknown'.
+function normalizeTestStatus(v: string | null): MorningBranchEntry['test_status'] {
+  if (v === 'pass' || v === 'fail' || v === 'none') return v;
+  return 'unknown';
 }
 
 type IndexEntryLite = {

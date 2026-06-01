@@ -63,6 +63,42 @@ describe('renderMorning — branch (draft-impl) entry', () => {
   });
 });
 
+describe('renderMorning — test status line', () => {
+  function branchWith(test_status: MorningReport['branches'][number]['test_status']): MorningReport {
+    return baseReport({
+      branches: [
+        {
+          title: 'x', prep_branch: 'prep/glean-1', worktree: 'C:\\w\\demoproj-1',
+          files: 1, insertions: 5, deletions: 0, status: 'ok', test_status,
+        },
+      ],
+    });
+  }
+
+  it("renders 'tests: pass' when the captured status is pass", () => {
+    const out = renderMorning(branchWith('pass'), false);
+    expect(out).toContain('tests: pass');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: fail' when the captured status is fail", () => {
+    const out = renderMorning(branchWith('fail'), false);
+    expect(out).toContain('tests: fail');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: none' for 'none' (configured-but-not-run / not pass-or-fail), NOT unknown", () => {
+    const out = renderMorning(branchWith('none'), false);
+    expect(out).toContain('tests: none');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: unknown' ONLY when the status is genuinely absent (old runs)", () => {
+    const out = renderMorning(branchWith('unknown'), false);
+    expect(out).toContain('tests: unknown');
+  });
+});
+
 describe('renderMorning — trivial-diff guard (T14)', () => {
   it('renders "no changes (review)" instead of a celebratory stat when 0 files', () => {
     const report = baseReport({
