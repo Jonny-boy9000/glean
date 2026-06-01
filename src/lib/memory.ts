@@ -108,6 +108,21 @@ export class Memory {
         throw e;
       }
     }
+    if (version < 4) {
+      // v4 (T12): draft-impl diff-stat columns so the receipt can read branch results.
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_files INTEGER');
+        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_insertions INTEGER');
+        this.db.exec('ALTER TABLE candidates ADD COLUMN draft_deletions INTEGER');
+        this.db.exec('ALTER TABLE candidates ADD COLUMN prep_branch TEXT');
+        this.db.pragma('user_version = 4');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   recordRun(
@@ -179,12 +194,18 @@ export class Memory {
       duration_ms?: number;
       bytes_written?: number;
       stderr_rate_limit_hits?: number;
+      // draft-impl branch results (T12):
+      draft_files?: number;
+      draft_insertions?: number;
+      draft_deletions?: number;
+      prep_branch?: string;
     } = {},
   ): void {
     this.db.prepare(
       `UPDATE candidates
          SET outcome = ?, dossier_path = ?, started_at = ?, ended_at = ?,
-             duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?
+             duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?,
+             draft_files = ?, draft_insertions = ?, draft_deletions = ?, prep_branch = ?
        WHERE id = ?`,
     ).run(
       outcome,
@@ -194,6 +215,10 @@ export class Memory {
       fields.duration_ms ?? null,
       fields.bytes_written ?? null,
       fields.stderr_rate_limit_hits ?? 0,
+      fields.draft_files ?? null,
+      fields.draft_insertions ?? null,
+      fields.draft_deletions ?? null,
+      fields.prep_branch ?? null,
       candidateId,
     );
   }

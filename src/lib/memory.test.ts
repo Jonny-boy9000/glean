@@ -91,14 +91,14 @@ describe('fingerprintCandidate', () => {
 });
 
 describe('Memory open + migrate', () => {
-  it('creates the schema on a fresh DB and sets user_version=3', () => {
+  it('creates the schema on a fresh DB and sets user_version to the latest (4)', () => {
     const m = new Memory(':memory:');
     const rows = (m as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } })
       .db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
     expect(rows).toEqual([{ name: 'candidates' }, { name: 'runs' }]);
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m.close();
   });
 
@@ -111,7 +111,7 @@ describe('Memory open + migrate', () => {
     const m2 = new Memory(path);
     const v = (m2 as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m2.close();
   });
 });
@@ -186,6 +186,41 @@ describe('Memory candidate lifecycle', () => {
     expect(after.dossier_path).toBe('C:\\foo\\OUT.md');
     expect(after.duration_ms).toBe(120_000);
     expect(after.bytes_written).toBe(4096);
+    m.close();
+  });
+
+  it('schema is at user_version 4 with draft-impl diff-stat columns (T12)', () => {
+    const m = new Memory(':memory:');
+    const db = (m as unknown as { db: {
+      pragma: (s: string, o?: { simple: boolean }) => unknown;
+      prepare: (s: string) => { all: () => Array<{ name: string }> };
+    } }).db;
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
+    expect(cols).toContain('draft_files');
+    expect(cols).toContain('draft_insertions');
+    expect(cols).toContain('draft_deletions');
+    expect(cols).toContain('prep_branch');
+    m.close();
+  });
+
+  it('recordOutcome persists draft-impl branch fields (T12)', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-draft', { project_path: 'C:\\Glean', budget_seconds: 3600, max_parallel: 1, glean_version: '0.7.0' });
+    const id = m.recordCandidate('run-draft', {
+      candidate_slug: 'd-1', candidate_type: 'draft-impl', title: 'Handle TODO in a.ts',
+      source_signal: 'git-todo', file_path: 'a.ts', est_value: 1, est_tokens: 6000, priority_rank: 0,
+    });
+    m.recordOutcome(id, 'ok', {
+      started_at: 1, ended_at: 2, duration_ms: 1, stderr_rate_limit_hits: 0,
+      draft_files: 2, draft_insertions: 47, draft_deletions: 3, prep_branch: 'prep/glean-d-1',
+    });
+    const row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT * FROM candidates WHERE id = ?').get(id);
+    expect(row.draft_files).toBe(2);
+    expect(row.draft_insertions).toBe(47);
+    expect(row.draft_deletions).toBe(3);
+    expect(row.prep_branch).toBe('prep/glean-d-1');
     m.close();
   });
 
@@ -293,7 +328,7 @@ describe('Memory sweep helpers', () => {
 });
 
 describe('Memory migration v2', () => {
-  it('creates the dossier_existed_at_7d column on a fresh DB and sets user_version=2', () => {
+  it('creates the dossier_existed_at_7d column on a fresh DB (full migrate → latest version)', () => {
     const m = new Memory(':memory:');
     const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
       .db.prepare("PRAGMA table_info('candidates')").all();
@@ -301,7 +336,7 @@ describe('Memory migration v2', () => {
     expect(names).toContain('dossier_existed_at_7d');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m.close();
   });
 
@@ -354,7 +389,7 @@ describe('Memory migration v2', () => {
     expect(cols.map((c) => c.name)).toContain('dossier_existed_at_7d');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m.close();
   });
 });
@@ -450,7 +485,7 @@ describe('Memory rating helpers', () => {
 });
 
 describe('Memory migration v3', () => {
-  it('creates user_rating and user_rating_at columns on a fresh DB and sets user_version=3', () => {
+  it('creates user_rating and user_rating_at columns on a fresh DB (full migrate → latest version)', () => {
     const m = new Memory(':memory:');
     const cols = (m as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } })
       .db.prepare("PRAGMA table_info('candidates')").all();
@@ -459,7 +494,7 @@ describe('Memory migration v3', () => {
     expect(names).toContain('user_rating_at');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m.close();
   });
 
@@ -513,7 +548,7 @@ describe('Memory migration v3', () => {
     expect(names).toContain('user_rating_at');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(3);
+    expect(v).toBe(4);
     m.close();
   });
 });
