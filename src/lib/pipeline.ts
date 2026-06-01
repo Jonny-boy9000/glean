@@ -14,6 +14,7 @@ import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidate
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
 import { runDossierExistenceSweep, SWEEP_AGE_MS } from './sweep.js';
+import { gcWorktrees } from './gc.js';
 import { titleFor, today, sourceSignalFor, filePathFor } from './candidate-meta.js';
 
 function gleanVersion(): string {
@@ -84,6 +85,17 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     } catch (e) {
       process.stderr.write(`[memory] warning: sweep failed: ${(e as Error).message}\n`);
     }
+  }
+
+  // CRITICAL 2: expire draft-impl worktrees + prep branches older than 21 days
+  // (CLAUDE.md §5.6). Best-effort — gcWorktrees swallows all errors internally.
+  try {
+    const removed = gcWorktrees(opts.projectPath, opts.gleanRoot, Date.now());
+    if (removed.length > 0) {
+      appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'gc.done', removed: removed.length });
+    }
+  } catch (e) {
+    process.stderr.write(`[gc] warning: worktree gc failed: ${(e as Error).message}\n`);
   }
 
   const repairResult = repairRecent(opts.gleanRoot);

@@ -162,9 +162,34 @@ const peekCmd = defineCommand({
   },
 });
 
+const gcCmd = defineCommand({
+  meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
+  args: {
+    project: { type: 'string', required: false, description: 'Limit gc to one project repo (default: all configured projects)' },
+  },
+  async run({ args }) {
+    const { gcWorktrees } = await import('./lib/gc.js');
+    const cfg = loadConfig(defaultConfigPath());
+    const repos = args.project
+      ? [resolve(args.project as string)]
+      : Object.keys(cfg.projects ?? {});
+    if (repos.length === 0) {
+      console.log('no configured projects to gc (add one under projects in config.json, or pass --project)');
+      return;
+    }
+    let total = 0;
+    for (const repo of repos) {
+      const removed = gcWorktrees(repo, gleanRoot(), Date.now());
+      total += removed.length;
+      for (const dir of removed) console.log(`  - removed ${dir}`);
+    }
+    console.log(`gc done: ${total} stale worktree(s) removed`);
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, gc: gcCmd },
 });
 
 export function main(argv: string[]): void {
