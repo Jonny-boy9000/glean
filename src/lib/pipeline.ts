@@ -259,7 +259,7 @@ function appendIndex(root: string, projSlug: string, runId: string, c: Candidate
   writeFileSync(indexPath, `---\n${yaml}---\n\n# Glean dossier — ${today()}\n\n${renderHumanList(frontmatter.entries as IndexEntryRecord[])}`);
 }
 
-type IndexEntryRecord = {
+export type IndexEntryRecord = {
   task_id: string;
   evidence_hash: string;
   type: Candidate['type'];
@@ -299,7 +299,7 @@ function renderHumanList(entries: IndexEntryRecord[]): string {
   return entries.map((e, i) => `${i + 1}. ${renderEntry(e)}`).join('\n\n');
 }
 
-function renderEntry(e: IndexEntryRecord): string {
+export function renderEntry(e: IndexEntryRecord): string {
   if (e.type === 'draft-impl' && e.branch) {
     const stat = `+${e.insertions ?? 0} / -${e.deletions ?? 0} across ${e.files ?? 0} file(s)`;
     // Review: the prep branch is already checked out in the linked worktree, so
