@@ -34,6 +34,21 @@ describe('spawnInJob', () => {
   });
 });
 
+describe('spawnInJob.kill awaitability (F7)', () => {
+  it('kill() returns a promise that resolves after the tree-kill completes', async () => {
+    const job = spawnInJob(process.platform === 'win32' ? 'cmd' : 'sh',
+      process.platform === 'win32' ? ['/c', 'timeout', '/t', '30'] : ['-c', 'sleep 30']);
+    await wait(300);
+    const killed = job.kill();
+    // kill() must be awaitable (a thenable), so callers can sequence cleanup
+    // (e.g. clearing a stale index.lock) strictly AFTER descendants are gone.
+    expect(typeof (killed as Promise<void>)?.then).toBe('function');
+    await killed;
+    const code = await job.exit;
+    expect(code).not.toBe(0);
+  });
+});
+
 describe('spawnInJob.kill on Windows', () => {
   it.skipIf(process.platform !== 'win32')('calls taskkill /T /F with the child pid', async () => {
     vi.mocked(execFileMock).mockClear();

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { executeOne, __diffStat, __commitsBeyondBase } from './executor.js';
+import { executeOne, __diffStat, __commitsBeyondBase, __clearStaleIndexLock } from './executor.js';
 import * as jobobject from './jobobject.js';
 import type { Candidate } from './types.js';
 
@@ -160,6 +160,28 @@ describe('executeOne', () => {
     expect(Number(prepCommits)).toBeGreaterThanOrEqual(1);
     // main HEAD untouched
     expect(execSync('git rev-parse main', { cwd: repo, encoding: 'utf8' }).trim()).toBe(mainHead);
+  });
+
+  it('F7: clearStaleIndexLock refuses to delete a lock while descendants may be alive', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-f7-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), 'x\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    // Plant a lock at the repo's real index path.
+    const lockPath = execSync('git rev-parse --path-format=absolute --git-path index.lock', { cwd: repo, encoding: 'utf8' }).trim();
+    writeFileSync(lockPath, '');
+    expect(existsSync(lockPath)).toBe(true);
+
+    // descendantsDead=false → a live holder might own the lock → must NOT delete.
+    __clearStaleIndexLock(repo, repo, false);
+    expect(existsSync(lockPath)).toBe(true);
+
+    // descendantsDead=true → the tree is confirmed dead → safe to clear.
+    __clearStaleIndexLock(repo, repo, true);
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it('draft-impl: recovers from a stale index.lock left by a killed child (T8)', async () => {

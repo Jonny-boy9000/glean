@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
@@ -52,6 +52,10 @@ type SpawnOutcome = {
   timedOut: boolean;
   stderrPath: string;
   jsonlPath: string;
+  // F7: true once runClaude has awaited job.exit AND any kill() — the entire
+  // spawned process tree is confirmed dead, so the worktree's index.lock (if any)
+  // is provably orphaned and safe to clear.
+  descendantsDead: boolean;
 };
 
 export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
@@ -205,9 +209,11 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     allowedTools,
   });
 
-  // Kill-mid-commit safety (T8): a killed child may leave a stale index.lock in
-  // the worktree, which would break the auto-commit/diff below. Clear it.
-  clearStaleIndexLock(main, worktree);
+  // Kill-mid-commit safety (T8/F7): a killed child may leave a stale index.lock
+  // in the worktree, which would break the auto-commit/diff below. runClaude has
+  // already awaited the descendant tree-kill, so the lock is provably orphaned
+  // (spawn.descendantsDead) — clear it.
+  clearStaleIndexLock(main, worktree, spawn.descendantsDead);
 
   const elapsed_ms = Date.now() - start;
 
@@ -318,6 +324,7 @@ commitsBeyondBase.impl = commitsBeyondBaseImpl;
 // Test-only handles (prefixed __ to signal "do not use in production code").
 export const __diffStat = diffStat;
 export const __commitsBeyondBase = commitsBeyondBase;
+export const __clearStaleIndexLock = clearStaleIndexLock;
 
 // Auto-commit fallback for when the session edited but did not commit.
 //
@@ -380,9 +387,19 @@ function excludeFromWorktree(main: string, worktree: string, patterns: string[])
   } catch { /* best effort */ }
 }
 
-// T8: remove a stale index.lock left by a killed child so the auto-commit/diff
-// steps don't fail with "Another git process seems to be running".
-function clearStaleIndexLock(main: string, worktree: string): void {
+// T8/F7: remove a STALE index.lock left by a killed/exited child so the
+// auto-commit/diff steps don't fail with "Another git process seems to be
+// running".
+//
+// F7 — DO NOT delete a lock a live process still holds. The real guarantee is
+// the caller's precondition: runClaude has already awaited spawnInJob.kill()
+// (descendant tree-kill complete) AND job.exit, so by the time this runs the
+// entire spawned process tree is dead — any surviving lock is provably orphaned.
+// That is a stronger, non-racy signal than a wall-clock age heuristic, which is
+// why we gate on `descendantsDead` rather than guessing from mtime. We still log
+// the lock age for diagnostics.
+function clearStaleIndexLock(main: string, worktree: string, descendantsDead: boolean): void {
+  if (!descendantsDead) return; // never touch a lock while a holder may be alive
   try {
     // --path-format=absolute makes the returned path unambiguous; git -C runs in
     // the worktree so this resolves to the linked worktree's own index.lock.
@@ -391,10 +408,11 @@ function clearStaleIndexLock(main: string, worktree: string): void {
       ['-C', worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock'],
       { encoding: 'utf8' },
     ).trim();
-    if (lockPath && existsSync(lockPath)) {
-      rmSync(lockPath, { force: true });
-      process.stderr.write(`[draft-impl] cleared stale index.lock in ${worktree}\n`);
-    }
+    if (!lockPath || !existsSync(lockPath)) return;
+    let ageMs = Infinity;
+    try { ageMs = Date.now() - statSync(lockPath).mtimeMs; } catch { /* unknown age */ }
+    rmSync(lockPath, { force: true });
+    process.stderr.write(`[draft-impl] cleared stale index.lock in ${worktree} (age ${Number.isFinite(ageMs) ? Math.round(ageMs) + 'ms' : 'unknown'})\n`);
   } catch { /* best effort */ }
 }
 
@@ -437,17 +455,21 @@ async function runClaude(
     job.child.stdin.end();
   }
 
+  // Track every kill so we can await full descendant termination before any
+  // post-spawn cleanup touches the worktree (F7).
+  const kills: Promise<void>[] = [];
+
   job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
   job.child.stderr?.on('data', (chunk: Buffer) => {
     stderrStream.write(chunk);
     if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
       rateLimited = true;
-      job.kill();
+      kills.push(job.kill());
     }
   });
 
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; job.kill(); }, ctx.taskTimeoutMs);
+  const timer = setTimeout(() => { timedOut = true; kills.push(job.kill()); }, ctx.taskTimeoutMs);
 
   let exitCode: number;
   try {
@@ -456,10 +478,19 @@ async function runClaude(
     clearTimeout(timer);
   }
 
+  // F7: if we killed the job, wait for the tree-kill of all descendants to
+  // finish so no live grandchild git can still hold the worktree's index.lock
+  // when the caller proceeds to clear it.
+  if (kills.length > 0) {
+    try { await Promise.all(kills); } catch { /* best effort */ }
+  }
+
   stderrStream.end();
   jsonlStream.end();
 
-  return { exitCode, rateLimited, timedOut, stderrPath, jsonlPath };
+  // We reach here only after job.exit resolved and (above) all kills were
+  // awaited, so the spawned process tree is fully dead.
+  return { exitCode, rateLimited, timedOut, stderrPath, jsonlPath, descendantsDead: true };
 }
 
 const SAFETY_FOOTER = '\n\nspeculative — produce a draft, never push, write findings to `OUT.md` in the current working directory.\n';
