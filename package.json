@@ -1,8 +1,28 @@
 {
-  "name": "glean",
+  "name": "@jonny-boy9000/glean",
   "version": "0.7.1",
   "description": "Consume idle Claude Pro/Max capacity for speculative prep work between sessions",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Jonny-boy9000/glean#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jonny-boy9000/glean.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jonny-boy9000/glean/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "ai",
+    "automation",
+    "developer-tools"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "glean": "./bin/glean.js"
   },
@@ -13,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "dev": "tsx src/cli.ts",
     "pretest": "npm run build",
     "test": "vitest run",
