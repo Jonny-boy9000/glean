@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**v0.1.2 shipped** (tag `v0.1.2`, commit `0c77f25` on `main`). 81 tests passing + 1 documented skip. Public repo at https://github.com/Jonny-boy9000/glean.
+**v0.7.1 shipped and published to npm** (`@jonny-boy9000/glean@0.7.1`; `main` at merge `484b3f0`). 222 tests passing + 1 documented skip. Public repo at https://github.com/Jonny-boy9000/glean. Install: `npm i -g @jonny-boy9000/glean` (the CLI command is still `glean`).
 
-The MVP and two quality patches are done. For "what's next" see **[`docs/ROADMAP.md`](./docs/ROADMAP.md)** — that's the single source of truth for planned work. Update it on every release.
+Done so far: the MVP + quality patches (v0.1.x), the persistent-memory + usefulness-telemetry loop (v0.2–v0.6: `glean today`/`rate`/`peek`, dossier sweep), the **`draft-impl` engine** (v0.7.0 — AI-drafts code for the top TODO into an isolated `git worktree` on a `prep/glean-*` branch; safety enforced by a scoped tool allow-list; `glean gc` for worktree expiry), and the **`glean morning` receipt** with verified draft test status (v0.7.1). draft-impl was validated end-to-end on a real `claude -p` run (drafted code was keep-worthy, `tests: pass`, main untouched).
+
+**Next milestone is v0.8: the drain core** (consume the whole week's idle capacity), built as **exit-and-re-enter + scheduler, NOT an in-process sleeper** (it dies at laptop lid-close — the v0.7 eng review rejected it). For "what's next" see **[`docs/ROADMAP.md`](./docs/ROADMAP.md)** — the single source of truth for planned work. Update it on every release.
 
 When asked to "build", "implement", or "continue" something:
 1. **Read `docs/ROADMAP.md` first** to see what's in the "Up next" queue and what's already been deferred indefinitely.
