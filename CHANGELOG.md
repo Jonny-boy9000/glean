@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.7.1 — 2026-06-01
+
+`glean morning` — a "while you slept" receipt that narrates the most recent run (draft branches with diff stats and a verified test status, dossiers, and an honest outcome line). Second of the two v0.7 PRs.
+
+### Added
+- **`glean morning` subcommand.** Renders the latest run as a terminal receipt: each draft-impl branch shows its diff stat, a deterministic test status, the `cd`-to-review command, the worktree-remove discard command, and a "your main was never touched" line. Dossiers render today-style. Silent-degrades to a friendly message when there is no recent run.
+- **Deterministic draft-impl test status.** After a draft commits, glean runs the project's per-project `test_command` inside the worktree itself and records `pass`/`fail`/`none`. The test run is bounded by the remaining `--budget` and skipped on the STOP sentinel, so it can never overrun the run. Environment/setup failures (e.g. a fresh worktree with no `node_modules`) are reported as `none`, never a misleading `fail`; only a suite that genuinely ran and failed shows `fail`. A salvaged partial draft (session killed by timeout/rate-limit) is not trusted — reported as `none`.
+
+### Changed
+- Memory schema migrated to v5 (`draft_tests` column; idempotent).
+- `.gitattributes` added (`* text=auto eol=lf`) to normalize line endings.
+
+### Honesty
+- The receipt reports only test status glean verified itself, and never claims it "drained your weekly capacity" — the weekly-drain engine is deferred to v0.8 (exit-and-re-enter), not v0.7.
+
 ## v0.7.0 — 2026-06-01
 
 `draft-impl` — glean can now write speculative *code* into an isolated branch you review, not just research dossiers. The top-ranked TODO in a project with a configured `base_branch` gets implemented in a `git worktree` on a `prep/glean-*` branch; your main checkout is never touched.

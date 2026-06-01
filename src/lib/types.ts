@@ -84,9 +84,14 @@ export type GleanConfig = {
 // - 'file':   a dossier/fetch-docs run wrote a markdown file at `path`.
 // - 'branch': a draft-impl run committed to `branch` (off `base`) in a linked
 //             worktree; the diff-stat fields feed the receipt/INDEX.
+// draft_tests status: glean's OWN deterministic check — after the session
+// commits, glean runs the project's test_command in the worktree.
+//   'pass' → exit 0, 'fail' → non-zero, 'none' → no command configured / unrunnable.
+export type DraftTestStatus = 'pass' | 'fail' | 'none';
+
 export type TaskOutput =
   | { kind: 'file'; path: string }
-  | { kind: 'branch'; branch: string; base: string; worktree: string; files: number; insertions: number; deletions: number };
+  | { kind: 'branch'; branch: string; base: string; worktree: string; files: number; insertions: number; deletions: number; tests: DraftTestStatus };
 
 export type TaskResult = {
   status: 'ok' | 'ok-fallback' | 'timeout' | 'failed' | 'rate-limit';

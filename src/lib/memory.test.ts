@@ -91,14 +91,14 @@ describe('fingerprintCandidate', () => {
 });
 
 describe('Memory open + migrate', () => {
-  it('creates the schema on a fresh DB and sets user_version to the latest (4)', () => {
+  it('creates the schema on a fresh DB and sets user_version to the latest (5)', () => {
     const m = new Memory(':memory:');
     const rows = (m as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } })
       .db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
     expect(rows).toEqual([{ name: 'candidates' }, { name: 'runs' }]);
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m.close();
   });
 
@@ -111,7 +111,7 @@ describe('Memory open + migrate', () => {
     const m2 = new Memory(path);
     const v = (m2 as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m2.close();
   });
 });
@@ -189,13 +189,13 @@ describe('Memory candidate lifecycle', () => {
     m.close();
   });
 
-  it('schema is at user_version 4 with draft-impl diff-stat columns (T12)', () => {
+  it('schema is at user_version 5 with draft-impl diff-stat columns (T12)', () => {
     const m = new Memory(':memory:');
     const db = (m as unknown as { db: {
       pragma: (s: string, o?: { simple: boolean }) => unknown;
       prepare: (s: string) => { all: () => Array<{ name: string }> };
     } }).db;
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
     expect(cols).toContain('draft_files');
     expect(cols).toContain('draft_insertions');
@@ -336,7 +336,7 @@ describe('Memory migration v2', () => {
     expect(names).toContain('dossier_existed_at_7d');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m.close();
   });
 
@@ -389,7 +389,7 @@ describe('Memory migration v2', () => {
     expect(cols.map((c) => c.name)).toContain('dossier_existed_at_7d');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m.close();
   });
 });
@@ -494,7 +494,7 @@ describe('Memory migration v3', () => {
     expect(names).toContain('user_rating_at');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m.close();
   });
 
@@ -548,7 +548,7 @@ describe('Memory migration v3', () => {
     expect(names).toContain('user_rating_at');
     const v = (m as unknown as { db: { pragma: (s: string, o: { simple: boolean }) => unknown } })
       .db.pragma('user_version', { simple: true });
-    expect(v).toBe(4);
+    expect(v).toBe(5);
     m.close();
   });
 });
@@ -608,12 +608,127 @@ describe('Memory migration v4 idempotency (F6)', () => {
       pragma: (s: string, o?: { simple: boolean }) => unknown;
       prepare: (s: string) => { all: () => Array<{ name: string }> };
     } }).db;
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
     expect(cols).toContain('draft_files');
     expect(cols).toContain('draft_insertions');
     expect(cols).toContain('draft_deletions');
     expect(cols).toContain('prep_branch');
+    m.close();
+  });
+});
+
+describe('Memory migration v5 (draft_tests)', () => {
+  it('creates the draft_tests column on a fresh DB and is at user_version 5', () => {
+    const m = new Memory(':memory:');
+    const db = (m as unknown as { db: {
+      pragma: (s: string, o?: { simple: boolean }) => unknown;
+      prepare: (s: string) => { all: () => Array<{ name: string }> };
+    } }).db;
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
+    expect(cols).toContain('draft_tests');
+    m.close();
+  });
+
+  it('re-opening an already-v5 DB is idempotent (no throw, stays v5)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-mig-v5-'));
+    const path = join(dir, 'memory.db');
+    const m1 = new Memory(path);
+    m1.close();
+    // Second open against an already-v5 db must not throw and must stay v5.
+    const m2 = new Memory(path);
+    const db = (m2 as unknown as { db: {
+      pragma: (s: string, o?: { simple: boolean }) => unknown;
+      prepare: (s: string) => { all: () => Array<{ name: string }> };
+    } }).db;
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
+    expect(cols).toContain('draft_tests');
+    m2.close();
+  });
+
+  it('does not brick on a half-migrated v4 DB that already has draft_tests (F6)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-mig-v5-half-'));
+    const path = join(dir, 'memory.db');
+    const Database = (await import('better-sqlite3')).default;
+    const raw = new Database(path);
+    raw.pragma('journal_mode = WAL');
+    raw.exec(`
+      CREATE TABLE runs (
+        run_id          TEXT PRIMARY KEY,
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        project_path    TEXT NOT NULL,
+        budget_seconds  INTEGER NOT NULL,
+        max_parallel    INTEGER NOT NULL,
+        exit_reason     TEXT,
+        glean_version   TEXT NOT NULL
+      );
+      CREATE TABLE candidates (
+        id                       INTEGER PRIMARY KEY,
+        run_id                   TEXT NOT NULL REFERENCES runs(run_id),
+        candidate_slug           TEXT NOT NULL,
+        fingerprint              TEXT NOT NULL,
+        candidate_type           TEXT NOT NULL,
+        title                    TEXT NOT NULL,
+        source_signal            TEXT NOT NULL,
+        file_path                TEXT,
+        est_value                REAL NOT NULL,
+        est_tokens               INTEGER NOT NULL,
+        priority_rank            INTEGER NOT NULL,
+        outcome                  TEXT,
+        dossier_path             TEXT,
+        started_at               INTEGER,
+        ended_at                 INTEGER,
+        duration_ms              INTEGER,
+        bytes_written            INTEGER,
+        stderr_rate_limit_hits   INTEGER NOT NULL DEFAULT 0,
+        dossier_existed_at_7d    INTEGER,
+        user_rating              TEXT,
+        user_rating_at           INTEGER,
+        draft_files              INTEGER,
+        draft_insertions         INTEGER,
+        draft_deletions          INTEGER,
+        prep_branch              TEXT,
+        draft_tests              TEXT
+      );
+    `);
+    // Half-migrated: user_version still 4, but draft_tests (a v5 column) already
+    // exists — a naive ADD COLUMN would throw "duplicate column name" and brick.
+    raw.pragma('user_version = 4');
+    raw.close();
+
+    const m = new Memory(path);
+    const db = (m as unknown as { db: {
+      pragma: (s: string, o?: { simple: boolean }) => unknown;
+      prepare: (s: string) => { all: () => Array<{ name: string }> };
+    } }).db;
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    const cols = db.prepare('PRAGMA table_info(candidates)').all().map((r) => r.name);
+    expect(cols).toContain('draft_tests');
+    m.close();
+  });
+
+  it('recordOutcome persists draft_tests and getLatestRunWithCandidates returns it', () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-v5', { project_path: 'C:\\Glean', budget_seconds: 3600, max_parallel: 1, glean_version: '0.7.1' });
+    const id = m.recordCandidate('run-v5', {
+      candidate_slug: 'd-v5', candidate_type: 'draft-impl', title: 'Handle TODO in a.ts',
+      source_signal: 'git-todo', file_path: 'a.ts', est_value: 1, est_tokens: 6000, priority_rank: 0,
+    });
+    m.recordOutcome(id, 'ok', {
+      started_at: 1, ended_at: 2, duration_ms: 1, stderr_rate_limit_hits: 0,
+      draft_files: 1, draft_insertions: 5, draft_deletions: 0, prep_branch: 'prep/glean-d-v5',
+      draft_tests: 'pass',
+    });
+    const row = (m as unknown as { db: { prepare: (s: string) => { get: (k: number) => Record<string, unknown> } } })
+      .db.prepare('SELECT draft_tests FROM candidates WHERE id = ?').get(id);
+    expect(row.draft_tests).toBe('pass');
+
+    const latest = m.getLatestRunWithCandidates();
+    expect(latest).not.toBeNull();
+    expect(latest!.candidates[0].draft_tests).toBe('pass');
     m.close();
   });
 });

@@ -10,6 +10,8 @@ import { loadConfig, defaultConfigPath } from './lib/config.js';
 import { Memory } from './lib/memory.js';
 import { renderRateList } from './lib/rate.js';
 import { findPeekDossier } from './lib/peek.js';
+import { findMorningRun } from './lib/morning.js';
+import { renderMorning } from './lib/render-morning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -42,6 +44,9 @@ const runCmd = defineCommand({
     // Per-project test_command scopes the draft-impl Bash allow-list (CRITICAL 1).
     const { testCommandAllowFor } = await import('./lib/deny.js');
     const testCommandAllow = testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
+    // Raw per-project test_command — glean runs it itself in the draft worktree
+    // after the session commits, to capture a deterministic pass/fail/none.
+    const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const summary = await runPipeline({
@@ -56,6 +61,7 @@ const runCmd = defineCommand({
       baseBranch,
       baseBranchFor,
       testCommandAllow,
+      testCommandFor,
     });
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
@@ -166,6 +172,27 @@ const peekCmd = defineCommand({
   },
 });
 
+const morningCmd = defineCommand({
+  meta: {
+    name: 'morning',
+    description: 'Narrate the most recent glean run as a "while you slept" receipt (branches, dossiers, honest outcome).',
+  },
+  async run() {
+    try {
+      const report = findMorningRun(gleanRoot());
+      if (report === null) {
+        process.stdout.write('No recent glean run to report.\n');
+        return;
+      }
+      const useColor = Boolean(process.stdout.isTTY);
+      process.stdout.write(renderMorning(report, useColor) + '\n');
+    } catch {
+      // Silent-degrade like peek: a missing/corrupt memory.db must never throw.
+      process.stdout.write('No recent glean run to report.\n');
+    }
+  },
+});
+
 const gcCmd = defineCommand({
   meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
   args: {
@@ -193,7 +220,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, gc: gcCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd },
 });
 
 export function main(argv: string[]): void {

@@ -39,6 +39,7 @@ export type PipelineOpts = {
   baseBranch?: string;   // per-project base branch for draft-impl (config.json) — single-project fallback
   baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
   testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
+  testCommandFor?: (projectPath: string) => string | undefined; // per-project RAW test_command — glean runs it post-commit to capture test status
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -198,6 +199,12 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         baseBranch: opts.baseBranch,
         baseBranchFor: opts.baseBranchFor,
         testCommandAllow: opts.testCommandAllow,
+        testCommandFor: opts.testCommandFor,
+        // C1: thread the run's REMAINING wall-clock budget + a live STOP probe so
+        // the post-draft test run is bounded by `--budget` and short-circuited by
+        // `glean stop`, rather than running uninterruptibly for up to the 5-min cap.
+        remainingBudgetMs: opts.budgetMs - (Date.now() - start),
+        stopRequested: () => isStopRequested(opts.gleanRoot),
         recordOutcome: memory && c.candidate_row_id !== undefined
           ? ((status, fields) => {
               try { memory!.recordOutcome(c.candidate_row_id!, status, fields); }
