@@ -75,9 +75,17 @@ export type RunSummary = {
   exit_code: number;
 };
 
+export type DrainTrigger = {
+  day?: string;            // e.g. 'Thursday'
+  time?: string;           // e.g. '18:00'
+  repeat_minutes?: number; // repetition interval within the trigger window
+  duration_hours?: number; // how long the trigger window stays active
+};
+
 export type GleanConfig = {
   claude_bin?: string;
   projects?: Record<string, { base_branch?: string; test_command?: string }>;
+  drain_trigger?: DrainTrigger;
 };
 
 // Discriminated output of a task (T7).
