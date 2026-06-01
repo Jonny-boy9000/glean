@@ -119,9 +119,14 @@ export async function runDrain(
     ]),
   };
 
-  // Productivity bookkeeping: a burst that ran >0 tasks resets the counter; a
-  // 0-task burst increments it (used by guard 3d).
-  next.unproductive_reentries = summary.ran > 0 ? 0 : state.unproductive_reentries + 1;
+  // Productivity bookkeeping for guard 3d (the no-progress backstop). A burst is
+  // "unproductive" ONLY if it ran 0 tasks AND got no rate-limit signal — i.e. it
+  // woke up with nothing to do or everything failed. A session/weekly/ambiguous
+  // rate-limit is a legitimate "come back later" WAIT across the window, not a
+  // stall: counting it would self-terminate a normal multi-session weekend drain
+  // after 3 pauses, abandoning most of the week's capacity.
+  next.unproductive_reentries =
+    summary.ran > 0 || summary.classification != null ? 0 : state.unproductive_reentries + 1;
 
   const cls = summary.classification;
 

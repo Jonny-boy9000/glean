@@ -356,6 +356,28 @@ describe('runDrain — post-burst state transitions', () => {
     expect(read.state.next_eligible_at).toBe(new Date(T0 + SESSION_FALLBACK_MS).toISOString());
   });
 
+  it('repeated session pauses do NOT trip the no-progress backstop (weekend drain survives)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({}));
+    // Three consecutive ticks that each re-enter, run 0 tasks, and hit the session
+    // limit. A session pause is a legitimate "come back later" wait — it must NOT
+    // accrue toward the no-progress backstop, or a normal weekend drain would
+    // self-terminate after 3 windows and abandon most of the week's capacity.
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: SESSION_CLS }));
+    for (let i = 0; i < 3; i++) {
+      const s = readDrainState(root);
+      if (s.kind === 'ok') {
+        s.state.next_eligible_at = new Date(T0 - 1000).toISOString(); // rewind so guard 3c passes
+        writeDrainState(root, s.state);
+      }
+      const summary = await runDrain(opts(root), clockAt(T0), fn);
+      expect(summary.reason).toBe('session-paused'); // never 'no-progress'
+    }
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(0);
+  });
+
   it('lock-busy → returns summary unchanged, budget.json untouched', async () => {
     const root = tmpRoot();
     const before = existingState({ unproductive_reentries: 2, completed_task_ids: ['x'] });
