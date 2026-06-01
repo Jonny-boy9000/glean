@@ -516,6 +516,136 @@ describe('executeOne', () => {
     expect(calls[0].fields.draft_tests).toBe('pass');
   });
 
+  // I3: a fresh worktree has no node_modules → a real `npm test` exits nonzero
+  // with an environment/setup signature. That must read as 'none' (couldn't run),
+  // NOT 'fail' (a suite that ran and reported failures).
+  it('draft-impl: an env/setup failure (Cannot find module) maps to "none", not "fail"', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    // node resolves on PATH, exits 1, and prints a "Cannot find module" signature.
+    const cmd = `node -e "console.error('Error: Cannot find module \\'vitest\\''); process.exit(1)"`;
+    const result = await executeOne(draftCandidate(repo, 'dt-env'), draftCtx(repo, root, cmd));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('none');
+  });
+
+  it('draft-impl: a genuine assertion failure (exit 1, no env signature) maps to "fail"', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const cmd = `node -e "console.error('AssertionError: expected 1 to equal 2'); process.exit(1)"`;
+    const result = await executeOne(draftCandidate(repo, 'dt-assert'), draftCtx(repo, root, cmd));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('fail');
+  });
+
+  // I1: a quoted-path test_command must resolve the program respecting the quotes,
+  // not split on the first space inside the quoted path.
+  it('draft-impl: a quoted-path test_command resolves and runs (not a false "none")', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    // Quote the node binary's absolute path (which contains no space on CI, but the
+    // PARSER must treat the whole quoted span as one token regardless).
+    const nodePath = process.execPath;
+    const cmd = `"${nodePath}" -e "process.exit(0)"`;
+    const result = await executeOne(draftCandidate(repo, 'dt-quoted'), draftCtx(repo, root, cmd));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('pass');
+  });
+
+  // I4: a killed/salvaged partial commit must NOT have its tests run/trusted.
+  it('draft-impl: a timed-out salvaged draft reports tests "none", never running them', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-i4-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    const root = tmpRoot();
+    // If the test command ran it would exit 0 ('pass'); a sentinel file proves it
+    // never executed. Use the salvage scenario (edits a.ts, no commit) under a
+    // short timeout so the session is KILLED and the dirty tree is auto-committed.
+    const sentinel = join(root, 'ran.txt');
+    const result = await executeOne(
+      draftCandidate(repo, 'dt-i4'),
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 500, baseBranch: 'main',
+        testCommandFor: (_p: string) => `node -e "require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'x'); process.exit(0)"`,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-noncommit-slow.yaml') },
+      },
+    );
+    expect(result.status).toBe('timeout');
+    // A salvaged commit may or may not exist depending on timing; if it did, the
+    // tests must read 'none' and the command must NOT have run (no sentinel).
+    if (result.output?.kind === 'branch') {
+      expect(result.output.tests).toBe('none');
+    }
+    expect(existsSync(sentinel)).toBe(false);
+  });
+
+  // C1: when remaining budget is exhausted the test run is skipped entirely.
+  it('draft-impl: zero remaining budget skips the test run (tests "none", command never runs)', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const sentinel = join(root, 'budget-ran.txt');
+    const result = await executeOne(draftCandidate(repo, 'dt-budget'), {
+      runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000, baseBranch: 'main',
+      remainingBudgetMs: 0,
+      testCommandFor: (_p: string) => `node -e "require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'x'); process.exit(0)"`,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+    });
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('none');
+    expect(existsSync(sentinel)).toBe(false);
+  });
+
+  // C1: an active STOP sentinel skips the test run entirely.
+  it('draft-impl: STOP sentinel skips the test run (tests "none", command never runs)', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const sentinel = join(root, 'stop-ran.txt');
+    const result = await executeOne(draftCandidate(repo, 'dt-stop'), {
+      runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000, baseBranch: 'main',
+      stopRequested: () => true,
+      testCommandFor: (_p: string) => `node -e "require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'x'); process.exit(0)"`,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+    });
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('none');
+    expect(existsSync(sentinel)).toBe(false);
+  });
+
+  // C2: the recorded duration must include the test-run time.
+  it('draft-impl: duration_ms covers the (slow) test run', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const calls: Array<{ status: string; fields: Record<string, unknown> }> = [];
+    // A test command that sleeps ~700ms so the test run is a measurable slice.
+    const slow = `node -e "setTimeout(()=>process.exit(0), 700)"`;
+    const ctx = {
+      ...draftCtx(repo, root, slow),
+      recordOutcome: (status: string, fields: Record<string, unknown>) => calls.push({ status, fields }),
+    };
+    const result = await executeOne(draftCandidate(repo, 'dt-dur'), ctx);
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('pass');
+    // elapsed_ms must cover the ~700ms test run (well above a no-test baseline).
+    expect(result.elapsed_ms).toBeGreaterThanOrEqual(600);
+    expect(calls[0].fields.duration_ms).toBe(result.elapsed_ms);
+  });
+
   it('invokes recordOutcome callback exactly once with the final status and fields', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-exec-cb-'));
     execSync('git init -q', { cwd: repo });

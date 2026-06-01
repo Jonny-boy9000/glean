@@ -1,0 +1,10 @@
+# Model edits the evidence file (a.ts) but never commits, then hangs so the
+# executor's task timeout KILLS it. The dirty tree is auto-committed (salvaged).
+# Used to prove a salvaged partial draft does NOT get its tests run/trusted (I4).
+write_files:
+  - path: a.ts
+    content: |
+      // partially implemented feature (session was killed)
+      export function feature() { return 'wip'; }
+sleep_ms: 600000
+exit_code: 0
