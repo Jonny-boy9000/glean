@@ -330,6 +330,67 @@ export class Memory {
     return m;
   }
 
+  // T13: fetch the most recent run (by started_at) plus all its candidate rows,
+  // including the v4 draft-impl columns, so `glean morning` can narrate it.
+  // Returns null when there are no runs at all.
+  getLatestRunWithCandidates(): {
+    run: {
+      run_id: string;
+      started_at: number;
+      ended_at: number | null;
+      project_path: string;
+      exit_reason: string | null;
+    };
+    candidates: Array<{
+      candidate_slug: string;
+      candidate_type: CandidateType;
+      title: string;
+      outcome: string | null;
+      dossier_path: string | null;
+      stderr_rate_limit_hits: number;
+      draft_files: number | null;
+      draft_insertions: number | null;
+      draft_deletions: number | null;
+      prep_branch: string | null;
+    }>;
+  } | null {
+    const run = this.db.prepare(
+      `SELECT run_id, started_at, ended_at, project_path, exit_reason
+         FROM runs
+        ORDER BY started_at DESC, rowid DESC
+        LIMIT 1`,
+    ).get() as {
+      run_id: string;
+      started_at: number;
+      ended_at: number | null;
+      project_path: string;
+      exit_reason: string | null;
+    } | undefined;
+    if (!run) return null;
+
+    const candidates = this.db.prepare(
+      `SELECT candidate_slug, candidate_type, title, outcome, dossier_path,
+              stderr_rate_limit_hits, draft_files, draft_insertions,
+              draft_deletions, prep_branch
+         FROM candidates
+        WHERE run_id = ?
+        ORDER BY priority_rank ASC, id ASC`,
+    ).all(run.run_id) as Array<{
+      candidate_slug: string;
+      candidate_type: CandidateType;
+      title: string;
+      outcome: string | null;
+      dossier_path: string | null;
+      stderr_rate_limit_hits: number;
+      draft_files: number | null;
+      draft_insertions: number | null;
+      draft_deletions: number | null;
+      prep_branch: string | null;
+    }>;
+
+    return { run, candidates };
+  }
+
   private projectPathFor(runId: string): string {
     const row = this.db.prepare('SELECT project_path FROM runs WHERE run_id = ?').get(runId) as
       { project_path: string } | undefined;
