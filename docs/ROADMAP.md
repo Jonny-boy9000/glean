@@ -2,9 +2,9 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-05-26 (post-v0.6.0; `glean peek` + SessionStart hook shipped)
-**Current release:** [v0.6.0](https://github.com/Jonny-boy9000/glean/releases/tag/v0.6.0) (commit `f4f16df`)
-**Branch state:** `main` clean, no in-progress patch
+**Last updated:** 2026-06-01 (post-v0.7.0; `draft-impl` engine shipped, PR #2)
+**Current release:** v0.7.0 (merge commit `186d977`, PR #2)
+**Branch state:** v0.7.1 (`glean morning` receipt + distribution) in progress on `feat/v071-morning`
 
 ---
 
@@ -91,6 +91,7 @@ A 2026-05-25 second-pass review extracted v0.2-shaped cheap first steps from 3 o
 
 ## Done (most recent first — for context only)
 
+- **v0.7.0** (2026-06-01, merge `186d977`, PR #2) — `draft-impl` engine. New candidate type that drafts code for the top-ranked TODO into a `git worktree` on a `prep/glean-*` branch off a per-project `base_branch`, spawning a headless `claude -p` scoped to that worktree; main checkout never touched. Safety boundary enforced by a scoped tool allow-list (bare `Bash` never granted), not just a deny-list. Adds `glean gc` (21-day worktree expiry, auto on each run), discriminated `TaskResult.output` (`file | branch`), memory schema v4. 183 tests. First of two v0.7 PRs — `glean morning` receipt + distribution land in v0.7.1. **In-process drain core was cut from v0.7 → v0.8** (exit-and-re-enter, not in-process sleep; see Tracked backlog). Reviewed via `/office-hours` → `/plan-eng-review` → adversarial pass (caught + fixed 2 criticals: deny-list bypass, worktree leak).
 - **v0.6.0** (2026-05-26, tag `v0.6.0`) — `glean peek` subcommand + SessionStart hook recipe. CWD-scoped variant of `glean today` designed for hook use: walks up for `.git`, prints the matching project's today-dossier, exits 0 silent in every failure case. Closes the compound-memory-across-sessions loop. See [v0.6.0 spec](./superpowers/specs/2026-05-26-glean-peek-design.md), [v0.6.0 plan](./superpowers/plans/2026-05-26-glean-peek.md).
 - **v0.5.0** (2026-05-26, tag `v0.5.0`) — `glean today` enriched with memory.db. Surfaces duration, output bytes, rate-limit hits, and user rating as an optional third line per entry. Read-only enhancement; engine and INDEX.md untouched. Silent degradation when memory.db is absent. Closes the telemetry feedback loop by making v0.3.0/v0.4.0 signals visible at the daily-rhythm surface. See [v0.5.0 spec](./superpowers/specs/2026-05-26-glean-today-enriched-design.md), [v0.5.0 plan](./superpowers/plans/2026-05-26-glean-today-enriched.md).
 - **v0.4.0** (2026-05-26, tag `v0.4.0`) — `glean rate` subcommand for active usefulness telemetry. Writes `kept`/`discarded`/`actioned` verdicts to a new `user_rating` column; `glean rate --list` prints recent ratable dossiers. Schema migration v3. Pairs with the v0.3.0 passive sweep for complete dossier-quality measurement. See [v0.4.0 spec](./superpowers/specs/2026-05-26-glean-rate-design.md), [v0.4.0 plan](./superpowers/plans/2026-05-26-glean-rate.md).
