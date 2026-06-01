@@ -51,6 +51,22 @@ export function findMorningRun(gleanRoot: string): MorningReport | null {
           // value is surfaced verbatim ('pass' | 'fail' | 'none').
           test_status: normalizeTestStatus(c.draft_tests),
         });
+      } else if (c.candidate_type === 'draft-impl') {
+        // I6: a draft-impl candidate that produced NO branch (provisioning or
+        // commit failed) must still surface — otherwise a failed draft vanishes
+        // from the receipt entirely. Render it as a branchless "attempted" entry
+        // (empty prep_branch/worktree → render-morning emits the "nothing landed"
+        // line and no fabricated review/discard commands).
+        branches.push({
+          title: c.title,
+          prep_branch: '',
+          worktree: '',
+          files: 0,
+          insertions: 0,
+          deletions: 0,
+          status: c.outcome ?? 'unknown',
+          test_status: normalizeTestStatus(c.draft_tests),
+        });
       } else if (c.dossier_path) {
         const idx = indexEntries.get(c.candidate_slug);
         files.push({

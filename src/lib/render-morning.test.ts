@@ -129,6 +129,33 @@ describe('renderMorning — trivial-diff guard (T14)', () => {
   });
 });
 
+describe('renderMorning — branchless draft-impl attempt (I6)', () => {
+  it('renders an "attempted — nothing landed" line for a draft-impl with no prep branch', () => {
+    const report = baseReport({
+      branches: [
+        {
+          title: 'Implement the thing',
+          prep_branch: '', // provisioning/commit failed → no branch
+          worktree: '',
+          files: 0,
+          insertions: 0,
+          deletions: 0,
+          status: 'failed',
+          test_status: 'none',
+        },
+      ],
+    });
+    const out = renderMorning(report, false);
+    expect(out).toContain('Implement the thing');
+    expect(out.toLowerCase()).toContain('attempted');
+    expect(out.toLowerCase()).toContain('nothing landed');
+    expect(out.toLowerCase()).toContain('review logs');
+    // No fabricated review/discard commands for a non-existent worktree/branch.
+    expect(out).not.toMatch(/worktree remove/);
+    expect(out).not.toMatch(/branch -D/);
+  });
+});
+
 describe('renderMorning — file / dossier entry', () => {
   it('renders a today-style line for dossier candidates', () => {
     const report = baseReport({

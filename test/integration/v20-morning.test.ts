@@ -152,6 +152,39 @@ describe('verification 20: glean morning CLI', () => {
     expect(res.stdout.toLowerCase()).not.toContain('weekly');
   });
 
+  it('surfaces a draft-impl candidate that produced NO branch (I6)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'glean-v20-nobranch-'));
+    mkdirSync(join(home, 'glean'), { recursive: true });
+    const dbPath = join(home, 'glean', 'memory.db');
+    const db = await seedDb(dbPath);
+    db.prepare('INSERT INTO runs (run_id, started_at, ended_at, project_path, budget_seconds, max_parallel, exit_reason, glean_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('run-v20nb', Date.parse('2026-06-01T03:12:00.000Z'), Date.parse('2026-06-01T03:13:00.000Z'), 'C:\\demoproj', 3600, 1, 'completed', '0.7.0');
+    // draft-impl candidate, outcome failed, prep_branch NULL (provisioning/commit failed).
+    db.prepare(
+      `INSERT INTO candidates
+         (run_id, candidate_slug, fingerprint, candidate_type, title, source_signal,
+          file_path, est_value, est_tokens, priority_rank, outcome, dossier_path,
+          stderr_rate_limit_hits, draft_files, draft_insertions, draft_deletions, prep_branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'run-v20nb', 'task-nb', 'fpnb', 'draft-impl', 'Implement a TODO that never landed',
+      'git-todo', 'z.ts', 1.0, 800, 0, 'failed', null,
+      0, null, null, null, null,
+    );
+    db.close();
+
+    const res = spawnSync('node', ['bin/glean.js', 'morning'], {
+      env: { ...process.env, USERPROFILE: home, HOME: home },
+      encoding: 'utf8',
+    });
+
+    expect(res.status).toBe(0);
+    // The failed draft-impl is not dropped — it appears with an honest line.
+    expect(res.stdout).toContain('Implement a TODO that never landed');
+    expect(res.stdout.toLowerCase()).toContain('attempted');
+    expect(res.stdout.toLowerCase()).toContain('nothing landed');
+  });
+
   it('prints a friendly message when memory.db is absent', () => {
     const home = mkdtempSync(join(tmpdir(), 'glean-v20-nodb-'));
     mkdirSync(join(home, 'glean'), { recursive: true });

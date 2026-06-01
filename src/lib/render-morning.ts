@@ -88,6 +88,16 @@ export function renderMorning(report: MorningReport, useColor: boolean): string 
 }
 
 function renderBranch(b: MorningBranchEntry, mainRepo: string, c: Painter, lines: string[]): void {
+  // I6: a draft-impl whose provisioning/commit failed produced NO branch. Render
+  // it as an explicit "attempted — nothing landed" line instead of dropping it
+  // (or fabricating review/discard commands for a worktree that doesn't exist).
+  if (!b.prep_branch) {
+    lines.push(c.bold('▸ draft attempted'));
+    lines.push(`    ${b.title}`);
+    lines.push(`    ${c.dim('attempted — nothing landed (review logs)')}`);
+    return;
+  }
+
   const trivial = b.files === 0 || (b.insertions + b.deletions) === 0;
   lines.push(c.bold(`▸ branch ${c.cyan(b.prep_branch)}`));
   lines.push(`    ${b.title}`);
