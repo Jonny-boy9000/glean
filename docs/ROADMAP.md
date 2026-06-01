@@ -16,14 +16,25 @@
 
 ## Up next (recommended priority order)
 
-> **Strategic lens (2026-05-26):** The most load-bearing critique of the project is that the engine has no measure of dossier usefulness — you don't know if you'd open what it produces. Both halves of the telemetry pair shipped (v0.3.0 passive sweep + v0.4.0 `glean rate` active ratings), v0.5.0 surfaces both back in `glean today`, and v0.6.0 closes the compound-memory-across-sessions loop via `glean peek` + SessionStart hook. Item 1 (now the only Up next item) is engine durability via API-key fallback. Distribution / adoption items (POSIX port, npm publish, GitHub issues, demo media) consciously deferred until telemetry validates that the core is worth distributing.
+> **Strategic lens (2026-06-01):** The load-bearing question was always "does the engine produce something you'd actually open?" v0.3–v0.6 built the telemetry to measure it; v0.7.0 shipped the `draft-impl` engine (AI-drafted branches in isolated worktrees) and v0.7.1 the `glean morning` receipt with verified test status. The **first real validation run** (2026-06-01, throwaway repo) produced keep-worthy code with `tests: pass` and main untouched — a positive first datapoint on the existential question, but only one, on a dependency-free repo. Two things move the needle most now: (1) make glean actually consume the *whole week* unattended (v0.8 drain core) so there's enough output to judge, and (2) real-repo dogfooding to turn that one datapoint into a trend. Published to npm as `@jonny-boy9000/glean@0.7.1` on 2026-06-01.
 
-### 1. API-key fallback when Pro/Max rate-limits
+### 1. v0.8 drain core — consume the whole week (exit-and-re-enter + scheduler)
 
-**Status:** promoted from "Smaller v0.2-shaped features" to Up next 2026-05-26.
+**Status:** the next major milestone (promoted to Up next 2026-06-01). Full design + rationale lives in **Tracked backlog → Deferred sub-projects** ("v0.8 drain core") — read it before starting.
+**Why:** today glean stops on the first rate-limit and leaves most of the weekly allowance unused; the whole "drain your idle capacity" premise depends on fixing this. **Build it as exit-and-re-enter** (persist `next_eligible_at` + a resume cursor, idempotent re-entry guard, paired with Windows Task Scheduler) — **NOT an in-process multi-hour sleeper**: that dies at laptop lid-close/hibernate on Windows and forks control flow on the known-buggy reset timestamp; the v0.7 eng review + an adversarial pass rejected it. Resume state goes in a dedicated `state/budget.json`, NOT `candidates.json` (clobbered each run).
+**How to start:** `/office-hours` to lock the exit-and-re-enter + scheduler design (it'll find the 2026-06-01 v0.7 design doc), then `/plan-eng-review`. Absorbs signal classification, anti-spill margin, circuit breaker, and mid-run candidate re-discovery.
+
+### 2. API-key fallback when Pro/Max rate-limits
+
+**Status:** smaller engine-durability win; second priority behind the drain core.
 **Source:** [`docs/superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md`](./superpowers/specs/2026-05-25-glean-v012-dep-parser-design.md) §8.
-**Why:** Engine durability. When `claude -p` returns rate-limit stderr, fall back to `ANTHROPIC_API_KEY` (if env var is set) for the rest of the budget. Doesn't change the subscription-arbitrage premise; just stops a single rate-limit signal from killing an overnight run. Doesn't help answer the existential question, but is the most defensible "make existing runs more useful" item once telemetry is in place.
+**Why:** When `claude -p` returns rate-limit stderr, fall back to `ANTHROPIC_API_KEY` (if the env var is set) for the rest of the budget. Doesn't change the subscription-arbitrage premise; just stops a single rate-limit signal from killing an overnight run. Note: overlaps with the v0.8 drain core's signal handling — sequence it with or after v0.8.
 **Scope sketch:** ~75 LOC. Pure executor addition; deny-list and safety story unchanged.
+
+### 3. Real-repo dogfooding of draft-impl
+
+**Status:** ongoing validation, promoted 2026-06-01.
+**Why:** v0.7's validation was one run on a dependency-free throwaway repo (`~/glean-validate`). The existential "would I keep what it drafts?" question needs draft-impl pointed at real projects with real TODOs, with `glean rate` verdicts collected over time, to become a trend rather than a single datapoint. Watch for the `tests: none` (deps-missing worktree) case — common on real Node repos until a per-project install step exists.
 
 ---
 
