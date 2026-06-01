@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { v4 as uuid } from 'uuid';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
 import type { Candidate, RunSummary, RunReason, TaskResult } from './types.js';
+import type { RateLimitClassification } from './classify.js';
 import { discoverJsonl } from './discover-jsonl.js';
 import { discoverGit } from './discover-git.js';
 import { discoverDeps } from './discover-deps.js';
@@ -40,6 +41,10 @@ export type PipelineOpts = {
   baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
   testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
   testCommandFor?: (projectPath: string) => string | undefined; // per-project RAW test_command — glean runs it post-commit to capture test status
+  // v0.8 drain: candidate ids already completed in a prior burst of the SAME
+  // drain window. Any candidate whose id is in this set is skipped (not re-run).
+  // Inert for the bare `glean run` path (undefined ⇒ nothing skipped).
+  completedTaskIds?: readonly string[];
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -48,6 +53,10 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
   let reason: RunReason = 'completed';
   let exitCode = 0;
   let ran = 0, failed = 0, timed_out = 0;
+  // v0.8: set when the run breaks on a rate-limit, so finalize() can surface the
+  // classified session/weekly/ambiguous signal to the drain wrapper.
+  let classification: RateLimitClassification | undefined;
+  const completedSet = new Set(opts.completedTaskIds ?? []);
 
   const lock = acquireLock(opts.gleanRoot, runId);
   if (!lock.acquired) {
@@ -117,11 +126,23 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     ensureTemplatesDir(opts.gleanRoot, opts.templatesDir);
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'run.start', run_id: runId, project: opts.projectPath, budget_ms: opts.budgetMs });
 
-    const [jsonl, git, deps] = await Promise.all([
-      discoverJsonl(opts.projectPath, { projectsRoot: opts.projectsRoot }),
-      discoverGit(opts.projectPath, { ghBin: opts.ghBin }),
-      discoverDeps(opts.projectPath),
-    ]);
+    // v0.8: discovery runs under the lock and shells out to `gh`/`git` + the
+    // network. A transient failure there must NOT crash an unattended burst — it
+    // would leave the lock held / no summary written for a drain tick. Catch it,
+    // log, and finalize cleanly with reason 'discovery-failed' (exit_code 0).
+    let jsonl, git, deps;
+    try {
+      [jsonl, git, deps] = await Promise.all([
+        discoverJsonl(opts.projectPath, { projectsRoot: opts.projectsRoot }),
+        discoverGit(opts.projectPath, { ghBin: opts.ghBin }),
+        discoverDeps(opts.projectPath),
+      ]);
+    } catch (e) {
+      appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'discover.failed', error: (e as Error).message });
+      reason = 'discovery-failed';
+      exitCode = 0;
+      return finalize();
+    }
     const all = [...jsonl, ...git, ...deps];
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'discover.done', jsonl: jsonl.length, git: git.length, deps: deps.length });
 
@@ -182,6 +203,12 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     }
 
     for (const c of finalRanked) {
+      // v0.8 drain: skip candidates already completed in an earlier burst of this
+      // drain window (inert when completedTaskIds is empty / bare `glean run`).
+      if (completedSet.has(c.id)) {
+        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.skip_completed', task_id: c.id });
+        continue;
+      }
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
       if (Date.now() - start >= opts.budgetMs) { reason = 'budget-exhausted'; exitCode = 10; break; }
       // Skip research-dossier tasks when fewer than 5 min remain (fetch-docs are fast enough).
@@ -217,6 +244,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       if (result.status === 'rate-limit') {
         reason = 'rate-limit';
         exitCode = 20;
+        classification = result.classification;
         break;
       }
       if (result.status === 'timeout') timed_out++;
@@ -251,6 +279,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       ran, skipped_dedup: skippedCount, failed, timed_out,
       exit_code: exitCode,
     };
+    if (classification) summary.classification = classification;
     writeSummary(opts.gleanRoot, runId, summary);
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'run.end', reason, ran, failed, timed_out });
     return summary;

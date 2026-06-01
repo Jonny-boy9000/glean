@@ -58,7 +58,17 @@ export type RunReason =
   | 'rate-limit'
   | 'stop-sentinel'
   | 'lock-busy'
-  | 'crashed';
+  | 'crashed'
+  // v0.8 drain core (shared contract — the D-morning lane depends on these
+  // exact strings; they are persisted as the run's exit_reason).
+  | 'session-paused'
+  | 'weekly-drained'
+  | 'no-progress'
+  | 'ambiguous-signal'
+  | 'discovery-failed'
+  // A drain "tick" that found the window not yet eligible to run (no-op; no
+  // pipeline invoked, no memory run row).
+  | 'not-eligible';
 
 export type RunSummary = {
   run_id: string;
@@ -73,6 +83,9 @@ export type RunSummary = {
   failed: number;
   timed_out: number;
   exit_code: number;
+  // v0.8: when a run ends on a rate-limit, the classified signal (session vs
+  // weekly vs ambiguous) the drain wrapper uses to decide the next move.
+  classification?: import('./classify.js').RateLimitClassification;
 };
 
 export type DrainTrigger = {
@@ -106,4 +119,7 @@ export type TaskResult = {
   elapsed_ms: number;
   output?: TaskOutput;
   stderr_tail?: string[];
+  // v0.8: present only on a 'rate-limit' result — the classified rate-limit
+  // signal (session vs weekly vs ambiguous) derived from the spawn's stderr.
+  classification?: import('./classify.js').RateLimitClassification;
 };

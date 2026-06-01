@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
@@ -9,8 +9,35 @@ import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
+import { classifyRateLimit, type RateLimitClassification } from './classify.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
+
+// Read the last ~4KB of the captured stderr file and classify the rate-limit
+// signal (session vs weekly vs ambiguous). Tolerant of a missing/unreadable
+// file — a rate-limit we can't re-read from disk degrades to 'ambiguous' rather
+// than crashing the run. Only called when spawn.rateLimited is true.
+const STDERR_TAIL_BYTES = 4096;
+function classifySpawnStderr(stderrPath: string): RateLimitClassification {
+  let text = '';
+  try {
+    const size = statSync(stderrPath).size;
+    const fd = openSync(stderrPath, 'r');
+    try {
+      const start = Math.max(0, size - STDERR_TAIL_BYTES);
+      const len = size - start;
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, start);
+      text = buf.toString('utf8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // Missing/unreadable stderr — classifyRateLimit('') returns ambiguous.
+    text = '';
+  }
+  return classifyRateLimit(text);
+}
 
 export type ExecCtx = {
   runId: string;
@@ -127,6 +154,9 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
     const result: TaskResult = { status, elapsed_ms };
     if (output_path) result.output = { kind: 'file', path: output_path };
     if (stderr_tail) result.stderr_tail = stderr_tail;
+    // v0.8: surface the classified rate-limit signal so the drain wrapper can
+    // decide session-paused vs weekly-drained vs ambiguous.
+    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn.stderrPath);
     return result;
   };
 
@@ -292,6 +322,8 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     const result: TaskResult = { status, elapsed_ms };
     if (output) result.output = output;
     if (stderr_tail) result.stderr_tail = stderr_tail;
+    // v0.8: surface the classified rate-limit signal (drain wrapper consumes it).
+    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn.stderrPath);
     return result;
   };
 

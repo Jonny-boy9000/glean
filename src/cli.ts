@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { runPipeline } from './lib/pipeline.js';
+import { runDrain } from './lib/runDrain.js';
 import { findTodayDossiers } from './lib/today.js';
 import { renderToday } from './lib/render-today.js';
 import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
@@ -32,6 +33,7 @@ const runCmd = defineCommand({
     budget: { type: 'string', default: '60m', description: 'Wall-clock budget, e.g. 60m, 1h, 30m' },
     'task-timeout': { type: 'string', default: '8m', description: 'Per-task timeout (e.g. 8m, 30s, 2m)' },
     'dry-run': { type: 'boolean', default: false, description: 'Stop after candidates.json is written' },
+    drain: { type: 'boolean', default: false, description: 'Run as a drain tick (exit-and-re-enter window) instead of a single burst' },
   },
   async run({ args }) {
     const projectPath = resolve(args.project as string);
@@ -58,7 +60,7 @@ const runCmd = defineCommand({
     const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
-    const summary = await runPipeline({
+    const pipelineOpts = {
       projectPath,
       gleanRoot: gleanRoot(),
       claudeBin,
@@ -71,7 +73,12 @@ const runCmd = defineCommand({
       baseBranchFor,
       testCommandAllow,
       testCommandFor,
-    });
+    };
+    // --drain wraps the burst in the drain window state machine (eligibility
+    // guards + classified rate-limit handling). Default is a single burst.
+    const summary = args.drain
+      ? await runDrain(pipelineOpts)
+      : await runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
   },

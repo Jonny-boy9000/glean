@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -103,5 +103,84 @@ describe('runPipeline', () => {
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.every((c) => c.outcome !== null)).toBe(true);
     db.close();
+  });
+
+  // v0.8: completedTaskIds skips already-done candidates from a prior drain burst.
+  // Candidate ids are random UUIDs regenerated per discovery, so to test the
+  // skip deterministically we mock uuid to a stable value (every candidate then
+  // shares the same id). Passing that id in completedTaskIds must skip them all.
+  it('skips candidates whose id is in completedTaskIds (drain re-entry dedup)', async () => {
+    vi.resetModules();
+    vi.doMock('uuid', () => ({ v4: () => 'fixed-task-id' }));
+    const { runPipeline: rp } = await import('./pipeline.js');
+
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const common = {
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      // A full 60-min budget so research-dossier candidates survive prioritize()
+      // (a sub-30-min remaining budget restricts the queue to fetch-docs only).
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    };
+
+    // Sanity: without a skip-set, a candidate exists and runs.
+    const baseline = await rp({
+      ...common,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      dryRun: false,
+    });
+    expect(baseline.candidates_total).toBeGreaterThan(0);
+    expect(baseline.ran).toBeGreaterThan(0);
+
+    // Now mark that id completed → every candidate is skipped, nothing runs.
+    const root2 = mkdtempSync(join(tmpdir(), 'glean-root2-'));
+    const summary = await rp({
+      ...common,
+      gleanRoot: root2,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      dryRun: false,
+      completedTaskIds: ['fixed-task-id'],
+    });
+    expect(summary.candidates_total).toBeGreaterThan(0); // candidates existed...
+    expect(summary.ran).toBe(0);                          // ...but all were skipped
+    expect(summary.reason).toBe('completed');
+
+    vi.doUnmock('uuid');
+    vi.resetModules();
+  });
+});
+
+// Discovery failure must NOT crash an unattended burst — it finalizes cleanly
+// with reason 'discovery-failed' and exit_code 0. We force a throw by mocking
+// one discover module.
+describe('runPipeline — discovery-failed', () => {
+  it('a throwing discoverer finalizes with reason discovery-failed (no crash)', async () => {
+    vi.resetModules();
+    vi.doMock('./discover-git.js', () => ({
+      discoverGit: async () => { throw new Error('simulated gh/network failure'); },
+    }));
+    const { runPipeline: rp } = await import('./pipeline.js');
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await rp({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: process.env,
+      budgetMs: 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.reason).toBe('discovery-failed');
+    expect(summary.exit_code).toBe(0);
+    vi.doUnmock('./discover-git.js');
+    vi.resetModules();
   });
 });
