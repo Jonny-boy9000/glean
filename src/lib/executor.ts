@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 import type { Candidate, TaskResult, TaskOutput } from './types.js';
@@ -273,33 +273,54 @@ function commitsBeyondBase(main: string, base: string, branch: string): number {
   } catch { return 0; }
 }
 
-// Auto-commit any uncommitted changes the session left behind (scoped — never
-// `git add -A`, only tracked + intentionally-added files via `git add -u` plus
-// untracked non-excluded files). Best-effort: a clean tree is a no-op.
+// Auto-commit fallback for when the session edited but did not commit. Stages:
+//   - all tracked modifications/deletions (`git add -u`), plus
+//   - new source files the model created, EXCLUDING anything the project's
+//     .gitignore or our .git/info/exclude (prompt.md/OUT.md, see
+//     excludeFromWorktree) ignores.
+// We deliberately avoid a blanket `git add -A`: a test run inside the worktree
+// can leave non-gitignored stray dirs (coverage/, dist/) that should not pollute
+// the draft. Untracked files are enumerated and added by name so the staged set
+// is explicit. Best-effort: a clean tree is a no-op.
 function autoCommitIfDirty(worktree: string): void {
   try {
     const status = execFileSync('git', ['-C', worktree, 'status', '--porcelain'], { encoding: 'utf8' });
     if (!status.trim()) return;
-    // Stage tracked changes and untracked files (excludes honor .git/info/exclude).
-    execFileSync('git', ['-C', worktree, 'add', '-A'], { stdio: 'ignore' });
-    // If after staging there is nothing (all excluded), skip the commit.
+    // Stage tracked modifications/deletions.
+    execFileSync('git', ['-C', worktree, 'add', '-u'], { stdio: 'ignore' });
+    // Stage untracked-but-not-ignored files explicitly (honors .gitignore +
+    // .git/info/exclude because --others --exclude-standard filters them out).
+    const untracked = execFileSync(
+      'git', ['-C', worktree, 'ls-files', '--others', '--exclude-standard'],
+      { encoding: 'utf8' },
+    ).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    for (const f of untracked) {
+      execFileSync('git', ['-C', worktree, 'add', '--', f], { stdio: 'ignore' });
+    }
+    // If after staging there is nothing, skip the commit.
     const staged = execFileSync('git', ['-C', worktree, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
     if (!staged.trim()) return;
     execFileSync('git', ['-C', worktree, '-c', 'user.email=glean@local', '-c', 'user.name=glean', 'commit', '-m', 'glean: draft (review)'], { stdio: 'ignore' });
   } catch { /* best effort */ }
 }
 
-// Add glean scratch filenames to the worktree's private .git/info/exclude so an
+// Add glean scratch filenames to the worktree's .git/info/exclude so an
 // auto-commit `git add` never sweeps them into the user's draft branch.
 function excludeFromWorktree(main: string, worktree: string, patterns: string[]): void {
   try {
-    const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--git-path', 'info/exclude'], { encoding: 'utf8' }).trim();
-    const excludePath = join(worktree, gitDir);
+    // --path-format=absolute returns the resolved path directly; joining the
+    // worktree to a (Windows-)absolute --git-path result yields a garbage path.
+    const excludePath = execFileSync(
+      'git',
+      ['-C', worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (!excludePath) return;
     let existing = '';
     try { existing = readFileSync(excludePath, 'utf8'); } catch { /* new file */ }
     const toAdd = patterns.filter((p) => !existing.includes(p));
     if (toAdd.length) {
-      mkdirSync(join(excludePath, '..'), { recursive: true });
+      mkdirSync(dirname(excludePath), { recursive: true });
       writeFileSync(excludePath, existing + (existing && !existing.endsWith('\n') ? '\n' : '') + toAdd.join('\n') + '\n');
     }
   } catch { /* best effort */ }

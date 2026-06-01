@@ -116,19 +116,20 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'dedup.done', kept: kept.length, skipped: skipped.length });
 
     for (const c of kept) c.est_value = scoreValue(c, {});
-    const ranked = prioritize(kept, opts.budgetMs, Date.now() - start);
     // v0.7.0 thin slice: when a base_branch is configured, promote the single
-    // highest-ranked TODO candidate to draft-impl so glean writes a reviewable
-    // branch instead of a dossier for it. Re-rank so the 1.0 weight applies.
-    let finalRanked = ranked;
+    // highest est_value TODO candidate to draft-impl BEFORE ranking, so glean
+    // writes a reviewable branch instead of a dossier for it. Promoting here
+    // (rather than re-ranking) means prioritize() runs exactly once — calling it
+    // twice would apply the vendor/path est_value penalty twice.
     if (opts.baseBranch) {
-      const top = ranked.find((c) => c.evidence.kind === 'todo');
+      const todos = kept.filter((c) => c.evidence.kind === 'todo');
+      const top = todos.sort((a, b) => b.est_value - a.est_value)[0];
       if (top) {
         top.type = 'draft-impl';
-        finalRanked = prioritize(ranked, opts.budgetMs, Date.now() - start);
         appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'draft-impl.promoted', task_id: top.id });
       }
     }
+    const finalRanked = prioritize(kept, opts.budgetMs, Date.now() - start);
     candidatesTotal = finalRanked.length;
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: finalRanked.length });
 
