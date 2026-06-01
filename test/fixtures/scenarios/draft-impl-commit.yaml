@@ -1,0 +1,14 @@
+# Simulates the model implementing the TODO and committing it itself.
+write_files:
+  - path: feature.ts
+    content: |
+      export function feature() {
+        return 'implemented';
+      }
+shell_commands:
+  - git add feature.ts
+  - git -c user.email=g@g -c user.name=g commit -q -m "implement feature"
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}'
+exit_code: 0

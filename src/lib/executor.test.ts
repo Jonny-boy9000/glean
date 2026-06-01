@@ -119,6 +119,79 @@ describe('executeOne', () => {
     }
   });
 
+  it('draft-impl: provisions a worktree, captures the prep-branch diff stat', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-repo-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+    const mainHead = execSync('git rev-parse HEAD', { cwd: repo, encoding: 'utf8' }).trim();
+
+    const root = tmpRoot();
+    const result = await executeOne(
+      {
+        id: 'draft-1', evidence_hash: 'h', type: 'draft-impl',
+        project_path: repo,
+        evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: implement feature' }] },
+        est_value: 50, est_tokens: 1000, status: 'pending',
+      },
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000, baseBranch: 'main',
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+      },
+    );
+
+    expect(result.status).toBe('ok');
+    expect(result.output?.kind).toBe('branch');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.branch).toBe('prep/glean-draft-1');
+    expect(result.output.base).toBe('main');
+    expect(result.output.files).toBeGreaterThanOrEqual(1);
+    expect(result.output.insertions).toBeGreaterThanOrEqual(1);
+    // worktree exists and prompt.md is NOT inside it (scratch lives outside)
+    expect(existsSync(result.output.worktree)).toBe(true);
+    expect(existsSync(join(result.output.worktree, 'prompt.md'))).toBe(false);
+    // commit landed on the prep branch beyond base
+    const prepCommits = execSync('git rev-list main..prep/glean-draft-1 --count', { cwd: repo, encoding: 'utf8' }).trim();
+    expect(Number(prepCommits)).toBeGreaterThanOrEqual(1);
+    // main HEAD untouched
+    expect(execSync('git rev-parse main', { cwd: repo, encoding: 'utf8' }).trim()).toBe(mainHead);
+  });
+
+  it('draft-impl: skips with a warning when base_branch is not configured', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-nobase-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: x\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    const root = tmpRoot();
+    const result = await executeOne(
+      {
+        id: 'draft-2', evidence_hash: 'h', type: 'draft-impl',
+        project_path: repo,
+        evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: x' }] },
+        est_value: 50, est_tokens: 1000, status: 'pending',
+      },
+      {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000, // no baseBranch
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+      },
+    );
+    expect(result.status).toBe('failed');
+    expect(result.output).toBeUndefined();
+    // no worktree was created
+    let listed = '';
+    try { listed = execSync('git worktree list', { cwd: repo, encoding: 'utf8' }); } catch { /* ignore */ }
+    expect(listed).not.toContain('prep/glean-draft-2');
+  });
+
   it('invokes recordOutcome callback exactly once with the final status and fields', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-exec-cb-'));
     execSync('git init -q', { cwd: repo });

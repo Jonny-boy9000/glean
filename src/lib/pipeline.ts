@@ -35,6 +35,7 @@ export type PipelineOpts = {
   templatesDir: string;
   projectsRoot?: string; // override for tests
   ghBin?: string;
+  baseBranch?: string;   // per-project base branch for draft-impl (config.json)
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -116,14 +117,26 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
 
     for (const c of kept) c.est_value = scoreValue(c, {});
     const ranked = prioritize(kept, opts.budgetMs, Date.now() - start);
-    candidatesTotal = ranked.length;
-    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: ranked.length });
+    // v0.7.0 thin slice: when a base_branch is configured, promote the single
+    // highest-ranked TODO candidate to draft-impl so glean writes a reviewable
+    // branch instead of a dossier for it. Re-rank so the 1.0 weight applies.
+    let finalRanked = ranked;
+    if (opts.baseBranch) {
+      const top = ranked.find((c) => c.evidence.kind === 'todo');
+      if (top) {
+        top.type = 'draft-impl';
+        finalRanked = prioritize(ranked, opts.budgetMs, Date.now() - start);
+        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'draft-impl.promoted', task_id: top.id });
+      }
+    }
+    candidatesTotal = finalRanked.length;
+    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: finalRanked.length });
 
-    writeCandidatesJson(opts.gleanRoot, runId, { ranked, skipped_dedup: skipped });
+    writeCandidatesJson(opts.gleanRoot, runId, { ranked: finalRanked, skipped_dedup: skipped });
 
     if (memory) {
-      for (let i = 0; i < ranked.length; i++) {
-        const c = ranked[i];
+      for (let i = 0; i < finalRanked.length; i++) {
+        const c = finalRanked[i];
         try {
           const rowId = memory.recordCandidate(runId, {
             candidate_slug: c.id,
@@ -143,16 +156,16 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     }
 
     if (opts.dryRun) {
-      reason = ranked.length === 0 ? 'no-candidates' : 'completed';
+      reason = finalRanked.length === 0 ? 'no-candidates' : 'completed';
       return finalize();
     }
 
-    if (ranked.length === 0) {
+    if (finalRanked.length === 0) {
       reason = 'no-candidates';
       return finalize();
     }
 
-    for (const c of ranked) {
+    for (const c of finalRanked) {
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
       if (Date.now() - start >= opts.budgetMs) { reason = 'budget-exhausted'; exitCode = 10; break; }
       // Skip research-dossier tasks when fewer than 5 min remain (fetch-docs are fast enough).
@@ -167,6 +180,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         templatesDir: opts.templatesDir,
         taskTimeoutMs: opts.taskTimeoutMs,
         env: opts.claudeEnv,
+        baseBranch: opts.baseBranch,
         recordOutcome: memory && c.candidate_row_id !== undefined
           ? ((status, fields) => {
               try { memory!.recordOutcome(c.candidate_row_id!, status, fields); }
