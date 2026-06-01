@@ -8,6 +8,7 @@ import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
+import { BASE_DENY } from './deny.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -59,7 +60,7 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
     '--include-partial-messages',
     '--add-dir', workDir,
     '--permission-mode', 'acceptEdits',
-    '--disallowedTools', 'Bash(git push:*) Bash(git checkout main:*) Bash(gh pr merge:*) Bash(gh pr create:*)',
+    '--disallowedTools', BASE_DENY,
     '--session-id', uuid(),
   ];
   // On Windows, .cmd files must be invoked via cmd.exe /c
