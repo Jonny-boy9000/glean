@@ -77,7 +77,7 @@ export type RunSummary = {
 
 export type GleanConfig = {
   claude_bin?: string;
-  projects?: Record<string, { base_branch?: string }>;
+  projects?: Record<string, { base_branch?: string; test_command?: string }>;
 };
 
 // Discriminated output of a task (T7).

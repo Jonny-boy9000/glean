@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { executeOne } from './executor.js';
+import * as jobobject from './jobobject.js';
 import type { Candidate } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -195,6 +196,52 @@ describe('executeOne', () => {
     // the edited file was committed
     const committed = execSync('git show --stat prep/glean-draft-lock', { cwd: repo, encoding: 'utf8' });
     expect(committed).toContain('feature.ts');
+  });
+
+  it('draft-impl: spawns with a SCOPED Bash allow-list, never bare Bash (CRITICAL 1)', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'glean-draft-allow-'));
+    execSync('git init -q -b main', { cwd: repo });
+    execSync('git config user.email t@t', { cwd: repo });
+    execSync('git config user.name t', { cwd: repo });
+    writeFileSync(join(repo, 'a.ts'), '// TODO: implement feature\n');
+    execSync('git add . && git commit -q -m init', { cwd: repo });
+
+    const spy = vi.spyOn(jobobject, 'spawnInJob');
+    try {
+      const root = tmpRoot();
+      await executeOne(
+        {
+          id: 'draft-allow', evidence_hash: 'h', type: 'draft-impl',
+          project_path: repo,
+          evidence: { kind: 'todo', file: 'a.ts', todo_lines: [{ line: 1, text: 'TODO: implement feature' }] },
+          est_value: 50, est_tokens: 1000, status: 'pending',
+        },
+        {
+          runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+          templatesDir: join(__dirname, '..', '..', 'templates'),
+          taskTimeoutMs: 30_000, baseBranch: 'main',
+          env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'draft-impl-commit.yaml') },
+        },
+      );
+      expect(spy).toHaveBeenCalled();
+      // Find the --allowedTools value passed to the spawn.
+      const call = spy.mock.calls[0];
+      const args = call[1] as string[];
+      const idx = args.indexOf('--allowedTools');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const allow = args[idx + 1];
+      // The scoped allow-list, not the old bare-Bash grant.
+      expect(allow).not.toBe('Bash Edit Write');
+      const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+      expect(tokens).not.toContain('Bash'); // bare Bash must be absent
+      expect(allow).toContain('Bash(git add:*)');
+      expect(allow).toContain('Bash(git commit:*)');
+      expect(allow).toContain('Bash(npm test:*)');
+      expect(allow).toContain('Edit');
+      expect(allow).toContain('Write');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('draft-impl: skips with a warning when base_branch is not configured', async () => {

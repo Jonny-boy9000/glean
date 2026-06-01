@@ -27,10 +27,17 @@ File: `{{evidence.file}}`
 
 ## Hard rules
 
-- Stay inside this worktree. Do NOT switch branches, reset refs, or touch the
-  user's `main` checkout. Never push and never open or merge a PR.
-- Commit only the files you intentionally changed. Do not commit scratch or
-  prompt files.
+- You have a deliberately NARROW set of allowed commands. The only shell you may
+  run is: `git add`, `git commit`, `git status`, `git diff`, and the project's
+  test command (e.g. `npm test` / `npm run` / `npx vitest` / `node`, or the
+  per-project override). Everything else — including any other `git` verb,
+  `git -C`, `git --git-dir`, `rm`, `curl`, or redirecting into files outside the
+  worktree — is blocked by design. Do not attempt them.
+- Stay inside this worktree. Do NOT switch branches, reset refs, re-target git at
+  another directory, or touch anything outside the current working directory —
+  especially the user's `main` checkout. Never push and never open or merge a PR.
+- Commit only the files you intentionally changed (scoped `git add <files>`).
+  Do not commit scratch or prompt files.
 - An honest "draft, tests red" branch is acceptable and useful. Do not fake a
   passing result.
 

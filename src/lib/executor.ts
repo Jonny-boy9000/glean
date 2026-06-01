@@ -8,7 +8,7 @@ import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
-import { BASE_DENY, DRAFT_IMPL_DENY } from './deny.js';
+import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -22,6 +22,10 @@ export type ExecCtx = {
   // Per-project base branch (from config.json projects[path].base_branch).
   // Required for draft-impl; if absent, draft-impl candidates are skipped.
   baseBranch?: string;
+  // Per-project scoped test-command allow-list prefixes for draft-impl
+  // (config.json projects[path].test_command, normalized to Bash(...) prefixes).
+  // Absent → DEFAULT_TEST_COMMAND_ALLOW (npm/node toolchain).
+  testCommandAllow?: readonly string[];
   recordOutcome?: (status: TaskResult['status'], fields: {
     dossier_path?: string;
     started_at?: number;
@@ -180,12 +184,18 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   writeFileSync(join(scratchDir, 'prompt.md'), prompt);
   excludeFromWorktree(main, worktree, ['prompt.md', 'OUT.md']);
 
+  // CRITICAL 1: pass a SCOPED Bash allow-list, never bare `Bash`. Bare `Bash`
+  // would let the session run `git -C <main> push`, `rm -rf <main>`, or
+  // `echo x > <main>/file` — none fully blockable by a prefix deny-list. The
+  // allow-list (Edit/Write + git commit-cycle + per-project test command) is the
+  // real boundary; DRAFT_IMPL_DENY stays as defense-in-depth.
+  const allowedTools = draftImplAllowedTools(ctx.testCommandAllow ?? DEFAULT_TEST_COMMAND_ALLOW);
   const spawn = await runClaude(c, ctx, {
     prompt,
     cwd: worktree,
     addDir: worktree,
     deny: DRAFT_IMPL_DENY,
-    allowedTools: 'Bash Edit Write',
+    allowedTools,
   });
 
   // Kill-mid-commit safety (T8): a killed child may leave a stale index.lock in

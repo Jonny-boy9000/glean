@@ -36,6 +36,9 @@ const runCmd = defineCommand({
     const claudeBin = cfg.claude_bin ?? 'claude';
     // Per-project base_branch enables draft-impl for this project; absence skips it.
     const baseBranch = cfg.projects?.[projectPath]?.base_branch;
+    // Per-project test_command scopes the draft-impl Bash allow-list (CRITICAL 1).
+    const { testCommandAllowFor } = await import('./lib/deny.js');
+    const testCommandAllow = testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const summary = await runPipeline({
@@ -48,6 +51,7 @@ const runCmd = defineCommand({
       dryRun: Boolean(args['dry-run']),
       templatesDir: BUNDLED_TEMPLATES,
       baseBranch,
+      testCommandAllow,
     });
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
