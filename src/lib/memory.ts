@@ -142,7 +142,7 @@ export class Memory {
     runId: string,
     c: {
       candidate_slug: string;
-      candidate_type: 'research-dossier' | 'fetch-docs';
+      candidate_type: CandidateType;
       title: string;
       source_signal: 'jsonl' | 'git-todo' | 'gh-pr' | 'deps';
       file_path: string | null;
@@ -230,7 +230,7 @@ export class Memory {
   listRecentRatableCandidates(limit: number): Array<{
     id: number;
     title: string;
-    candidate_type: 'research-dossier' | 'fetch-docs';
+    candidate_type: CandidateType;
     ended_at: number;
     dossier_path: string;
     user_rating: 'kept' | 'discarded' | 'actioned' | null;
@@ -245,7 +245,7 @@ export class Memory {
     ).all(limit) as Array<{
       id: number;
       title: string;
-      candidate_type: 'research-dossier' | 'fetch-docs';
+      candidate_type: CandidateType;
       ended_at: number;
       dossier_path: string;
       user_rating: 'kept' | 'discarded' | 'actioned' | null;
