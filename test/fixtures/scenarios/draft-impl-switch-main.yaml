@@ -1,0 +1,16 @@
+# Adversarial: the "model" tries to escape the worktree onto main, then commits.
+# git refuses the switch (main is checked out in the primary worktree); the
+# commit still lands on the prep branch. Proves main HEAD is unchanged.
+write_files:
+  - path: feature.ts
+    content: |
+      export function feature() {
+        return 'implemented';
+      }
+shell_commands:
+  - git switch main
+  - git add feature.ts
+  - git -c user.email=g@g -c user.name=g commit -q -m "implement feature"
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+exit_code: 0

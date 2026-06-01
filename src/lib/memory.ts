@@ -72,6 +72,19 @@ export class Memory {
     this.migrate();
   }
 
+  // True if `table` already has a column named `column`. Used to make ADD COLUMN
+  // migrations idempotent (F6): a half-migrated DB (version bump didn't commit but
+  // the ALTER did, or a manual edit) must not brick on "duplicate column name".
+  private hasColumn(table: string, column: string): boolean {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return cols.some((c) => c.name === column);
+  }
+
+  private addColumnIfMissing(table: string, column: string, ddlType: string): void {
+    if (this.hasColumn(table, column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddlType}`);
+  }
+
   private migrate(): void {
     const version = this.db.pragma('user_version', { simple: true }) as number;
     if (version < 1) {
@@ -85,10 +98,14 @@ export class Memory {
         throw e;
       }
     }
+    // F6: each ADD COLUMN is guarded by addColumnIfMissing so a half-migrated DB
+    // (the ALTER landed but the user_version bump didn't commit, or a column was
+    // added out of band) re-runs cleanly instead of throwing "duplicate column
+    // name", rolling back, and bricking every future open.
     if (version < 2) {
       this.db.exec('BEGIN');
       try {
-        this.db.exec('ALTER TABLE candidates ADD COLUMN dossier_existed_at_7d INTEGER');
+        this.addColumnIfMissing('candidates', 'dossier_existed_at_7d', 'INTEGER');
         this.db.pragma('user_version = 2');
         this.db.exec('COMMIT');
       } catch (e) {
@@ -99,9 +116,24 @@ export class Memory {
     if (version < 3) {
       this.db.exec('BEGIN');
       try {
-        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating TEXT');
-        this.db.exec('ALTER TABLE candidates ADD COLUMN user_rating_at INTEGER');
+        this.addColumnIfMissing('candidates', 'user_rating', 'TEXT');
+        this.addColumnIfMissing('candidates', 'user_rating_at', 'INTEGER');
         this.db.pragma('user_version = 3');
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    }
+    if (version < 4) {
+      // v4 (T12): draft-impl diff-stat columns so the receipt can read branch results.
+      this.db.exec('BEGIN');
+      try {
+        this.addColumnIfMissing('candidates', 'draft_files', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'draft_insertions', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'draft_deletions', 'INTEGER');
+        this.addColumnIfMissing('candidates', 'prep_branch', 'TEXT');
+        this.db.pragma('user_version = 4');
         this.db.exec('COMMIT');
       } catch (e) {
         this.db.exec('ROLLBACK');
@@ -142,7 +174,7 @@ export class Memory {
     runId: string,
     c: {
       candidate_slug: string;
-      candidate_type: 'research-dossier' | 'fetch-docs';
+      candidate_type: CandidateType;
       title: string;
       source_signal: 'jsonl' | 'git-todo' | 'gh-pr' | 'deps';
       file_path: string | null;
@@ -179,12 +211,18 @@ export class Memory {
       duration_ms?: number;
       bytes_written?: number;
       stderr_rate_limit_hits?: number;
+      // draft-impl branch results (T12):
+      draft_files?: number;
+      draft_insertions?: number;
+      draft_deletions?: number;
+      prep_branch?: string;
     } = {},
   ): void {
     this.db.prepare(
       `UPDATE candidates
          SET outcome = ?, dossier_path = ?, started_at = ?, ended_at = ?,
-             duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?
+             duration_ms = ?, bytes_written = ?, stderr_rate_limit_hits = ?,
+             draft_files = ?, draft_insertions = ?, draft_deletions = ?, prep_branch = ?
        WHERE id = ?`,
     ).run(
       outcome,
@@ -194,6 +232,10 @@ export class Memory {
       fields.duration_ms ?? null,
       fields.bytes_written ?? null,
       fields.stderr_rate_limit_hits ?? 0,
+      fields.draft_files ?? null,
+      fields.draft_insertions ?? null,
+      fields.draft_deletions ?? null,
+      fields.prep_branch ?? null,
       candidateId,
     );
   }
@@ -230,7 +272,7 @@ export class Memory {
   listRecentRatableCandidates(limit: number): Array<{
     id: number;
     title: string;
-    candidate_type: 'research-dossier' | 'fetch-docs';
+    candidate_type: CandidateType;
     ended_at: number;
     dossier_path: string;
     user_rating: 'kept' | 'discarded' | 'actioned' | null;
@@ -245,7 +287,7 @@ export class Memory {
     ).all(limit) as Array<{
       id: number;
       title: string;
-      candidate_type: 'research-dossier' | 'fetch-docs';
+      candidate_type: CandidateType;
       ended_at: number;
       dossier_path: string;
       user_rating: 'kept' | 'discarded' | 'actioned' | null;

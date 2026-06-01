@@ -1,6 +1,7 @@
 import type { Candidate } from './types.js';
 
 const TYPE_WEIGHT: Record<Candidate['type'], number> = {
+  'draft-impl': 1.0,
   'research-dossier': 1.0,
   'fetch-docs': 0.2,
 };

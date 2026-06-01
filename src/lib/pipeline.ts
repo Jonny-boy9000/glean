@@ -1,19 +1,21 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { join, basename, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuid } from 'uuid';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
-import type { Candidate, RunSummary, RunReason } from './types.js';
+import type { Candidate, RunSummary, RunReason, TaskResult } from './types.js';
 import { discoverJsonl } from './discover-jsonl.js';
 import { discoverGit } from './discover-git.js';
 import { discoverDeps } from './discover-deps.js';
 import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
-import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir } from './state.js';
+import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir, projectSlug } from './state.js';
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
 import { runDossierExistenceSweep, SWEEP_AGE_MS } from './sweep.js';
+import { gcWorktrees } from './gc.js';
+import { titleFor, today, sourceSignalFor, filePathFor } from './candidate-meta.js';
 
 function gleanVersion(): string {
   try {
@@ -34,6 +36,9 @@ export type PipelineOpts = {
   templatesDir: string;
   projectsRoot?: string; // override for tests
   ghBin?: string;
+  baseBranch?: string;   // per-project base branch for draft-impl (config.json) — single-project fallback
+  baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
+  testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -83,6 +88,17 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     }
   }
 
+  // CRITICAL 2: expire draft-impl worktrees + prep branches older than 21 days
+  // (CLAUDE.md §5.6). Best-effort — gcWorktrees swallows all errors internally.
+  try {
+    const removed = gcWorktrees(opts.projectPath, opts.gleanRoot, Date.now());
+    if (removed.length > 0) {
+      appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'gc.done', removed: removed.length });
+    }
+  } catch (e) {
+    process.stderr.write(`[gc] warning: worktree gc failed: ${(e as Error).message}\n`);
+  }
+
   const repairResult = repairRecent(opts.gleanRoot);
   if (repairResult.repaired.length > 0) {
     appendOrchestratorLog(opts.gleanRoot, runId, {
@@ -114,15 +130,28 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'dedup.done', kept: kept.length, skipped: skipped.length });
 
     for (const c of kept) c.est_value = scoreValue(c, {});
-    const ranked = prioritize(kept, opts.budgetMs, Date.now() - start);
-    candidatesTotal = ranked.length;
-    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: ranked.length });
+    // v0.7.0 thin slice: when a base_branch is configured, promote the single
+    // highest est_value TODO candidate to draft-impl BEFORE ranking, so glean
+    // writes a reviewable branch instead of a dossier for it. Promoting here
+    // (rather than re-ranking) means prioritize() runs exactly once — calling it
+    // twice would apply the vendor/path est_value penalty twice.
+    if (opts.baseBranch) {
+      const todos = kept.filter((c) => c.evidence.kind === 'todo');
+      const top = todos.sort((a, b) => b.est_value - a.est_value)[0];
+      if (top) {
+        top.type = 'draft-impl';
+        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'draft-impl.promoted', task_id: top.id });
+      }
+    }
+    const finalRanked = prioritize(kept, opts.budgetMs, Date.now() - start);
+    candidatesTotal = finalRanked.length;
+    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'rank.done', count: finalRanked.length });
 
-    writeCandidatesJson(opts.gleanRoot, runId, { ranked, skipped_dedup: skipped });
+    writeCandidatesJson(opts.gleanRoot, runId, { ranked: finalRanked, skipped_dedup: skipped });
 
     if (memory) {
-      for (let i = 0; i < ranked.length; i++) {
-        const c = ranked[i];
+      for (let i = 0; i < finalRanked.length; i++) {
+        const c = finalRanked[i];
         try {
           const rowId = memory.recordCandidate(runId, {
             candidate_slug: c.id,
@@ -142,16 +171,16 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     }
 
     if (opts.dryRun) {
-      reason = ranked.length === 0 ? 'no-candidates' : 'completed';
+      reason = finalRanked.length === 0 ? 'no-candidates' : 'completed';
       return finalize();
     }
 
-    if (ranked.length === 0) {
+    if (finalRanked.length === 0) {
       reason = 'no-candidates';
       return finalize();
     }
 
-    for (const c of ranked) {
+    for (const c of finalRanked) {
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
       if (Date.now() - start >= opts.budgetMs) { reason = 'budget-exhausted'; exitCode = 10; break; }
       // Skip research-dossier tasks when fewer than 5 min remain (fetch-docs are fast enough).
@@ -166,6 +195,9 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         templatesDir: opts.templatesDir,
         taskTimeoutMs: opts.taskTimeoutMs,
         env: opts.claudeEnv,
+        baseBranch: opts.baseBranch,
+        baseBranchFor: opts.baseBranchFor,
+        testCommandAllow: opts.testCommandAllow,
         recordOutcome: memory && c.candidate_row_id !== undefined
           ? ((status, fields) => {
               try { memory!.recordOutcome(c.candidate_row_id!, status, fields); }
@@ -184,7 +216,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       else if (result.status === 'failed') failed++;
       else ran++;
 
-      if (result.output_path) appendIndex(opts.gleanRoot, projSlug, runId, c, result);
+      if (result.output) appendIndex(opts.gleanRoot, projSlug, runId, c, result);
     }
 
     return finalize();
@@ -226,13 +258,7 @@ function newRunId(): string {
   return `${ymd}-${hms}-${uuid().slice(0, 6)}`;
 }
 
-function projectSlug(p: string): string {
-  return basename(p).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-}
-
-function today(): string { return new Date().toISOString().slice(0, 10); }
-
-function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: { status: string; output_path?: string }): void {
+function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: TaskResult): void {
   const dir = join(root, 'dossiers', projSlug, today());
   mkdirSync(dir, { recursive: true });
   const indexPath = join(dir, 'INDEX.md');
@@ -245,41 +271,61 @@ function appendIndex(root: string, projSlug: string, runId: string, c: Candidate
   } else {
     frontmatter = { run_id: runId, project_path: c.project_path, generated_at: new Date().toISOString(), entries: [] };
   }
-  (frontmatter.entries as unknown[]).push({
-    task_id: c.id, evidence_hash: c.evidence_hash, type: c.type,
-    title: titleFor(c), output: result.output_path ?? '', status: result.status,
-  });
+  (frontmatter.entries as unknown[]).push(indexEntryFor(c, result));
   const yaml = yamlStringify(frontmatter);
-  writeFileSync(indexPath, `---\n${yaml}---\n\n# Glean dossier — ${today()}\n\n${renderHumanList(frontmatter.entries as { title: string; output: string; status: string; evidence_hash: string }[])}`);
+  writeFileSync(indexPath, `---\n${yaml}---\n\n# Glean dossier — ${today()}\n\n${renderHumanList(frontmatter.entries as IndexEntryRecord[])}`);
 }
 
-function renderHumanList(entries: { title: string; output: string; status: string }[]): string {
-  return entries.map((e, i) => `${i + 1}. **${e.title}** — ${e.status}\n   - Read: \`${e.output}\``).join('\n\n');
-}
+export type IndexEntryRecord = {
+  task_id: string;
+  evidence_hash: string;
+  type: Candidate['type'];
+  title: string;
+  status: string;
+  // file result
+  output?: string;
+  // branch result (draft-impl)
+  branch?: string;
+  base?: string;
+  worktree?: string;
+  files?: number;
+  insertions?: number;
+  deletions?: number;
+};
 
-function titleFor(c: Candidate): string {
-  switch (c.evidence.kind) {
-    case 'todo': return `Handle TODO in ${c.evidence.file}`;
-    case 'jsonl': return c.evidence.ai_title;
-    case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
-    case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
+// Build the persisted INDEX entry. File results carry an `output` path;
+// branch results (draft-impl) carry the prep branch + worktree + diff stat so
+// the renderer can emit the correct review/discard commands (T11).
+function indexEntryFor(c: Candidate, result: TaskResult): IndexEntryRecord {
+  const baseRec = {
+    task_id: c.id, evidence_hash: c.evidence_hash, type: c.type,
+    title: titleFor(c), status: result.status,
+  };
+  if (result.output?.kind === 'branch') {
+    const b = result.output;
+    return {
+      ...baseRec,
+      branch: b.branch, base: b.base, worktree: b.worktree,
+      files: b.files, insertions: b.insertions, deletions: b.deletions,
+    };
   }
+  return { ...baseRec, output: result.output?.kind === 'file' ? result.output.path : '' };
 }
 
-function sourceSignalFor(c: Candidate): 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' {
-  switch (c.evidence.kind) {
-    case 'jsonl': return 'jsonl';
-    case 'todo': return 'git-todo';
-    case 'pr': return 'gh-pr';
-    case 'dep': return 'deps';
-  }
+function renderHumanList(entries: IndexEntryRecord[]): string {
+  return entries.map((e, i) => `${i + 1}. ${renderEntry(e)}`).join('\n\n');
 }
 
-function filePathFor(c: Candidate): string | null {
-  switch (c.evidence.kind) {
-    case 'todo': return c.evidence.file;
-    case 'jsonl': return null;
-    case 'pr': return null;
-    case 'dep': return c.evidence.manifest;
+export function renderEntry(e: IndexEntryRecord): string {
+  if (e.type === 'draft-impl' && e.branch) {
+    const stat = `+${e.insertions ?? 0} / -${e.deletions ?? 0} across ${e.files ?? 0} file(s)`;
+    // Review: the prep branch is already checked out in the linked worktree, so
+    // `git checkout <branch>` in the main repo FAILS — cd into the worktree instead.
+    const review = `cd ${e.worktree ?? ''}`;
+    // Discard: a plain rm -rf leaves a dangling worktree registration.
+    const discard = `git -C <main> worktree remove --force ${e.worktree ?? ''} && git -C <main> branch -D ${e.branch}`;
+    return `**${e.title}** — ${e.status} — branch \`${e.branch}\` (${stat})\n   - Review: \`${review}\`\n   - Discard: \`${discard}\``;
   }
+  return `**${e.title}** — ${e.status}\n   - Read: \`${e.output ?? ''}\``;
 }
+

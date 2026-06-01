@@ -148,6 +148,30 @@ The orchestrator also writes a structured ndjson event log at `%USERPROFILE%\gle
 
 ---
 
+## Auto-load dossiers into Claude sessions
+
+`glean peek` is a CWD-scoped variant of `glean today` designed for use as a SessionStart hook. When you start a Claude Code session inside a repo that has a recent glean dossier, the hook auto-loads the dossier into the session's context.
+
+Add this to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "glean peek" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`glean peek` exits silently when there's nothing to show (no git repo, no dossier for today, any error) so it never breaks a session.
+
+---
+
 ## Advanced configuration
 
 `%USERPROFILE%\glean\config.json` is auto-created on first run. The only currently-meaningful field:

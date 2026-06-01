@@ -1,11 +1,14 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
-import type { Candidate, TaskResult } from './types.js';
+import type { Candidate, TaskResult, TaskOutput } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
+import { projectSlug } from './state.js';
+import { titleFor, today } from './candidate-meta.js';
+import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
@@ -16,6 +19,18 @@ export type ExecCtx = {
   templatesDir: string;
   taskTimeoutMs: number;
   env?: NodeJS.ProcessEnv;
+  // Per-project base branch (from config.json projects[path].base_branch).
+  // Required for draft-impl; if absent, draft-impl candidates are skipped.
+  // F5: prefer baseBranchFor (resolved per-candidate by the candidate's OWN
+  // project_path) over the ambient baseBranch, so a multi-project run can't
+  // provision a worktree off the wrong repo's base. baseBranch remains as a
+  // single-project fallback.
+  baseBranch?: string;
+  baseBranchFor?: (projectPath: string) => string | undefined;
+  // Per-project scoped test-command allow-list prefixes for draft-impl
+  // (config.json projects[path].test_command, normalized to Bash(...) prefixes).
+  // Absent → DEFAULT_TEST_COMMAND_ALLOW (npm/node toolchain).
+  testCommandAllow?: readonly string[];
   recordOutcome?: (status: TaskResult['status'], fields: {
     dossier_path?: string;
     started_at?: number;
@@ -23,10 +38,33 @@ export type ExecCtx = {
     duration_ms?: number;
     bytes_written?: number;
     stderr_rate_limit_hits?: number;
+    draft_files?: number;
+    draft_insertions?: number;
+    draft_deletions?: number;
+    prep_branch?: string;
   }) => void;
 };
 
+// Result of a single claude -p spawn (shared by both task paths).
+type SpawnOutcome = {
+  exitCode: number;
+  rateLimited: boolean;
+  timedOut: boolean;
+  stderrPath: string;
+  jsonlPath: string;
+  // F7: true once runClaude has awaited job.exit AND any kill() — the entire
+  // spawned process tree is confirmed dead, so the worktree's index.lock (if any)
+  // is provably orphaned and safe to clear.
+  descendantsDead: boolean;
+};
+
 export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
+  if (c.type === 'draft-impl') return executeDraftImpl(c, ctx);
+  return executeDossier(c, ctx);
+}
+
+// ── Dossier / fetch-docs path (the original behavior) ───────────────────────
+async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
   const start = Date.now();
   const slug = slugify(c);
   const dossierDir = join(ctx.gleanRoot, 'dossiers', projectSlug(c.project_path), today());
@@ -37,60 +75,16 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   const templatePath = pickTemplate(c, ctx);
   const templateBody = readFileSync(templatePath, 'utf8');
   const prompt = render(templateBody + SAFETY_FOOTER, hydrated);
-  writeFileSync(join(workDir, 'prompt.md'), prompt);
+  const promptPath = join(workDir, 'prompt.md');
+  writeFileSync(promptPath, prompt);
 
-  const logDir = join(ctx.gleanRoot, 'logs', ctx.runId);
-  mkdirSync(logDir, { recursive: true });
-  const stderrPath = join(logDir, `${c.id}.stderr`);
-  const jsonlPath = join(logDir, `${c.id}.jsonl`);
-  const stderrStream = createWriteStream(stderrPath);
-  const jsonlStream = createWriteStream(jsonlPath);
-  let rateLimited = false;
-
-  // Pass prompt via stdin to avoid Windows command-line length limits (~8191 chars).
-  // Use -p with no argument; claude reads the prompt from stdin when piped.
-  // --verbose is required for --output-format stream-json in -p (print) mode.
-  const claudeArgs = [
-    '-p',
-    '--output-format', 'stream-json',
-    '--verbose',
-    '--include-partial-messages',
-    '--add-dir', workDir,
-    '--permission-mode', 'acceptEdits',
-    '--disallowedTools', 'Bash(git push:*) Bash(git checkout main:*) Bash(gh pr merge:*) Bash(gh pr create:*)',
-    '--session-id', uuid(),
-  ];
-  // On Windows, .cmd files must be invoked via cmd.exe /c
-  const [spawnCmd, spawnArgs] = resolveSpawn(ctx.claudeBin, claudeArgs);
-  const job = spawnInJob(spawnCmd, spawnArgs, { cwd: workDir, env: ctx.env, stdio: 'pipe' });
-
-  // Write the prompt to stdin and close the stream so claude proceeds immediately.
-  if (job.child.stdin) {
-    job.child.stdin.write(prompt, 'utf8');
-    job.child.stdin.end();
-  }
-
-  job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
-  job.child.stderr?.on('data', (chunk: Buffer) => {
-    stderrStream.write(chunk);
-    if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
-      rateLimited = true;
-      job.kill();
-    }
+  const spawn = await runClaude(c, ctx, {
+    prompt,
+    cwd: workDir,
+    addDir: workDir,
+    deny: BASE_DENY,
+    allowedTools: undefined,
   });
-
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; job.kill(); }, ctx.taskTimeoutMs);
-
-  let exitCode: number;
-  try {
-    exitCode = await job.exit;
-  } finally {
-    clearTimeout(timer);
-  }
-
-  stderrStream.end();
-  jsonlStream.end();
 
   const startedAt = start;
   const endedAt = Date.now();
@@ -108,21 +102,21 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
         ended_at: endedAt,
         duration_ms: elapsed_ms,
         bytes_written,
-        stderr_rate_limit_hits: rateLimited ? 1 : 0,
+        stderr_rate_limit_hits: spawn.rateLimited ? 1 : 0,
       });
     } catch (e) {
       process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`);
     }
     const result: TaskResult = { status, elapsed_ms };
-    if (output_path) result.output_path = output_path;
+    if (output_path) result.output = { kind: 'file', path: output_path };
     if (stderr_tail) result.stderr_tail = stderr_tail;
     return result;
   };
 
-  if (rateLimited) return finalize('rate-limit', undefined, undefined);
-  if (timedOut) return finalize('timeout', undefined, undefined);
-  if (exitCode !== 0) {
-    const tail = tailLines(readFileSync(stderrPath, 'utf8'), 50);
+  if (spawn.rateLimited) return finalize('rate-limit', undefined, undefined);
+  if (spawn.timedOut) return finalize('timeout', undefined, undefined);
+  if (spawn.exitCode !== 0) {
+    const tail = tailLines(readFileSync(spawn.stderrPath, 'utf8'), 50);
     return finalize('failed', undefined, tail);
   }
 
@@ -131,24 +125,381 @@ export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult
   if (outPath && existsSync(outPath)) {
     const bytes = readFileSync(outPath).length;
     if (bytes < 50) {
-      const fallback = extractLastAssistantText(jsonlPath);
+      const fallback = extractLastAssistantText(spawn.jsonlPath);
       writeFileSync(outPath, fallback);
       return finalize('ok-fallback', outPath, undefined);
     }
     return finalize('ok', outPath, undefined);
   }
   // No output at all — fallback
-  const fallback = extractLastAssistantText(jsonlPath);
+  const fallback = extractLastAssistantText(spawn.jsonlPath);
   const fallbackPath = join(workDir, 'OUT.md');
   writeFileSync(fallbackPath, fallback);
   return finalize('ok-fallback', fallbackPath, undefined);
+}
+
+// ── draft-impl path (T6) ────────────────────────────────────────────────────
+// Provision an isolated worktree on prep/glean-<taskid> off the configured base,
+// let the spawned session implement + commit, then capture the branch diff stat.
+// Glean scratch (prompt/logs) lives OUTSIDE the worktree so it is never swept
+// into the user's draft commit.
+async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
+  const start = Date.now();
+
+  const finalizeFail = (status: TaskResult['status'], stderr_tail?: string[]): TaskResult => {
+    const elapsed_ms = Date.now() - start;
+    try {
+      ctx.recordOutcome?.(status, { started_at: start, ended_at: Date.now(), duration_ms: elapsed_ms, stderr_rate_limit_hits: 0 });
+    } catch { /* ignore */ }
+    const result: TaskResult = { status, elapsed_ms };
+    if (stderr_tail) result.stderr_tail = stderr_tail;
+    return result;
+  };
+
+  // F5: resolve base_branch from the candidate's OWN project_path (not an
+  // ambient single value). Fall back to the legacy ambient baseBranch.
+  const base = ctx.baseBranchFor?.(c.project_path) ?? ctx.baseBranch;
+  // Guard: draft-impl requires a configured base_branch. Skip (failed) otherwise.
+  if (!base) {
+    process.stderr.write(`[draft-impl] skipping ${c.id}: no base_branch configured for ${c.project_path}\n`);
+    return finalizeFail('failed', ['no base_branch configured for this project']);
+  }
+  const main = c.project_path;
+  const branch = `prep/glean-${c.id}`;
+  const slug = slugify(c);
+  const worktree = join(ctx.gleanRoot, 'work', `${slug}-${c.id}`);
+
+  // Provision the worktree. If it fails (e.g. bad base ref), skip cleanly.
+  try {
+    if (existsSync(worktree)) {
+      // Stale leftover from a previous run — remove its registration first.
+      try { execFileSync('git', ['-C', main, 'worktree', 'remove', '--force', worktree], { stdio: 'ignore' }); } catch { /* ignore */ }
+      try { rmSync(worktree, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    try { execFileSync('git', ['-C', main, 'branch', '-D', branch], { stdio: 'ignore' }); } catch { /* branch may not exist */ }
+    mkdirSync(join(ctx.gleanRoot, 'work'), { recursive: true });
+    execFileSync('git', ['-C', main, 'worktree', 'add', worktree, '-b', branch, base], { stdio: 'pipe' });
+  } catch (e) {
+    process.stderr.write(`[draft-impl] worktree provisioning failed for ${c.id}: ${(e as Error).message}\n`);
+    return finalizeFail('failed', [`worktree provisioning failed: ${(e as Error).message}`]);
+  }
+
+  // Render the prompt OUTSIDE the worktree (scratch dir) so it never gets
+  // committed. Belt-and-braces: also exclude prompt.md via .git/info/exclude.
+  const hydrated = hydrateEvidence(c, ctx);
+  const templatePath = pickTemplate(c, ctx);
+  const templateBody = readFileSync(templatePath, 'utf8');
+  const prompt = render(templateBody, hydrated); // no OUT.md SAFETY_FOOTER for draft-impl
+  const scratchDir = join(ctx.gleanRoot, 'work', '.glean-scratch', c.id);
+  mkdirSync(scratchDir, { recursive: true });
+  writeFileSync(join(scratchDir, 'prompt.md'), prompt);
+  excludeFromWorktree(main, worktree, ['prompt.md', 'OUT.md']);
+
+  // CRITICAL 1: pass a SCOPED Bash allow-list, never bare `Bash`. Bare `Bash`
+  // would let the session run `git -C <main> push`, `rm -rf <main>`, or
+  // `echo x > <main>/file` — none fully blockable by a prefix deny-list. The
+  // allow-list (Edit/Write + git commit-cycle + per-project test command) is the
+  // real boundary; DRAFT_IMPL_DENY stays as defense-in-depth.
+  const allowedTools = draftImplAllowedTools(ctx.testCommandAllow ?? DEFAULT_TEST_COMMAND_ALLOW);
+  const spawn = await runClaude(c, ctx, {
+    prompt,
+    cwd: worktree,
+    addDir: worktree,
+    deny: DRAFT_IMPL_DENY,
+    allowedTools,
+  });
+
+  // Kill-mid-commit safety (T8/F7): a killed child may leave a stale index.lock
+  // in the worktree, which would break the auto-commit/diff below. runClaude has
+  // already awaited the descendant tree-kill, so the lock is provably orphaned
+  // (spawn.descendantsDead) — clear it.
+  clearStaleIndexLock(main, worktree, spawn.descendantsDead);
+
+  const elapsed_ms = Date.now() - start;
+
+  // F3: scope the auto-commit to the TODO's evidence file (+ new untracked
+  // source), never blanket-stage tracked modifications.
+  const evidenceFiles = c.evidence.kind === 'todo' ? [c.evidence.file] : [];
+  if (spawn.rateLimited || spawn.timedOut) {
+    // Even on interruption, try to salvage whatever was committed/edited.
+    autoCommitIfDirty(worktree, evidenceFiles);
+  } else if (spawn.exitCode === 0) {
+    autoCommitIfDirty(worktree, evidenceFiles);
+  }
+
+  // Did anything land on the prep branch beyond base?
+  const stat = diffStat(main, base, branch);
+  const finalize = (status: TaskResult['status'], output: TaskOutput | undefined, stderr_tail?: string[]): TaskResult => {
+    try {
+      ctx.recordOutcome?.(status, {
+        started_at: start, ended_at: Date.now(), duration_ms: elapsed_ms,
+        stderr_rate_limit_hits: spawn.rateLimited ? 1 : 0,
+        draft_files: stat?.files, draft_insertions: stat?.insertions, draft_deletions: stat?.deletions,
+        prep_branch: output?.kind === 'branch' ? output.branch : undefined,
+      });
+    } catch (e) {
+      process.stderr.write(`[memory] warning: recordOutcome failed: ${(e as Error).message}\n`);
+    }
+    const result: TaskResult = { status, elapsed_ms };
+    if (output) result.output = output;
+    if (stderr_tail) result.stderr_tail = stderr_tail;
+    return result;
+  };
+
+  const hasCommit = commitsBeyondBase(main, base, branch) > 0;
+  // F4: a real commit whose diff stat could not be read is NOT a clean success.
+  // Coercing a null stat into a 0-file 'ok' would hide a measurement failure and
+  // mislead the receipt. Treat (commit present, stat unreadable) as a failure so
+  // status reflects reality; the worktree is kept for manual inspection.
+  const statUnreadable = hasCommit && stat === null;
+  if (spawn.rateLimited) {
+    return hasCommit && !statUnreadable
+      ? finalize('rate-limit', branchOutput(branch, base, worktree, stat))
+      : finalize('rate-limit', undefined);
+  }
+  if (spawn.timedOut) {
+    return hasCommit && !statUnreadable
+      ? finalize('timeout', branchOutput(branch, base, worktree, stat))
+      : finalize('timeout', undefined);
+  }
+  if (statUnreadable) {
+    return finalize('failed', undefined, ['draft-impl: commit landed but diff stat was unreadable']);
+  }
+  if (hasCommit) {
+    return finalize('ok', branchOutput(branch, base, worktree, stat));
+  }
+  // Nothing committed and tree clean → failed, keep the worktree for inspection.
+  const tail = (() => { try { return tailLines(readFileSync(spawn.stderrPath, 'utf8'), 20); } catch { return undefined; } })();
+  return finalize('failed', undefined, tail);
+}
+
+function branchOutput(branch: string, base: string, worktree: string, stat: DiffStat | null): TaskOutput {
+  return {
+    kind: 'branch', branch, base, worktree,
+    files: stat?.files ?? 0, insertions: stat?.insertions ?? 0, deletions: stat?.deletions ?? 0,
+  };
+}
+
+type DiffStat = { files: number; insertions: number; deletions: number };
+
+// F4: use TWO-dot `base..branch` (branch-relative: what the prep branch added
+// beyond base) for BOTH the diff stat and the commit count, so they answer the
+// same "did anything land on the prep branch" question. Three-dot (symmetric)
+// would fold in base-only changes when base has advanced past the branch point.
+// All linked worktrees share one object store, so reading from the main dir
+// works regardless of where the worktree lives (Windows-safe).
+function diffStatImpl(main: string, base: string, branch: string): DiffStat | null {
+  try {
+    const out = execFileSync('git', ['-C', main, 'diff', '--numstat', `${base}..${branch}`], { encoding: 'utf8' });
+    let files = 0, insertions = 0, deletions = 0;
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const [ins, del] = line.split('\t');
+      files++;
+      insertions += Number(ins) || 0;
+      deletions += Number(del) || 0;
+    }
+    return { files, insertions, deletions };
+  } catch { return null; }
+}
+
+// Injectable wrappers so tests can force a parse failure (null stat) and verify
+// it is surfaced rather than coerced into a clean 0-file success.
+function diffStat(main: string, base: string, branch: string): DiffStat | null {
+  return diffStat.impl(main, base, branch);
+}
+diffStat.impl = diffStatImpl;
+
+function commitsBeyondBaseImpl(main: string, base: string, branch: string): number {
+  try {
+    const out = execFileSync('git', ['-C', main, 'rev-list', '--count', `${base}..${branch}`], { encoding: 'utf8' });
+    return Number(out.trim()) || 0;
+  } catch { return 0; }
+}
+function commitsBeyondBase(main: string, base: string, branch: string): number {
+  return commitsBeyondBase.impl(main, base, branch);
+}
+commitsBeyondBase.impl = commitsBeyondBaseImpl;
+
+// Test-only handles (prefixed __ to signal "do not use in production code").
+export const __diffStat = diffStat;
+export const __commitsBeyondBase = commitsBeyondBase;
+export const __clearStaleIndexLock = clearStaleIndexLock;
+
+// Auto-commit fallback for when the session edited but did not commit.
+//
+// F3: we deliberately do NOT blanket-stage tracked modifications (`git add -u`).
+// A test run inside the worktree can rewrite a TRACKED snapshot/lockfile that is
+// unrelated to the TODO; `git add -u` would silently land it in the user's draft.
+// Instead we scope staging to:
+//   - the evidence file(s) for the TODO (the file the model was asked to change), and
+//   - new (untracked) non-ignored source files the model created (honors
+//     .gitignore + our .git/info/exclude, so prompt.md/OUT.md and coverage/dist
+//     stay out).
+// Other tracked files the model deliberately touched are still picked up: the
+// model is instructed to `git add` them itself, and any it staged before the
+// kill survive (we never `git reset`). This keeps the auto-commit set explicit —
+// no unrelated or secret file lands silently. Best-effort: clean tree is a no-op.
+function autoCommitIfDirty(worktree: string, evidenceFiles: string[]): void {
+  try {
+    const status = execFileSync('git', ['-C', worktree, 'status', '--porcelain'], { encoding: 'utf8' });
+    if (!status.trim()) return;
+    // Stage the evidence file(s) the model was asked to change (if present/dirty).
+    for (const f of evidenceFiles) {
+      if (!f) continue;
+      try { execFileSync('git', ['-C', worktree, 'add', '--', f], { stdio: 'ignore' }); } catch { /* missing/clean */ }
+    }
+    // Stage untracked-but-not-ignored files explicitly (new source the model
+    // created). --others --exclude-standard filters .gitignore + info/exclude.
+    const untracked = execFileSync(
+      'git', ['-C', worktree, 'ls-files', '--others', '--exclude-standard'],
+      { encoding: 'utf8' },
+    ).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    for (const f of untracked) {
+      execFileSync('git', ['-C', worktree, 'add', '--', f], { stdio: 'ignore' });
+    }
+    // If after staging there is nothing, skip the commit.
+    const staged = execFileSync('git', ['-C', worktree, 'diff', '--cached', '--name-only'], { encoding: 'utf8' });
+    if (!staged.trim()) return;
+    execFileSync('git', ['-C', worktree, '-c', 'user.email=glean@local', '-c', 'user.name=glean', 'commit', '-m', 'glean: draft (review)'], { stdio: 'ignore' });
+  } catch { /* best effort */ }
+}
+
+// Add glean scratch filenames to the worktree's .git/info/exclude so an
+// auto-commit `git add` never sweeps them into the user's draft branch.
+function excludeFromWorktree(main: string, worktree: string, patterns: string[]): void {
+  try {
+    // --path-format=absolute returns the resolved path directly; joining the
+    // worktree to a (Windows-)absolute --git-path result yields a garbage path.
+    const excludePath = execFileSync(
+      'git',
+      ['-C', worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (!excludePath) return;
+    let existing = '';
+    try { existing = readFileSync(excludePath, 'utf8'); } catch { /* new file */ }
+    const toAdd = patterns.filter((p) => !existing.includes(p));
+    if (toAdd.length) {
+      mkdirSync(dirname(excludePath), { recursive: true });
+      writeFileSync(excludePath, existing + (existing && !existing.endsWith('\n') ? '\n' : '') + toAdd.join('\n') + '\n');
+    }
+  } catch { /* best effort */ }
+}
+
+// T8/F7: remove a STALE index.lock left by a killed/exited child so the
+// auto-commit/diff steps don't fail with "Another git process seems to be
+// running".
+//
+// F7 — DO NOT delete a lock a live process still holds. The real guarantee is
+// the caller's precondition: runClaude has already awaited spawnInJob.kill()
+// (descendant tree-kill complete) AND job.exit, so by the time this runs the
+// entire spawned process tree is dead — any surviving lock is provably orphaned.
+// That is a stronger, non-racy signal than a wall-clock age heuristic, which is
+// why we gate on `descendantsDead` rather than guessing from mtime. We still log
+// the lock age for diagnostics.
+function clearStaleIndexLock(main: string, worktree: string, descendantsDead: boolean): void {
+  if (!descendantsDead) return; // never touch a lock while a holder may be alive
+  try {
+    // --path-format=absolute makes the returned path unambiguous; git -C runs in
+    // the worktree so this resolves to the linked worktree's own index.lock.
+    const lockPath = execFileSync(
+      'git',
+      ['-C', worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock'],
+      { encoding: 'utf8' },
+    ).trim();
+    if (!lockPath || !existsSync(lockPath)) return;
+    let ageMs = Infinity;
+    try { ageMs = Date.now() - statSync(lockPath).mtimeMs; } catch { /* unknown age */ }
+    rmSync(lockPath, { force: true });
+    process.stderr.write(`[draft-impl] cleared stale index.lock in ${worktree} (age ${Number.isFinite(ageMs) ? Math.round(ageMs) + 'ms' : 'unknown'})\n`);
+  } catch { /* best effort */ }
+}
+
+// ── Shared spawn helper ─────────────────────────────────────────────────────
+async function runClaude(
+  c: Candidate,
+  ctx: ExecCtx,
+  opts: { prompt: string; cwd: string; addDir: string; deny: string; allowedTools?: string },
+): Promise<SpawnOutcome> {
+  const logDir = join(ctx.gleanRoot, 'logs', ctx.runId);
+  mkdirSync(logDir, { recursive: true });
+  const stderrPath = join(logDir, `${c.id}.stderr`);
+  const jsonlPath = join(logDir, `${c.id}.jsonl`);
+  const stderrStream = createWriteStream(stderrPath);
+  const jsonlStream = createWriteStream(jsonlPath);
+  let rateLimited = false;
+
+  // Pass prompt via stdin to avoid Windows command-line length limits (~8191 chars).
+  // --verbose is required for --output-format stream-json in -p (print) mode.
+  const claudeArgs = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--include-partial-messages',
+    '--add-dir', opts.addDir,
+    '--permission-mode', 'acceptEdits',
+  ];
+  // draft-impl is the first path that runs Bash (git commit, tests); pass explicit
+  // --allowedTools so a headless -p run does not hang on an interactive approval.
+  if (opts.allowedTools) claudeArgs.push('--allowedTools', opts.allowedTools);
+  claudeArgs.push('--disallowedTools', opts.deny);
+  claudeArgs.push('--session-id', uuid());
+
+  // On Windows, .cmd files must be invoked via cmd.exe /c
+  const [spawnCmd, spawnArgs] = resolveSpawn(ctx.claudeBin, claudeArgs);
+  const job = spawnInJob(spawnCmd, spawnArgs, { cwd: opts.cwd, env: ctx.env, stdio: 'pipe' });
+
+  if (job.child.stdin) {
+    job.child.stdin.write(opts.prompt, 'utf8');
+    job.child.stdin.end();
+  }
+
+  // Track every kill so we can await full descendant termination before any
+  // post-spawn cleanup touches the worktree (F7).
+  const kills: Promise<void>[] = [];
+
+  job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
+  job.child.stderr?.on('data', (chunk: Buffer) => {
+    stderrStream.write(chunk);
+    if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
+      rateLimited = true;
+      kills.push(job.kill());
+    }
+  });
+
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; kills.push(job.kill()); }, ctx.taskTimeoutMs);
+
+  let exitCode: number;
+  try {
+    exitCode = await job.exit;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // F7: if we killed the job, wait for the tree-kill of all descendants to
+  // finish so no live grandchild git can still hold the worktree's index.lock
+  // when the caller proceeds to clear it.
+  if (kills.length > 0) {
+    try { await Promise.all(kills); } catch { /* best effort */ }
+  }
+
+  stderrStream.end();
+  jsonlStream.end();
+
+  // We reach here only after job.exit resolved and (above) all kills were
+  // awaited, so the spawned process tree is fully dead.
+  return { exitCode, rateLimited, timedOut, stderrPath, jsonlPath, descendantsDead: true };
 }
 
 const SAFETY_FOOTER = '\n\nspeculative — produce a draft, never push, write findings to `OUT.md` in the current working directory.\n';
 
 function pickTemplate(c: Candidate, ctx: ExecCtx): string {
   const userDir = join(ctx.gleanRoot, 'templates');
-  const name = c.type === 'research-dossier' ? 'research-dossier.md' : 'fetch-docs.md';
+  const name = c.type === 'research-dossier' ? 'research-dossier.md'
+    : c.type === 'draft-impl' ? 'draft-impl.md'
+    : 'fetch-docs.md';
   const userPath = join(userDir, name);
   if (existsSync(userPath)) return userPath;
   return join(ctx.templatesDir, name);
@@ -174,15 +525,6 @@ function hydrateEvidence(c: Candidate, _ctx: ExecCtx): Candidate {
   return cloned;
 }
 
-function titleFor(c: Candidate): string {
-  switch (c.evidence.kind) {
-    case 'todo': return `Handle TODO in ${c.evidence.file}`;
-    case 'jsonl': return c.evidence.ai_title;
-    case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
-    case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
-  }
-}
-
 function slugify(c: Candidate): string {
   const base = titleFor(c).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   if (c.evidence.kind === 'todo') {
@@ -191,12 +533,6 @@ function slugify(c: Candidate): string {
   }
   return base;
 }
-
-function projectSlug(p: string): string {
-  return basename(p).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-}
-
-function today(): string { return new Date().toISOString().slice(0, 10); }
 
 function tailLines(s: string, n: number): string[] {
   const lines = s.split(/\r?\n/);

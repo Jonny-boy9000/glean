@@ -9,6 +9,7 @@ import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
 import { Memory } from './lib/memory.js';
 import { renderRateList } from './lib/rate.js';
+import { findPeekDossier } from './lib/peek.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -33,6 +34,14 @@ const runCmd = defineCommand({
     }
     const cfg = loadConfig(defaultConfigPath());
     const claudeBin = cfg.claude_bin ?? 'claude';
+    // Per-project base_branch enables draft-impl for this project; absence skips it.
+    const baseBranch = cfg.projects?.[projectPath]?.base_branch;
+    // F5: resolve base_branch per-candidate by the candidate's OWN project_path,
+    // so a candidate can never be provisioned off the wrong repo's base.
+    const baseBranchFor = (p: string): string | undefined => cfg.projects?.[p]?.base_branch;
+    // Per-project test_command scopes the draft-impl Bash allow-list (CRITICAL 1).
+    const { testCommandAllowFor } = await import('./lib/deny.js');
+    const testCommandAllow = testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const summary = await runPipeline({
@@ -44,6 +53,9 @@ const runCmd = defineCommand({
       taskTimeoutMs,
       dryRun: Boolean(args['dry-run']),
       templatesDir: BUNDLED_TEMPLATES,
+      baseBranch,
+      baseBranchFor,
+      testCommandAllow,
     });
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
@@ -137,9 +149,51 @@ const rateCmd = defineCommand({
   },
 });
 
+const peekCmd = defineCommand({
+  meta: {
+    name: 'peek',
+    description: 'Print the current repo\'s today-dossier (CWD-scoped variant of `glean today`). Silent when nothing applies. Designed for SessionStart hook use.',
+  },
+  async run() {
+    try {
+      const report = findPeekDossier(gleanRoot(), process.cwd());
+      if (report === null) return;  // exit 0, no output
+      const useColor = Boolean(process.stdout.isTTY);
+      process.stdout.write(renderToday(report, useColor) + '\n');
+    } catch {
+      // Silent: exit 0 no matter what. Hook commands must never break a session.
+    }
+  },
+});
+
+const gcCmd = defineCommand({
+  meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
+  args: {
+    project: { type: 'string', required: false, description: 'Limit gc to one project repo (default: all configured projects)' },
+  },
+  async run({ args }) {
+    const { gcWorktrees } = await import('./lib/gc.js');
+    const cfg = loadConfig(defaultConfigPath());
+    const repos = args.project
+      ? [resolve(args.project as string)]
+      : Object.keys(cfg.projects ?? {});
+    if (repos.length === 0) {
+      console.log('no configured projects to gc (add one under projects in config.json, or pass --project)');
+      return;
+    }
+    let total = 0;
+    for (const repo of repos) {
+      const removed = gcWorktrees(repo, gleanRoot(), Date.now());
+      total += removed.length;
+      for (const dir of removed) console.log(`  - removed ${dir}`);
+    }
+    console.log(`gc done: ${total} stale worktree(s) removed`);
+  },
+});
+
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, gc: gcCmd },
 });
 
 export function main(argv: string[]): void {

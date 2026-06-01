@@ -4,7 +4,10 @@ import type { GleanConfig } from './types.js';
 
 const Schema = z.object({
   claude_bin: z.string().optional(),
-  projects: z.record(z.string(), z.object({ base_branch: z.string().optional() })).optional(),
+  projects: z.record(z.string(), z.object({
+    base_branch: z.string().optional(),
+    test_command: z.string().optional(),
+  })).optional(),
 });
 
 export function loadConfig(path: string): GleanConfig {
