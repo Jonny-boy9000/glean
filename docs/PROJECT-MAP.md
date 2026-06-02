@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-02 (created during the v0.8.2 kickoff; baseline `main` @ v0.8.1, 352 tests + 1 skip).
+> **Last updated:** 2026-06-02 (v0.8.2 built + PR open; 402 tests + 2 documented skips on `feat/v0.8.2-drain-robustness`).
 
 ---
 
@@ -129,7 +129,7 @@ design history that drives every release lives partly *outside* the repo.
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v21-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**).
+- **Integration specs:** `test/integration/v01…v22-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, draft-impl variants.
