@@ -27,6 +27,15 @@ function stripVolatile(ev: Candidate['evidence']): unknown {
     const { added_at: _aa, ...rest } = ev;
     return rest;
   }
+  // 'todo' evidence is returned UNCHANGED — its hash therefore includes each
+  // todo_lines[].line as well as .text. v0.8.2 item 2 known limitation: a TODO
+  // whose text is unchanged but whose LINE NUMBER shifted (an edit above it)
+  // re-hashes → a fresh candidate on a later drain burst. This is intentional:
+  // stripping `line` here would change dedup for the bare `glean run` path (a
+  // regression surface), so the cross-burst guarantee is "identical text AND line
+  // → stable hash → skipped"; a line shift is bounded by the worktree already
+  // existing + 21-day gc (at worst a second branch, never corruption). Pinned by
+  // dedup.test.ts: "a line-number shift yields a NEW hash".
   return ev;
 }
 

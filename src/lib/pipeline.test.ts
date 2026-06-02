@@ -149,6 +149,32 @@ describe('runPipeline', () => {
     expect(summary.reason).toBe('completed');
     vi.resetModules();
   });
+
+  // v0.8.2 item 2: mid-window re-discovery. A candidate whose evidence_hash is NOT
+  // in the completed set is still picked up and run on a later burst — the window
+  // never works off a stale day-1 snapshot. We seed the skip-set with a bogus hash
+  // that matches nothing, so every real candidate must still run.
+  it('runs a candidate NOT in completedTaskIds (mid-window re-discovery)', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const scenario = join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml');
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: scenario },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+      // a skip-set that matches NO real candidate → nothing is filtered out.
+      completedTaskIds: ['hash-that-matches-nothing'],
+    });
+    expect(summary.candidates_total).toBeGreaterThan(0);
+    expect(summary.ran).toBeGreaterThan(0);
+    expect(summary.reason).toBe('completed');
+  });
 });
 
 // v0.8.2 item 1: the triviality classifier the `productive` summary field is
