@@ -12,8 +12,9 @@ Done so far: the MVP + quality patches (v0.1.x), the persistent-memory + usefuln
 
 When asked to "build", "implement", or "continue" something:
 1. **Read `docs/ROADMAP.md` first** to see what's in the "Up next" queue and what's already been deferred indefinitely.
-2. Then read `glean.md` (the broader vision) and the relevant spec under `docs/superpowers/specs/` for context.
-3. Specs are the source of truth for *what* a release did; the roadmap is the source of truth for *what's coming*.
+2. **Read `docs/PROJECT-MAP.md`** — the index of *where everything lives*, including the parts **not in this repo** (the machine-local gstack design docs at `%USERPROFILE%\.gstack\projects\Jonny-boy9000-glean\` and the `~/glean` runtime output). Keep it current: any time you add/move/delete a file or change its responsibility, update PROJECT-MAP.md in the same change (it has a "How to keep this map current" section).
+3. Then read `glean.md` (the broader vision) and the relevant spec under `docs/superpowers/specs/` for context.
+4. Specs are the source of truth for *what* a release did; the roadmap is the source of truth for *what's coming*.
 
 ## What `glean` is
 
@@ -27,7 +28,7 @@ It is **not** an API-token reseller or marketplace — that alternative was expl
 - **Read-only against the user's primary checkouts.** All speculative output goes to `git worktree`-based `prep/*` branches under `~/glean/work/` or to dossier dirs under `~/glean/dossiers/`. Never mutate the user's main checkout or push anything.
 - **Spawned sessions must run with a deny-list.** Every `claude -p` invocation passes `--disallowedTools "Bash(git push:*) Bash(git checkout main:*) Bash(gh pr merge:*) Bash(gh pr create:*)"`. Do not remove these even if a task seems to need them.
 - **No cross-invocation prompt caching.** Subscription auth can't manage `cache_control`; only in-session caching inside one `claude -p` call is free. Don't design around a pre-warmed cache.
-- **Rate-limit budget is indirect.** There is no programmatic remaining-window endpoint on Pro/Max. The executor reacts to stderr signals (`rate limit`, `429`, `usage limit`, `5-hour limit`) with the back-off schedule in §5.2, plus a wall-clock `--budget` and a `~/glean/STOP` sentinel. Don't invent a token-counter abstraction.
+- **Rate-limit budget is indirect.** There is no separate headless `claude usage` probe (Spike 0). The executor reacts to a wall-clock `--budget`, a `~/glean/STOP` sentinel, and a rate-limit signal. **Correction (2026-06-02):** the real `claude -p` rate-limit signal is **not** stderr prose — it is a structured `{"type":"rate_limit_event","rate_limit_info":{…}}` message in the `--output-format stream-json` stream glean already captures to `~/glean/logs/<run>/<task>.jsonl` (carries `rateLimitType` e.g. `five_hour`, `resetsAt` epoch-seconds, `status` incl. a proactive `allowed_warning` + `utilization`). Classify off that; keep the stderr regex as a fallback. See [`docs/open-work/06-rate-limit-signal-findings.md`](./docs/open-work/06-rate-limit-signal-findings.md). Still don't invent a token-counter abstraction.
 - **Default `max_parallel=1`.** Subscription sessions share one rate-limit bucket, so parallelism mostly accelerates exhaustion. `--parallel 2` is exposed but is not the default.
 
 ## Architecture pointers (read `glean.md` for detail)

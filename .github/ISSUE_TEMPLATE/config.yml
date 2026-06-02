@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Show & tell / questions / ideas
+    url: https://github.com/Jonny-boy9000/glean/discussions
+    about: For open-ended feedback, "here's what glean drafted for me", setup help, and feature ideas, use Discussions. Use Issues for bugs and drain reports.

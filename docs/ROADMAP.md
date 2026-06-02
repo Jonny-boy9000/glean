@@ -135,6 +135,7 @@ When you finish a release or take/defer/complete an item:
 2. Promote items from **Tracked backlog** to **Up next** as priorities clarify. Keep **Up next** at 3–5 items max.
 3. Add new items as they surface from dogfood, user feedback, or strategic review. Link the originating doc.
 4. Update the header date and current-release pointer.
-5. Commit on `main` with message `docs(roadmap): <what changed>` — this file changes outside the brainstorm → spec → plan cycle.
+5. **If the file/folder layout changed** (new module, moved file, new tree/location), update [`docs/PROJECT-MAP.md`](./PROJECT-MAP.md) too — it is the layout index future sessions read, and stale entries mislead.
+6. Commit on `main` with message `docs(roadmap): <what changed>` — this file changes outside the brainstorm → spec → plan cycle.
 
-The full vision (much broader than what's tracked here as actionable work) lives in [`glean.md`](../glean.md) at the repo root. This roadmap is the actionable subset.
+The full vision (much broader than what's tracked here as actionable work) lives in [`glean.md`](../glean.md) at the repo root. This roadmap is the actionable subset. For *where everything lives* (incl. the machine-local gstack design docs and the `~/glean` runtime tree), see [`docs/PROJECT-MAP.md`](./PROJECT-MAP.md).
