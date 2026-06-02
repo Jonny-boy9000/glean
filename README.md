@@ -9,7 +9,7 @@
 
 You're on a Claude Pro or Max subscription. The weekly rate-limit window resets Saturday morning. By Thursday and Friday you've often spent the high-value work and have unused capacity that **doesn't roll over**.
 
-`glean` is a local CLI that, during that idle tail-window, spawns its own headless `claude -p` sessions to do *speculative* prep work on your existing projects — drafting research dossiers, pre-fetching library docs, surfacing the TODOs and PRs you keep meaning to come back to. Next week, you open a "prep folder" and find a head-start.
+`glean` is a local CLI that, during that idle tail-window, spawns its own headless `claude -p` sessions to do *speculative* prep work on your existing projects — **drafting reviewable code branches** for your top TODOs (in isolated git worktrees, never touching `main`), drafting research dossiers, and pre-fetching library docs. Point Windows Task Scheduler at it (`glean schedule enable`) and it **drains the whole weekend's leftover capacity unattended** — exiting and re-launching itself across each 5-hour rate-limit window until the weekly cap resets. Monday morning you run `glean morning` and get a receipt of everything it did.
 
 > *gleaning* (n.) — the practice of gathering leftover crops from the field after the main harvest. `glean` does the same with unused capacity at the tail of your weekly rate-limit window.
 
@@ -31,22 +31,42 @@ You're on a Claude Pro or Max subscription. The weekly rate-limit window resets 
 ## Quick start
 
 ```bash
-git clone https://github.com/Jonny-boy9000/glean.git
-cd glean
-npm install
-npm run build
-npm install -g .
+npm i -g @jonny-boy9000/glean
 
 # Dry-run first — discovers and ranks candidates without spawning Claude
 glean run --project C:\some-repo --dry-run
 
 # Then the real thing — 60-minute default budget
 glean run --project C:\some-repo
+
+# Monday morning: see what it did
+glean morning
 ```
 
-First run auto-creates `%USERPROFILE%\glean\config.json` with sensible defaults. See [Advanced configuration](#advanced-configuration) if you need to override `claude_bin` or anything else.
+To drain the whole weekend automatically, register the scheduled task once:
 
-**Requirements:** Node 20+, the `claude` CLI on PATH (logged into a Pro/Max subscription), Git. Optional: `gh` for PR-based discovery.
+```bash
+glean schedule enable --project C:\some-repo
+# "drain scheduled: Thursday 18:00 (detected from your system timezone Asia/Jerusalem)
+#  — override: glean schedule enable --day Friday"
+```
+
+First run auto-creates `%USERPROFILE%\glean\config.json` with sensible defaults. See [Advanced configuration](#advanced-configuration) to set a project's `base_branch` (enables code drafts) or override the schedule.
+
+**Requirements:** Node 20+, the `claude` CLI on PATH (logged into a Pro/Max subscription), Git. Optional: `gh` for PR-based discovery. The scheduler is **Windows-only** today.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `glean run --project <path> [--budget 60m] [--dry-run]` | One discovery + execution pass (a "burst"). |
+| `glean run --drain --project <path>` | A drain *tick*: run a burst, and on a 5-hour rate-limit save state and exit so the scheduler can re-launch it. |
+| `glean schedule enable\|disable\|status` | Register/remove the weekly Windows Scheduled Task that drives the drain. |
+| `glean morning [--md]` | The "while you slept" receipt for the latest run/drain window. `--md` prints shareable Markdown. |
+| `glean today` | Today's dossiers across all projects. |
+| `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |
+| `glean gc` | Expire draft-impl worktrees + `prep/glean-*` branches older than 21 days. |
+| `glean stop` | Halt the active run/drain between tasks. |
 
 ---
 
@@ -58,7 +78,11 @@ Three discovery sources run in parallel:
 2. **`git grep` for `TODO`/`FIXME`/`XXX`/`HACK`** plus `gh pr list` (if available) for unresolved review comments.
 3. **Recently-added dependencies** in `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, `pyproject.toml` (last 14 days via `git log`).
 
-Each candidate becomes a single `claude -p` invocation, sandboxed inside a Windows Job Object so the child tree dies cleanly on Ctrl-C or `glean stop`. The spawned Claude session runs with `--disallowedTools` blocking `git push`, `git checkout main`, and `gh pr` mutations — speculative work only, no production-affecting changes.
+Each candidate becomes a single `claude -p` invocation, sandboxed inside a Windows Job Object so the child tree dies cleanly on Ctrl-C or `glean stop`. The spawned Claude session runs with a `--disallowedTools` deny-list blocking `git push`, `git switch`/`checkout`/`reset`/`branch`/`worktree`, and `gh pr` mutations — speculative work only, no production-affecting changes.
+
+**Code drafts (`draft-impl`).** For a project with a `base_branch` set in config, the single highest-value TODO is implemented into an isolated `git worktree` on a `prep/glean-*` branch off that base. Your `main` is never checked out, mutated, pushed, or merged — review by `cd`-ing into the worktree (the receipt prints the exact command). glean runs the project's `test_command` inside the worktree and reports `pass`/`fail`/`none`.
+
+**The drain (`--drain` + `glean schedule`).** A weekly cap on Pro/Max is a rolling 7-day window, and a separate 5-hour session window throttles how much you can use at once — so draining a big leftover bucket means working until the 5-hour wall, waiting ~5h, and going again, several times across the weekend. glean does this by **exit-and-re-enter**: on a 5-hour rate-limit it classifies the reset *horizon* from stderr (hours → session, pause and resume; days → weekly cap, stop and report "drained weekly capacity"), persists `next_eligible_at` + a resume cursor to `state/budget.json`, and exits. The Windows Task Scheduler trigger re-launches it after the window reopens. It never sleeps in-process (that dies at laptop lid-close), and never spills into the fresh new-week allowance.
 
 For the full architecture see the design spec under [`docs/superpowers/specs/`](./docs/superpowers/specs/).
 
@@ -97,27 +121,33 @@ Each linked `OUT.md` is a structured note Claude wrote during the idle window �
 ```
 %USERPROFILE%\glean\
   dossiers\<project>\<YYYY-MM-DD>\
-    INDEX.md                          ← start here on Monday morning
+    INDEX.md                          ← machine-readable index
+    RECEIPT.md                        ← shareable "while you slept" receipt (also: glean morning)
     research-<slug>\OUT.md            ← one per research dossier
     docs\<library>.md                 ← one per fetch-docs task
-  state\<run-id>\
-    candidates.json                   ← ranked candidate list (for debugging)
-    summary.json                      ← run outcome and counts
+  work\<project>-<slug>\              ← draft-impl git worktrees (prep/glean-* branches)
+  state\
+    budget.json                       ← cross-invocation drain state (next_eligible_at, resume cursor)
+    <run-id>\
+      candidates.json                 ← ranked candidate list (for debugging)
+      summary.json                    ← run outcome and counts
   logs\<run-id>\
     orchestrator.log                  ← ndjson event log
     <task-id>.jsonl                   ← raw claude -p stream
     <task-id>.stderr                  ← raw stderr
 ```
 
+Run `glean morning` (or open `RECEIPT.md`) for the human-readable summary: each draft branch with its diff stat and verified test status, the review/discard commands, dossiers, and an honest capacity line. `glean morning --md` prints it as Markdown to paste into a PR or Slack.
+
 ---
 
 ## FAQ
 
 **Will it burn my whole weekly limit?**
-No. Default budget is 60 minutes (`--budget 60m`). Override with `--budget 30m`, `--budget 2h`, etc. `glean` checks the budget between every task and exits cleanly once exhausted. It also stops immediately on any rate-limit signal in `claude -p` stderr — no retries, no back-off ladder, no hidden second-attempts.
+A plain `glean run` won't: default budget is 60 minutes (`--budget 60m`), checked between every task, and it exits cleanly when exhausted. `glean run --drain` is the opposite by design — it *intentionally* consumes the leftover weekly capacity, but only the leftover: it pauses at each 5-hour limit and resumes after the window reopens, then **stops the moment the weekly cap fires** rather than carrying on into the next week. It only claims "drained weekly capacity" when the weekly-limit signal actually appeared. (A pre-emptive margin that refuses to *start* a task in the final minutes before the reset is still on the roadmap; today it stops as soon as the weekly signal returns.)
 
 **Does it touch my main branch?**
-No. The MVP only produces *research dossiers* and *fetched docs* under `%USERPROFILE%\glean\` — your repos are read-only. Every spawned `claude -p` is launched with `--disallowedTools` blocking `git push`, `git checkout main`, `gh pr merge`, and `gh pr create`. A future `draft-impl` mode will write code into isolated git worktrees on disposable `prep/*` branches; still won't touch main.
+No. Research dossiers and fetched docs live under `%USERPROFILE%\glean\` (your repos read-only). Code drafts (`draft-impl`, since v0.7.0) go into an isolated `git worktree` on a disposable `prep/glean-*` branch off your configured `base_branch` — `main` is never checked out, mutated, pushed, or merged. Every spawned `claude -p` runs under a deny-list blocking `git push`/`switch`/`checkout`/`reset`/`branch`/`worktree` and `gh pr merge`/`create`; git itself also refuses to let a linked worktree move another worktree's HEAD.
 
 **What if I'm not on Pro/Max?**
 You'll need *some* logged-in `claude` CLI. The free tier's stricter rate limits will cause glean to exit early via the rate-limit signal — it'll still work, just produce less per run.
@@ -129,7 +159,7 @@ The dogfood run against this repo (1178 LOC, 25 candidates discovered, 14 ran) u
 Either Ctrl-C the orchestrator or run `glean stop` from another shell. Both kill the child `claude -p` tree (via a Windows Job Object) and exit cleanly. `glean stop` is checked *between* tasks, so the in-flight task finishes naturally before the run exits with code 30.
 
 **Can I run it on a schedule?**
-Not in the current release. Windows Task Scheduler / launchd / cron integration is on the [roadmap](#coming-next).
+Yes, on Windows. `glean schedule enable --project <path>` registers one Windows Scheduled Task that drives the weekend drain. The default trigger day is detected from your system timezone — Thursday for Israel's Sun–Thu work week, Friday otherwise — and the task is battery-safe and runs only when you're logged on. `glean schedule disable` removes it. (macOS launchd / Linux cron are on the [roadmap](#coming-next).)
 
 ---
 
@@ -176,15 +206,25 @@ Add this to `~/.claude/settings.json`:
 
 ## Advanced configuration
 
-`%USERPROFILE%\glean\config.json` is auto-created on first run. The only currently-meaningful field:
+`%USERPROFILE%\glean\config.json` is auto-created on first run:
 
 ```json
 {
-  "claude_bin": "claude"
+  "claude_bin": "claude",
+  "projects": {
+    "C:\\code\\my-app": {
+      "base_branch": "main",
+      "test_command": "npm test"
+    }
+  },
+  "drain_trigger": { "day": "Friday", "time": "18:00", "repeat_minutes": 60, "duration_hours": 60 }
 }
 ```
 
-Point this at a specific `claude` executable if `claude` isn't on PATH or you want to use a different installation. A `projects.<absolute-path>.base_branch` field is also accepted by the schema for forward-compatibility with the upcoming `draft-impl` worktree mode — currently a no-op.
+- **`claude_bin`** — point at a specific `claude` executable if it isn't on PATH.
+- **`projects.<absolute-path>.base_branch`** — **enables code drafts (`draft-impl`)** for that project; the draft worktree is branched off this ref. Without it, that project gets dossiers/docs only.
+- **`projects.<absolute-path>.test_command`** — what glean runs inside the draft worktree to capture a `pass`/`fail`/`none` test status (also scopes the draft session's Bash allow-list).
+- **`drain_trigger`** — overrides the scheduler default (day/time/repetition). Omit it to let `glean schedule enable` auto-detect the day from your timezone.
 
 To discard a day's output:
 
@@ -196,11 +236,11 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\glean\dossiers\<project>\<YYYY-MM-
 
 ## Coming next
 
-- **Code drafts in git worktrees** (`draft-impl` candidate type) — Claude writes speculative implementations on disposable `prep/*` branches you can cherry-pick or discard.
-- **Scheduling** — Windows Task Scheduler / launchd / cron integration so glean runs automatically Thursday evening.
-- **macOS / Linux** — see [issue #1](https://github.com/Jonny-boy9000/glean/issues/1).
+- **Drain robustness** — a configurable circuit-breaker, first-class mid-weekend candidate re-discovery (so a multi-day drain isn't working off a Thursday snapshot), and an anti-spill pre-emptive margin. Plus one real overnight drain run to capture the exact `claude -p` rate-limit stderr wording (the classifier is horizon-first, so it degrades gracefully until then).
+- **API-key fallback** — when Pro/Max rate-limits, optionally fall back to `ANTHROPIC_API_KEY` for the rest of the budget.
+- **macOS / Linux** — POSIX port (scheduling via launchd/cron); see [issue #1](https://github.com/Jonny-boy9000/glean/issues/1).
 
-Plus smaller items on the [issue tracker](https://github.com/Jonny-boy9000/glean/issues). The full vision is documented in [`glean.md`](./glean.md).
+Plus smaller items on the [issue tracker](https://github.com/Jonny-boy9000/glean/issues). The full vision is documented in [`glean.md`](./glean.md) and the actionable plan in [`docs/ROADMAP.md`](./docs/ROADMAP.md).
 
 ---
 

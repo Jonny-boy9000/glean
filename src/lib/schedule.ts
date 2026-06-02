@@ -16,10 +16,27 @@ import { execFileSync } from 'node:child_process';
 export const TASK_NAME = 'Glean\\Drain';
 
 // Defaults mirrored in the spec.
-export const DEFAULT_DAY            = 'Thursday';
 export const DEFAULT_TIME           = '18:00';
 export const DEFAULT_REPEAT_MINUTES = 60;
 export const DEFAULT_DURATION_HOURS = 60;
+
+export type TriggerDay = 'Thursday' | 'Friday';
+
+// Timezones whose work week runs Sunday–Thursday, so the LAST work day is Thursday.
+// Most former Sun–Thu countries have moved to Fri–Sat or Sat–Sun weekends; Israel
+// is the main remaining case. Expand this set only if a user reports a missing zone.
+const SUN_THU_ZONES = new Set<string>(['Asia/Jerusalem']);
+
+// The default weekly drain-trigger day = the end of the LAST work day, when the
+// week's Claude capacity is most idle. Sun–Thu work weeks (Israel) → Thursday;
+// everyone else (including 'UTC' / unknown) → Friday. `tz` is a call-time default
+// param so this is unit-testable by passing a fixed zone — no Intl mocking and no
+// dependence on the machine's real locale.
+export function defaultTriggerDay(
+  tz: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): TriggerDay {
+  return SUN_THU_ZONES.has(tz) ? 'Thursday' : 'Friday';
+}
 
 export type BuildRegisterScriptOpts = {
   /** Absolute path to the `node` executable (process.execPath at call time). */
@@ -46,7 +63,7 @@ export type BuildRegisterScriptOpts = {
  * This is a pure function — it produces a string and touches nothing.
  */
 export function buildRegisterScript(opts: BuildRegisterScriptOpts): string {
-  const day            = opts.day            ?? DEFAULT_DAY;
+  const day            = opts.day            ?? defaultTriggerDay();
   const time           = opts.time           ?? DEFAULT_TIME;
   const repeatMinutes  = opts.repeatMinutes  ?? DEFAULT_REPEAT_MINUTES;
   const durationHours  = opts.durationHours  ?? DEFAULT_DURATION_HOURS;

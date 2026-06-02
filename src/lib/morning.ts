@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { renderReceiptMarkdown } from './render-receipt.js';
 import { parse as parseYaml } from 'yaml';
 import { Memory } from './memory.js';
 import { projectSlug, readDrainState } from './state.js';
@@ -167,8 +168,12 @@ function aggregateWindowRuns(
   const branchMap = new Map<string, MorningBranchEntry>();  // keyed by prep_branch
   const fileMap = new Map<string, MorningFileEntry>();       // keyed by candidate_slug
   let rateLimitHits = 0;
+  // v0.8.1: summed ACTIVE minutes across bursts (each burst's ended_at - started_at).
+  // More honest than the wall-clock window span; skips bursts that never finalized.
+  let drainedMs = 0;
 
   for (const { run, candidates } of windowRuns) {
+    if (run.ended_at !== null) drainedMs += Math.max(0, run.ended_at - run.started_at);
     const slug = projectSlug(run.project_path);
     const indexEntries = loadIndexEntries(gleanRoot, slug, run.started_at);
 
@@ -222,7 +227,28 @@ function aggregateWindowRuns(
     branches: Array.from(branchMap.values()),
     files: Array.from(fileMap.values()),
     bursts: windowRuns.length,
+    drained_minutes: Math.round(drainedMs / 60_000),
   };
+}
+
+// v0.8.1: write a durable, shareable RECEIPT.md for the latest run/drain window to
+// the date-dossier dir, so the "while you slept" outcome survives the terminal and
+// can be pasted into a PR/Slack. Best-effort: returns the path, or null on any
+// failure (no run, write error) — MUST never throw out of a run's finalize path.
+export function writeReceipt(gleanRoot: string): string | null {
+  try {
+    const report = findMorningRun(gleanRoot);
+    if (report === null) return null;
+    const slug = projectSlug(report.project_path);
+    const date = localDateString(new Date(report.ended_at ?? report.started_at));
+    const dir = join(gleanRoot, 'dossiers', slug, date);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'RECEIPT.md');
+    writeFileSync(path, renderReceiptMarkdown(report) + '\n');
+    return path;
+  } catch {
+    return null;
+  }
 }
 
 // T6: when a drain window exists but zero runs have executed yet (the laptop was

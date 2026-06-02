@@ -37,9 +37,12 @@ export type MorningReport = {
   // T6: number of drain-window bursts aggregated into this report. Absent (or 1)
   // means single-run mode (bare `glean run` receipt — byte-identical to pre-T6).
   bursts?: number;
+  // v0.8.1: summed active minutes across the window's bursts (each burst's
+  // ended_at - started_at). Absent in single-run mode. Used by the receipt totals.
+  drained_minutes?: number;
 };
 
-type Painter = {
+export type Painter = {
   bold:  (s: string) => string;
   dim:   (s: string) => string;
   green: (s: string) => string;
@@ -55,7 +58,7 @@ const ANSI: Painter = {
   cyan:  (s) => `\x1b[36m${s}\x1b[0m`,
 };
 
-const PLAIN: Painter = {
+export const PLAIN: Painter = {
   bold:  (s) => s,
   dim:   (s) => s,
   green: (s) => s,
@@ -152,7 +155,7 @@ function renderFile(f: MorningFileEntry, c: Painter, lines: string[]): void {
 // exit_reason → an honest, plain phrase.
 // CRITICAL honesty rule: ONLY 'weekly-drained' may claim the week was drained.
 // Every other reason must NOT use the words "drained", "weekly", or "whole week".
-function outcomeLine(reason: string | null, c: Painter): string {
+export function outcomeLine(reason: string | null, c: Painter): string {
   switch (reason) {
     case 'completed':
       return c.green('Outcome: completed — worked through the queue and finished.');

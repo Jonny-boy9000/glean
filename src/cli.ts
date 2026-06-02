@@ -11,13 +11,14 @@ import { loadConfig, defaultConfigPath } from './lib/config.js';
 import { Memory } from './lib/memory.js';
 import { renderRateList } from './lib/rate.js';
 import { findPeekDossier } from './lib/peek.js';
-import { findMorningRun } from './lib/morning.js';
+import { findMorningRun, writeReceipt } from './lib/morning.js';
 import { renderMorning } from './lib/render-morning.js';
+import { renderReceiptMarkdown } from './lib/render-receipt.js';
 import {
   enableSchedule,
   disableSchedule,
   scheduleStatus,
-  DEFAULT_DAY,
+  defaultTriggerDay,
   DEFAULT_TIME,
   DEFAULT_REPEAT_MINUTES,
   DEFAULT_DURATION_HOURS,
@@ -80,6 +81,12 @@ const runCmd = defineCommand({
       ? await runDrain(pipelineOpts)
       : await runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
+    // v0.8.1: refresh the durable, shareable RECEIPT.md for this run/drain window.
+    // Best-effort (writeReceipt swallows its own errors); skip on dry-run.
+    if (!args['dry-run']) {
+      const receiptPath = writeReceipt(gleanRoot());
+      if (receiptPath) console.log(`receipt: ${receiptPath}`);
+    }
     process.exit(summary.exit_code);
   },
 });
@@ -193,11 +200,18 @@ const morningCmd = defineCommand({
     name: 'morning',
     description: 'Narrate the most recent glean run as a "while you slept" receipt (branches, dossiers, honest outcome).',
   },
-  async run() {
+  args: {
+    md: { type: 'boolean', default: false, description: 'Print the receipt as shareable Markdown (no ANSI) for pasting into a PR/issue/Slack' },
+  },
+  async run({ args }) {
     try {
       const report = findMorningRun(gleanRoot());
       if (report === null) {
         process.stdout.write('No recent glean run to report.\n');
+        return;
+      }
+      if (args.md) {
+        process.stdout.write(renderReceiptMarkdown(report) + '\n');
         return;
       }
       const useColor = Boolean(process.stdout.isTTY);
@@ -217,7 +231,7 @@ const scheduleCmd = defineCommand({
     // No citty `default:` here — defaults are applied AFTER the config fallback
     // below, so a config-file drain_trigger is reachable (citty defaults would
     // otherwise always populate args.* and shadow the config).
-    day: { type: 'string', description: `Day of week for the weekly trigger (default: ${DEFAULT_DAY})` },
+    day: { type: 'string', description: 'Day of week for the weekly trigger (default: detected from your system timezone — Thursday for Israel, else Friday)' },
     time: { type: 'string', description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME})` },
     'repeat-minutes': { type: 'string', description: `Repetition interval in minutes (default: ${DEFAULT_REPEAT_MINUTES})` },
     'duration-hours': { type: 'string', description: `Repetition window duration in hours (default: ${DEFAULT_DURATION_HOURS})` },
@@ -249,7 +263,8 @@ const scheduleCmd = defineCommand({
       // Read drain_trigger overrides from config; CLI flags take precedence.
       const cfgTrigger = cfg.drain_trigger ?? {};
 
-      const day           = (args.day  as string | undefined) ?? cfgTrigger.day  ?? DEFAULT_DAY;
+      const explicitDay   = (args.day  as string | undefined) ?? cfgTrigger.day;
+      const day           = explicitDay ?? defaultTriggerDay();
       const time          = (args.time as string | undefined) ?? cfgTrigger.time ?? DEFAULT_TIME;
       const repeatMinutes = Number((args['repeat-minutes'] as string | undefined) ?? cfgTrigger.repeat_minutes ?? DEFAULT_REPEAT_MINUTES);
       const durationHours = Number((args['duration-hours'] as string | undefined) ?? cfgTrigger.duration_hours ?? DEFAULT_DURATION_HOURS);
@@ -279,6 +294,17 @@ const scheduleCmd = defineCommand({
       const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
 
       enableSchedule({ nodePath, cliEntry, projectPath, day, time, repeatMinutes, durationHours });
+      // Announce the resolved day Node-side (enableSchedule's own output is emitted
+      // by the PowerShell script and can't carry this). Make the work-week guess
+      // transparent so a wrong detection is obvious and one flag fixes it.
+      if (explicitDay) {
+        const src = (args.day as string | undefined) !== undefined ? '--day flag' : 'config drain_trigger';
+        console.log(`drain scheduled: ${day} ${time} (from ${src})`);
+      } else {
+        const otherDay = day === 'Thursday' ? 'Friday' : 'Thursday';
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        console.log(`drain scheduled: ${day} ${time} (detected from your system timezone ${tz}) — override: glean schedule enable --day ${otherDay}`);
+      }
       return;
     }
 

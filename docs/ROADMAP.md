@@ -2,9 +2,9 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-06-02 (v0.8.0 drain core merged to `main`, PR #6)
-**Current release:** v0.7.1 published to npm; **v0.8.0 drain core merged to `main`** (PR #6, merge `0e6a63d`, 343 tests) — not yet npm-published
-**Branch state:** `main` at v0.8.0 (merge `0e6a63d`); `feature/v0.8-drain` merged + deleted
+**Last updated:** 2026-06-02 (v0.8.0 published to npm; v0.8.1 UX polish in PR)
+**Current release:** **v0.8.0 drain core published to npm** (`@jonny-boy9000/glean@0.8.0`, PR #6, tag `v0.8.0`). **v0.8.1 UX polish in an open PR** (work-week schedule default + shareable RECEIPT.md + README refresh; 352 tests).
+**Branch state:** `main` at v0.8.0; `feature/v0.8.1-polish` open in PR awaiting merge
 
 ---
 
@@ -18,9 +18,9 @@
 
 > **Strategic lens (2026-06-01):** The load-bearing question was always "does the engine produce something you'd actually open?" v0.3–v0.6 built the telemetry to measure it; v0.7.0 shipped the `draft-impl` engine (AI-drafted branches in isolated worktrees) and v0.7.1 the `glean morning` receipt with verified test status. The **first real validation run** (2026-06-01, throwaway repo) produced keep-worthy code with `tests: pass` and main untouched — a positive first datapoint on the existential question, but only one, on a dependency-free repo. Two things move the needle most now: (1) make glean actually consume the *whole week* unattended (v0.8 drain core) so there's enough output to judge, and (2) real-repo dogfooding to turn that one datapoint into a trend. Published to npm as `@jonny-boy9000/glean@0.7.1` on 2026-06-01.
 
-### 1. v0.8.1 drain robustness + first real drain run
+### 1. v0.8.2 drain robustness + first real drain run
 
-**Status:** v0.8.0 drain core is **BUILT and MERGED to `main`** (PR #6, merge `0e6a63d` — exit-and-re-enter `glean run --drain`, `glean schedule` Windows Task Scheduler, rate-limit horizon classifier, window-aggregated `glean morning`; 343 tests; both make-or-break spikes cleared empirically). What remains for v0.8.1: **configurable circuit-breaker threshold, first-class mid-weekend candidate re-discovery, anti-spill pre-emptive margin, and `today`/`peek` window-aware aggregation** (so all three surfaces match `morning` during a drain). Plus the highest-value validation: **one real overnight/weekend drain run** against a live project to confirm the loop in the wild (and capture the real rate-limit stderr wording — the classifier's format table is currently built against plausible-but-unverified strings; Spike 0 confirmed no headless `claude usage` query exists, so the stderr classifier is load-bearing).
+**Status:** v0.8.0 drain core **published to npm**; **v0.8.1 UX polish in an open PR** (work-week-aware schedule default via timezone detect, durable shareable `RECEIPT.md` + `glean morning --md`, README rewritten to v0.8 reality; 352 tests). What remains for **v0.8.2**: **configurable circuit-breaker threshold, first-class mid-weekend candidate re-discovery, anti-spill pre-emptive margin, and `today`/`peek` window-aware aggregation** (so all three surfaces match `morning` during a drain). Plus the highest-value validation: **one real overnight/weekend drain run** against a live project to confirm the loop in the wild (and capture the real rate-limit stderr wording — the classifier's format table is currently built against plausible-but-unverified strings; Spike 0 confirmed no headless `claude usage` query exists, so the stderr classifier is load-bearing).
 
 <details><summary>v0.8.0 design + build history (for context)</summary>
 
