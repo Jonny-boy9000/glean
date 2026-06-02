@@ -209,6 +209,8 @@ describe('renderMorning — v0.8 drain exit reasons (T6)', () => {
     ['ambiguous-signal', /unrecognized rate-limit signal/i],
     ['discovery-failed', /discovery failed/i],
     ['weekly-drained',   /drained weekly capacity/i],
+    // v0.8.2 item 3: anti-spill held off near the weekly reset.
+    ['anti-spill',       /anti-spill margin/i],
   ];
 
   for (const [reason, re] of drainCases) {
@@ -223,7 +225,7 @@ describe('renderMorning — v0.8 drain exit reasons (T6)', () => {
     expect(weeklyDrainedOut).toContain('drained');
 
     // Every other v0.8 reason must NOT claim the week was drained.
-    const nonDrainReasons = ['session-paused', 'no-progress', 'ambiguous-signal', 'discovery-failed'];
+    const nonDrainReasons = ['session-paused', 'no-progress', 'ambiguous-signal', 'discovery-failed', 'anti-spill'];
     for (const reason of nonDrainReasons) {
       const out = renderMorning(baseReport({ exit_reason: reason }), false).toLowerCase();
       expect(out, `exit_reason '${reason}' must not claim week was drained`).not.toContain('drained');

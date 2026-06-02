@@ -2,15 +2,15 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-06-02 (v0.8.1 published to npm; v0.8.2 handoff recorded)
+**Last updated:** 2026-06-02 (v0.8.2 drain robustness built, PR open — not yet merged/published)
 **Current release:** **v0.8.1 published to npm** (`@jonny-boy9000/glean@0.8.1`, merge `1e8b441`/PR #8, tag `v0.8.1`) — drain core (v0.8.0) + UX polish (v0.8.1: work-week schedule default, shareable RECEIPT.md, README refresh). 352 tests + 1 skip.
-**Branch state:** `main` at v0.8.1, clean; next up = v0.8.2 (handoff doc recorded).
+**Branch state:** `feat/v0.8.2-drain-robustness` — **v0.8.2 built + reviewed, PR open against `main`** (402 tests + 2 documented skips); awaiting merge + npm-publish go-ahead.
 
 ---
 
 ## In progress
 
-*(nothing currently)*
+- **v0.8.2 drain robustness — PR open, awaiting merge/publish.** Configurable circuit-breaker + richer `productive` signal, first-class mid-weekend re-discovery + `evidence_hash` dedup, per-burst anti-spill margin (runDrain guard 3e), `today`/`peek` window-aware aggregation, and the honest rate-limit signal (ADR-0001: parse verified `rate_limit_event.resetsAt` enrichment + self-capturing BLOCK-CAPTURE tripwire; stderr block detector unchanged). Built via office-hours → plan-eng-review → parallel worktree TDD lanes (D-core/D-surfaces/D-signal) → per-lane + final whole-impl review. **Still pending after merge:** the one real overnight/weekend drain run to capture the true hard-block signal (ADR-0001 closes when the tripwire or a live run lands a real block).
 
 ---
 
@@ -135,6 +135,7 @@ When you finish a release or take/defer/complete an item:
 2. Promote items from **Tracked backlog** to **Up next** as priorities clarify. Keep **Up next** at 3–5 items max.
 3. Add new items as they surface from dogfood, user feedback, or strategic review. Link the originating doc.
 4. Update the header date and current-release pointer.
-5. Commit on `main` with message `docs(roadmap): <what changed>` — this file changes outside the brainstorm → spec → plan cycle.
+5. **If the file/folder layout changed** (new module, moved file, new tree/location), update [`docs/PROJECT-MAP.md`](./PROJECT-MAP.md) too — it is the layout index future sessions read, and stale entries mislead.
+6. Commit on `main` with message `docs(roadmap): <what changed>` — this file changes outside the brainstorm → spec → plan cycle.
 
-The full vision (much broader than what's tracked here as actionable work) lives in [`glean.md`](../glean.md) at the repo root. This roadmap is the actionable subset.
+The full vision (much broader than what's tracked here as actionable work) lives in [`glean.md`](../glean.md) at the repo root. This roadmap is the actionable subset. For *where everything lives* (incl. the machine-local gstack design docs and the `~/glean` runtime tree), see [`docs/PROJECT-MAP.md`](./PROJECT-MAP.md).

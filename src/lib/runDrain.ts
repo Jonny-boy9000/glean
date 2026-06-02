@@ -31,6 +31,10 @@ export const DRAIN_DURATION_MS = 60 * 3600_000;
 // After this many consecutive unproductive re-entries (a burst that ran 0 tasks)
 // we stop the window with 'no-progress' rather than spinning forever.
 export const MAX_UNPRODUCTIVE = 3;
+// v0.8.2 item 3: default anti-spill margin (minutes) before a known weekly reset.
+// Inside this margin runDrain holds off rather than starting work that could run
+// into next week's fresh allowance.
+export const ANTI_SPILL_MARGIN_MINUTES = 15;
 // Fallback session pause when a session-kind rate-limit gives no parseable reset
 // moment: 5h (session window) + 15m slack.
 export const SESSION_FALLBACK_MS = 5 * 3600_000 + 15 * 60_000;
@@ -39,11 +43,40 @@ export const SESSION_FALLBACK_MS = 5 * 3600_000 + 15 * 60_000;
 // state-transition logic can be unit-tested without spawning a real pipeline.
 export type RunBurst = (opts: PipelineOpts) => Promise<RunSummary>;
 
+// v0.8.2: tunables resolved from config.json's drain_trigger and threaded into
+// the state machine. Every field is optional and defaults to the prior hard-coded
+// constant, so an absent/empty DrainOpts is byte-identical to pre-v0.8.2 behavior.
+export type DrainOpts = {
+  // item 1: circuit-breaker threshold (was the hard-coded MAX_UNPRODUCTIVE = 3).
+  maxUnproductive?: number;
+  // item 3: anti-spill pre-emptive margin, in minutes, before a known weekly
+  // reset (default 15). A burst is held off inside this margin.
+  antiSpillMarginMinutes?: number;
+};
+
+// Reasons that NEVER count toward the no-progress backstop (item 1): a transient
+// no-op (discovery hiccup / another burst held the lock / window not yet eligible)
+// is not the window genuinely "trying and producing nothing".
+// NOTE: of these, only 'discovery-failed' is actually produced by a burst and
+// reaches the productivity fold below — 'lock-busy' (guard 5) and 'not-eligible'
+// (guard 3c) early-return before the fold. They are kept here as defensive cover
+// so the classification stays correct if guard ordering is ever refactored.
+const TRANSIENT_REASONS: ReadonlySet<RunSummary['reason']> = new Set([
+  'discovery-failed',
+  'lock-busy',
+  'not-eligible',
+]);
+
 export async function runDrain(
   opts: PipelineOpts,
   now: () => number = () => Date.now(),
   runBurst: RunBurst = runPipeline,
+  drainOpts: DrainOpts = {},
 ): Promise<RunSummary> {
+  // item 1: resolve the configurable circuit-breaker threshold (default 3).
+  const maxUnproductive = drainOpts.maxUnproductive ?? MAX_UNPRODUCTIVE;
+  // item 3: resolve the anti-spill margin in minutes (default 15).
+  const antiSpillMarginMinutes = drainOpts.antiSpillMarginMinutes ?? ANTI_SPILL_MARGIN_MINUTES;
   // ── 1. Read persisted drain state ──────────────────────────────────────────
   const read = readDrainState(opts.gleanRoot);
 
@@ -92,8 +125,20 @@ export async function runDrain(
   }
 
   // 3d. Too many unproductive re-entries in a row → give up on this window.
-  if (state.unproductive_reentries >= MAX_UNPRODUCTIVE) {
+  // Threshold is configurable (item 1); defaults to MAX_UNPRODUCTIVE (3).
+  if (state.unproductive_reentries >= maxUnproductive) {
     return synthSummary('no-progress', now, opts);
+  }
+
+  // 3e. Anti-spill (item 3): if a weekly reset is KNOWN and now() is within the
+  // configured margin BEFORE it (reset - margin <= now < reset), hold off this
+  // burst rather than starting work that could spill into next week's fresh
+  // allowance. A no-op tick consistent with guards 3a-3d (no burst, no state
+  // write). Reset source for this lane is last_observed_weekly_reset ONLY; if it
+  // is absent (the first burst of a fresh window — the genuine blind spot) or
+  // unparseable, the guard does not fire and the drain stays reactive.
+  if (withinAntiSpillMargin(state.last_observed_weekly_reset, antiSpillMarginMinutes, now)) {
+    return synthSummary('anti-spill', now, opts);
   }
 
   // ── 4. Eligible → run one burst ────────────────────────────────────────────
@@ -119,14 +164,29 @@ export async function runDrain(
     ]),
   };
 
-  // Productivity bookkeeping for guard 3d (the no-progress backstop). A burst is
-  // "unproductive" ONLY if it ran 0 tasks AND got no rate-limit signal — i.e. it
-  // woke up with nothing to do or everything failed. A session/weekly/ambiguous
-  // rate-limit is a legitimate "come back later" WAIT across the window, not a
-  // stall: counting it would self-terminate a normal multi-session weekend drain
-  // after 3 pauses, abandoning most of the week's capacity.
-  next.unproductive_reentries =
-    summary.ran > 0 || summary.classification != null ? 0 : state.unproductive_reentries + 1;
+  // Productivity bookkeeping for guard 3d (the no-progress backstop, item 1).
+  // The richer rule: a burst counts as unproductive ONLY when it genuinely TRIED
+  // and produced nothing — i.e. it reported productive !== true (no non-trivial
+  // output; "ran but everything was empty" now counts, not just ran===0) AND it
+  // got no rate-limit classification AND its reason is not transient.
+  //   - productive===true                → real progress → RESET to 0.
+  //   - classification present           → a legit "come back later" WAIT (a
+  //     session/weekly/ambiguous pause) → RESET to 0; counting these would
+  //     self-terminate a normal weekend drain after a few pauses (the v0.8.0 bug).
+  //   - transient reason (discovery hiccup, etc.) → HOLD the counter unchanged
+  //     (neither a stall nor progress).
+  //   - otherwise (tried, empty, no signal) → INCREMENT.
+  const isTransient = TRANSIENT_REASONS.has(summary.reason);
+  const isUnproductive =
+    summary.productive !== true && summary.classification == null && !isTransient;
+  if (summary.productive === true || summary.classification != null) {
+    next.unproductive_reentries = 0;
+  } else if (isUnproductive) {
+    next.unproductive_reentries = state.unproductive_reentries + 1;
+  } else {
+    // transient → hold
+    next.unproductive_reentries = state.unproductive_reentries;
+  }
 
   const cls = summary.classification;
 
@@ -201,6 +261,23 @@ function freshWindow(now: () => number): DrainState {
     consecutive_ambiguous: 0,
     schema: 1,
   };
+}
+
+// item 3: true iff a weekly reset is known/parseable AND now() falls in the
+// half-open window [reset - margin, reset). A reset already at/after now() (now
+// >= reset) is NOT anti-spill — that's handled reactively (the window restarts
+// via pastWeeklyReset). An absent/unparseable reset → false (stay reactive).
+function withinAntiSpillMargin(
+  lastReset: string | null,
+  marginMinutes: number,
+  now: () => number,
+): boolean {
+  if (lastReset === null) return false;
+  const resetMs = Date.parse(lastReset);
+  if (!Number.isFinite(resetMs)) return false;
+  const marginMs = marginMinutes * 60_000;
+  const t = now();
+  return t >= resetMs - marginMs && t < resetMs;
 }
 
 function pastWeeklyReset(state: DrainState, now: () => number): boolean {

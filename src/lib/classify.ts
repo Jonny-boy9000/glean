@@ -1,9 +1,17 @@
 // classify.ts — pure rate-limit signal classifier.
 //
-// NOTE: real `claude -p` stderr formats are TBD (captured by "Spike B").
+// ASSUMPTION[ADR-0001] — UNVERIFIED. This classifier reads the text of a rate-limit
+// signal to derive session-vs-weekly + a reset moment. The exact wording of a REAL
+// `claude -p` hard BLOCK has NEVER been captured: every rate_limit_event we have
+// observed is status=allowed/allowed_warning from runs that COMPLETED (see
+// docs/decisions/0001-rate-limit-signal-source.md + docs/open-work/06-...). So the
+// strings below are a GUESS, not verified. Do NOT treat this module as authoritative
+// for the block until ADR-0001 is closed by a real capture. resetsAt/utilization from
+// the stream-json rate_limit_event ARE verified, but that is a WARNING, not the block.
+//
 // This module is intentionally defensive and easy to extend:
 //
-//   FORMAT TABLE (update here as Spike B lands real samples)
+//   FORMAT TABLE (update here when ADR-0001 lands a real block sample)
 //   ──────────────────────────────────────────────────────────────────────────
 //   Shape        Example                                    Parser used
 //   ──────────────────────────────────────────────────────────────────────────
@@ -58,6 +66,46 @@ export function classifyRateLimit(
     return { kind: 'session', reset_at, reset_horizon: 'hours' };
   }
   return { kind: 'weekly', reset_at, reset_horizon: 'days' };
+}
+
+// ── rate_limit_event resetsAt enrichment (ADR-0001) ──────────────────────────
+//
+// VERIFIED (unlike the stderr block guess above): the `claude -p` stream-json
+// output emits discrete `{"type":"rate_limit_event","rate_limit_info":{…}}`
+// messages, captured by the executor to ~/glean/logs/<run>/<task>.jsonl. The
+// `resetsAt` field (epoch SECONDS) is a real reset moment. NOTE: every event we
+// have observed is a WARNING (status=allowed/allowed_warning), NOT a block — so
+// this is ENRICHMENT only (feeds reset_at / the anti-spill margin). It is NOT the
+// block detector: classifyRateLimit (stderr) stays the load-bearing block path.
+//
+// Scans stream-json lines for the LAST rate_limit_event carrying a numeric
+// `resetsAt` and returns it as an ISO UTC string, else null. Tolerant of
+// malformed lines (try/catch per line) so a partial/corrupt log never throws.
+export function parseRateLimitEventResetAt(jsonlText: string): string | null {
+  if (!jsonlText) return null;
+  let resetAt: string | null = null;
+  for (const line of jsonlText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Cheap pre-filter so we only JSON.parse plausible event lines.
+    if (!trimmed.includes('rate_limit_event')) continue;
+    try {
+      const obj = JSON.parse(trimmed) as {
+        type?: unknown;
+        rate_limit_info?: { resetsAt?: unknown };
+      };
+      if (obj?.type !== 'rate_limit_event') continue;
+      const secs = obj.rate_limit_info?.resetsAt;
+      if (typeof secs !== 'number' || !Number.isFinite(secs)) continue;
+      const d = new Date(secs * 1000);
+      if (!Number.isFinite(d.getTime())) continue;
+      // Keep scanning so the LAST valid event wins.
+      resetAt = d.toISOString();
+    } catch {
+      // Malformed / truncated line — skip it.
+    }
+  }
+  return resetAt;
 }
 
 // ── Parsers (ordered: most specific / unambiguous first) ─────────────────────

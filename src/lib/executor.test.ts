@@ -92,6 +92,63 @@ describe('executeOne', () => {
     expect(result.classification).toBeUndefined();
   });
 
+  // ── ADR-0001 self-capturing tripwire + resetsAt fallback ──────────────────
+  // The first time a spawn is flagged rateLimited, the executor dumps the raw
+  // stderr + a jsonl tail to <logDir>/<taskId>.BLOCK-CAPTURE.txt so the
+  // never-captured real block shape captures itself. Best-effort, never throws.
+  it('writes a .BLOCK-CAPTURE.txt with the stderr tail when rate-limited', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'rc',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'rate-limit.yaml') },
+    });
+    expect(result.status).toBe('rate-limit');
+    const capturePath = join(root, 'logs', 'rc', 'task-1.BLOCK-CAPTURE.txt');
+    expect(existsSync(capturePath)).toBe(true);
+    const body = readFileSync(capturePath, 'utf8');
+    expect(body).toContain('5-hour limit reached');
+  });
+
+  it('does NOT write a .BLOCK-CAPTURE.txt on a clean (non-rate-limited) exit', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'rc2',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+    });
+    expect(result.status).toBe('ok');
+    const capturePath = join(root, 'logs', 'rc2', 'task-1.BLOCK-CAPTURE.txt');
+    expect(existsSync(capturePath)).toBe(false);
+  });
+
+  // When the stderr block carries no parseable reset moment but the captured
+  // .jsonl holds a verified rate_limit_event.resetsAt, reset_at is back-filled
+  // from it (kind stays as the stderr classifier decided — 'ambiguous' here).
+  it('fills reset_at from the captured rate_limit_event when stderr lacks a timestamp', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'rc3',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'rate-limit-with-event.yaml') },
+    });
+    expect(result.status).toBe('rate-limit');
+    expect(result.classification).toBeDefined();
+    // stderr had no parseable horizon → kind stays ambiguous (unchanged behavior)...
+    expect(result.classification!.kind).toBe('ambiguous');
+    // ...but reset_at is enriched from the verified rate_limit_event resetsAt.
+    expect(result.classification!.reset_at).toBe('2026-05-24T10:40:00.000Z');
+  });
+
   it('kills on task timeout', async () => {
     const root = tmpRoot();
     const result = await executeOne(candidate(), {

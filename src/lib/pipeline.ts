@@ -53,6 +53,11 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
   let reason: RunReason = 'completed';
   let exitCode = 0;
   let ran = 0, failed = 0, timed_out = 0;
+  // v0.8.2 item 1: flips true the first time a task produces NON-TRIVIAL output
+  // (a dossier file, or a draft diff that touched ≥1 file with ≥1 changed line).
+  // Surfaced on the summary so the drain wrapper's no-progress backstop counts a
+  // "ran but produced nothing" burst as unproductive. Inert for bare `glean run`.
+  let producedNonTrivial = false;
   // v0.8: set when the run breaks on a rate-limit, so finalize() can surface the
   // classified session/weekly/ambiguous signal to the drain wrapper.
   let classification: RateLimitClassification | undefined;
@@ -259,6 +264,12 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       else if (result.status === 'failed') failed++;
       else ran++;
 
+      // v0.8.2 item 1: did this task produce non-trivial output? A dossier `file`
+      // result counts; a draft `branch` result counts only if its diff is real
+      // (≥1 file AND ≥1 changed line) — an empty/trivial diff is not progress
+      // (same triviality test the morning renderer already uses).
+      if (isNonTrivialOutput(result)) producedNonTrivial = true;
+
       if (result.output) appendIndex(opts.gleanRoot, projSlug, runId, c, result);
     }
 
@@ -289,10 +300,27 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     };
     if (classification) summary.classification = classification;
     if (completedHashes.length > 0) summary.completed_evidence_hashes = completedHashes;
+    // v0.8.2 item 1: surface whether this burst made real progress. Only set when
+    // true so a bare-run summary (which never reads it) stays minimal; the drain
+    // wrapper treats an absent/false field as "not productive".
+    if (producedNonTrivial) summary.productive = true;
     writeSummary(opts.gleanRoot, runId, summary);
     appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'run.end', reason, ran, failed, timed_out });
     return summary;
   }
+}
+
+// v0.8.2 item 1: a task counts as "progress" iff it produced non-trivial output.
+// A dossier/fetch-docs `file` result always counts (it wrote a markdown file). A
+// draft-impl `branch` result counts only when the diff is real — ≥1 file touched
+// AND ≥1 changed line — matching the morning renderer's own trivial-diff test.
+// A rate-limited / failed / timed-out task has no output and never counts.
+export function isNonTrivialOutput(result: TaskResult): boolean {
+  const out = result.output;
+  if (!out) return false;
+  if (out.kind === 'file') return true;
+  // branch (draft-impl)
+  return out.files > 0 && out.insertions + out.deletions > 0;
 }
 
 function newRunId(): string {

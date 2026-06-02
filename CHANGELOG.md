@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.8.2 — 2026-06-02
+
+Drain robustness: the unattended weekend drain is now tunable, keeps finding fresh work across a multi-day window without redoing old work, refuses to spill into next week's allowance, and reports the same picture from every surface. Plus the rate-limit classifier is now honest about what it actually knows.
+
+### Added
+- **Configurable circuit breaker.** `config.drain_trigger.max_unproductive` (default 3, unchanged) tunes how many genuinely-unproductive bursts end a drain window. The "unproductive" signal is now richer: a burst that ran tasks but produced only empty/trivial output counts as unproductive, not just a zero-task burst. A rate-limit pause or transient hiccup (discovery failure, lock contention) never counts.
+- **Anti-spill pre-emptive margin.** `config.drain_trigger.anti_spill_margin_minutes` (default 15) — the drain now refuses to *start* a burst within the margin of a known weekly reset, so a task can't begin seconds before the reset and bleed into next week's fresh allowance. Documented blind spot: the very first burst of a fresh window has no reset estimate yet, so it stays reactive there.
+- **`today`/`peek` window-aware aggregation.** During an active drain window, `glean today` and `glean peek` now aggregate the whole window (the same source `glean morning` uses), so all three surfaces agree instead of `today` showing a single day mid-drain. With no drain window active, their output is byte-identical to before.
+- **Self-capturing rate-limit tripwire.** The first time a `claude -p` spawn is flagged rate-limited, glean dumps the raw stderr + last stream-json messages to `<task>.BLOCK-CAPTURE.txt`, so the real block signal captures itself instead of waiting on a manual repro.
+
+### Changed
+- **First-class mid-weekend re-discovery.** A multi-day drain now provably picks up candidates that first appear on a later day and skips work already done (keyed on the stable `evidence_hash`), instead of risking working off the first burst's snapshot.
+- **Honest rate-limit signal (ADR-0001).** The classifier now parses the *verified* structured `rate_limit_event` from `claude -p`'s stream-json for the reset moment (`resetsAt`), while the stderr detector stays the load-bearing block path. Recorded the evidence boundary: the real hard-*block* shape has never been captured (every observed event is a warning), so the classifier is honestly marked unverified until a real block lands. New `docs/decisions/` ADR convention documents this.
+
+### Docs
+- `docs/PROJECT-MAP.md` — an index of the whole project across its three trees (repo, the machine-local gstack design store, the `~/glean` runtime), with a "keep it current" ritual wired into CLAUDE.md + ROADMAP.
+- `docs/decisions/` — lightweight ADR convention + ADR-0001 (the rate-limit signal). `docs/open-work/06` documents the `rate_limit_event` finding. `docs/design/` mirrors the gstack design docs into the repo so the design history is clone-portable.
+
 ## v0.8.1 — 2026-06-02
 
 Drain UX polish: the scheduler is correct out of the box wherever you are, a run's outcome is now a durable shareable artifact, and the README finally matches the tool you'd install today.

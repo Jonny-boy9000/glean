@@ -1,0 +1,2 @@
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779619200,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false},"uuid":"00000000-0000-0000-0000-000000000000","session_id":"REDACTED"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1779619200,"rateLimitType":"five_hour","utilization":0.94,"isUsingOverage":false,"surpassedThreshold":0.9},"uuid":"00000000-0000-0000-0000-000000000000","session_id":"REDACTED"}

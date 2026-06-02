@@ -78,7 +78,10 @@ const runCmd = defineCommand({
     // --drain wraps the burst in the drain window state machine (eligibility
     // guards + classified rate-limit handling). Default is a single burst.
     const summary = args.drain
-      ? await runDrain(pipelineOpts)
+      ? await runDrain(pipelineOpts, undefined, undefined, {
+          maxUnproductive: cfg.drain_trigger?.max_unproductive,
+          antiSpillMarginMinutes: cfg.drain_trigger?.anti_spill_margin_minutes,
+        })
       : await runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     // v0.8.1: refresh the durable, shareable RECEIPT.md for this run/drain window.

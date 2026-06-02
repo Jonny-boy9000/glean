@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**v0.8.1 published to npm** (`@jonny-boy9000/glean@0.8.1`, merge `1e8b441`/PR #8, tag `v0.8.1`): the v0.8.0 drain core + v0.8.1 UX polish (work-week-aware schedule default + shareable `RECEIPT.md` + README refresh). 352 tests + 1 documented skip. Public repo at https://github.com/Jonny-boy9000/glean. Install: `npm i -g @jonny-boy9000/glean` (the CLI command is still `glean`). **v0.8.2 handoff recorded** at [`docs/handoff/v0.8.2-handoff.md`](./docs/handoff/v0.8.2-handoff.md) — runnable cold in a new session.
+**v0.8.1 published to npm** (`@jonny-boy9000/glean@0.8.1`, merge `1e8b441`/PR #8, tag `v0.8.1`): the v0.8.0 drain core + v0.8.1 UX polish (work-week-aware schedule default + shareable `RECEIPT.md` + README refresh). Public repo at https://github.com/Jonny-boy9000/glean. Install: `npm i -g @jonny-boy9000/glean` (the CLI command is still `glean`). **v0.8.2 drain robustness is BUILT + reviewed on `feat/v0.8.2-drain-robustness`, PR open against `main` (402 tests + 2 documented skips) — not yet merged or npm-published.** v0.8.2 adds: configurable circuit-breaker + richer `productive` signal, first-class mid-weekend re-discovery + `evidence_hash` dedup, per-burst anti-spill margin (runDrain guard 3e), `today`/`peek` window-aware aggregation, and the honest rate-limit signal ([ADR-0001](./docs/decisions/0001-rate-limit-signal-source.md): parse verified `rate_limit_event.resetsAt`; stderr block detector unchanged; self-capturing BLOCK-CAPTURE tripwire). See [`docs/PROJECT-MAP.md`](./docs/PROJECT-MAP.md) for the full layout.
 
 Done so far: the MVP + quality patches (v0.1.x), the persistent-memory + usefulness-telemetry loop (v0.2–v0.6: `glean today`/`rate`/`peek`, dossier sweep), the **`draft-impl` engine** (v0.7.0 — AI-drafts code for the top TODO into an isolated `git worktree` on a `prep/glean-*` branch; safety enforced by a scoped tool allow-list; `glean gc` for worktree expiry), the **`glean morning` receipt** with verified draft test status (v0.7.1), and the **v0.8.0 drain core** (`glean run --drain` exit-and-re-enter + `glean schedule` Windows Task Scheduler + rate-limit horizon classifier + window-aggregated morning receipt). Both make-or-break gates were cleared empirically before building (no headless `claude usage` query; `claude -p` authenticates under Task Scheduler). **v0.8.1 UX polish** adds a work-week-aware schedule default (timezone-detected: Thursday for Israel, else Friday), a durable shareable `RECEIPT.md` (`glean morning --md`), and a README rewritten to v0.8 reality.
 
@@ -12,8 +12,9 @@ Done so far: the MVP + quality patches (v0.1.x), the persistent-memory + usefuln
 
 When asked to "build", "implement", or "continue" something:
 1. **Read `docs/ROADMAP.md` first** to see what's in the "Up next" queue and what's already been deferred indefinitely.
-2. Then read `glean.md` (the broader vision) and the relevant spec under `docs/superpowers/specs/` for context.
-3. Specs are the source of truth for *what* a release did; the roadmap is the source of truth for *what's coming*.
+2. **Read `docs/PROJECT-MAP.md`** — the index of *where everything lives*, including the parts **not in this repo** (the machine-local gstack design docs at `%USERPROFILE%\.gstack\projects\Jonny-boy9000-glean\` and the `~/glean` runtime output). Keep it current: any time you add/move/delete a file or change its responsibility, update PROJECT-MAP.md in the same change (it has a "How to keep this map current" section).
+3. Then read `glean.md` (the broader vision) and the relevant spec under `docs/superpowers/specs/` for context.
+4. Specs are the source of truth for *what* a release did; the roadmap is the source of truth for *what's coming*.
 
 ## What `glean` is
 
@@ -21,13 +22,29 @@ A local CLI (`glean`) that consumes idle Claude Pro/Max subscription capacity at
 
 It is **not** an API-token reseller or marketplace — that alternative was explicitly dropped (see `glean.md` §2) because Anthropic's terms prohibit reselling/proxying Claude access.
 
+## Decision records & assumptions
+
+Load-bearing decisions — and especially **unverified assumptions** — are recorded as tiny ADRs in
+[`docs/decisions/`](./docs/decisions/) and tagged at the code site (`ASSUMPTION[ADR-NNNN]` /
+`INVARIANT[ADR-NNNN]`). This exists because rationale stated as *fact* (in a comment or memory)
+once led a later session to "correct" a subsystem wrongly — the fix is to mark **verified vs.
+assumed, loudly, where the code is**. Rules:
+
+- Touching a subsystem with an `ASSUMPTION[ADR-NNNN]` tag? **Read that ADR first.** It tells you
+  what's a guess and what would change it.
+- Making a load-bearing or unverified decision, or reversing one? **Add/supersede an ADR** (never
+  edit an old one; supersede it) and tag the code site. See `docs/decisions/README.md`.
+- **A finding that overturns a prior decision is a hypothesis to disprove, not a conclusion** —
+  verify the negative case before asserting (evidence before assertions). The rate-limit signal
+  (ADR-0001) is the worked example: a "real signal found!" claim was a warning, not the block.
+
 ## Load-bearing constraints (do not violate)
 
 - **Subscription auth, no API key.** Capacity is consumed by spawning `claude -p "<prompt>"` subprocesses. Never introduce direct Anthropic API calls or `ANTHROPIC_API_KEY` usage — the whole tool assumes Pro/Max session auth.
 - **Read-only against the user's primary checkouts.** All speculative output goes to `git worktree`-based `prep/*` branches under `~/glean/work/` or to dossier dirs under `~/glean/dossiers/`. Never mutate the user's main checkout or push anything.
 - **Spawned sessions must run with a deny-list.** Every `claude -p` invocation passes `--disallowedTools "Bash(git push:*) Bash(git checkout main:*) Bash(gh pr merge:*) Bash(gh pr create:*)"`. Do not remove these even if a task seems to need them.
 - **No cross-invocation prompt caching.** Subscription auth can't manage `cache_control`; only in-session caching inside one `claude -p` call is free. Don't design around a pre-warmed cache.
-- **Rate-limit budget is indirect.** There is no programmatic remaining-window endpoint on Pro/Max. The executor reacts to stderr signals (`rate limit`, `429`, `usage limit`, `5-hour limit`) with the back-off schedule in §5.2, plus a wall-clock `--budget` and a `~/glean/STOP` sentinel. Don't invent a token-counter abstraction.
+- **Rate-limit budget is indirect.** There is no separate headless `claude usage` probe (Spike 0). The executor reacts to a wall-clock `--budget`, a `~/glean/STOP` sentinel, and a rate-limit signal. **Correction (2026-06-02):** the real `claude -p` rate-limit signal is **not** stderr prose — it is a structured `{"type":"rate_limit_event","rate_limit_info":{…}}` message in the `--output-format stream-json` stream glean already captures to `~/glean/logs/<run>/<task>.jsonl` (carries `rateLimitType` e.g. `five_hour`, `resetsAt` epoch-seconds, `status` incl. a proactive `allowed_warning` + `utilization`). Classify off that; keep the stderr regex as a fallback. See [`docs/open-work/06-rate-limit-signal-findings.md`](./docs/open-work/06-rate-limit-signal-findings.md). Still don't invent a token-counter abstraction.
 - **Default `max_parallel=1`.** Subscription sessions share one rate-limit bucket, so parallelism mostly accelerates exhaustion. `--parallel 2` is exposed but is not the default.
 
 ## Architecture pointers (read `glean.md` for detail)
