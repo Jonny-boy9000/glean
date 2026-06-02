@@ -2,9 +2,9 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-06-02 (v0.8.0 published to npm; v0.8.1 UX polish in PR)
-**Current release:** **v0.8.0 drain core published to npm** (`@jonny-boy9000/glean@0.8.0`, PR #6, tag `v0.8.0`). **v0.8.1 UX polish in an open PR** (work-week schedule default + shareable RECEIPT.md + README refresh; 352 tests).
-**Branch state:** `main` at v0.8.0; `feature/v0.8.1-polish` open in PR awaiting merge
+**Last updated:** 2026-06-02 (v0.8.1 published to npm; v0.8.2 handoff recorded)
+**Current release:** **v0.8.1 published to npm** (`@jonny-boy9000/glean@0.8.1`, merge `1e8b441`/PR #8, tag `v0.8.1`) — drain core (v0.8.0) + UX polish (v0.8.1: work-week schedule default, shareable RECEIPT.md, README refresh). 352 tests + 1 skip.
+**Branch state:** `main` at v0.8.1, clean; next up = v0.8.2 (handoff doc recorded).
 
 ---
 
@@ -20,7 +20,11 @@
 
 ### 1. v0.8.2 drain robustness + first real drain run
 
-**Status:** v0.8.0 drain core **published to npm**; **v0.8.1 UX polish in an open PR** (work-week-aware schedule default via timezone detect, durable shareable `RECEIPT.md` + `glean morning --md`, README rewritten to v0.8 reality; 352 tests). What remains for **v0.8.2**: **configurable circuit-breaker threshold, first-class mid-weekend candidate re-discovery, anti-spill pre-emptive margin, and `today`/`peek` window-aware aggregation** (so all three surfaces match `morning` during a drain). Plus the highest-value validation: **one real overnight/weekend drain run** against a live project to confirm the loop in the wild (and capture the real rate-limit stderr wording — the classifier's format table is currently built against plausible-but-unverified strings; Spike 0 confirmed no headless `claude usage` query exists, so the stderr classifier is load-bearing).
+> **Full self-contained handoff (read this to run v0.8.2 cold in a new session):**
+> [`docs/handoff/v0.8.2-handoff.md`](./handoff/v0.8.2-handoff.md) — per-item detail, file
+> pointers, build order, and ready-to-paste kickoff prompts (build + launch/marketing).
+
+**Status:** v0.8.0 drain core **published to npm**; **v0.8.1 UX polish published to npm** (work-week-aware schedule default via timezone detect, durable shareable `RECEIPT.md` + `glean morning --md`, README rewritten to v0.8 reality; 352 tests). What remains for **v0.8.2**: **configurable circuit-breaker threshold, first-class mid-weekend candidate re-discovery, anti-spill pre-emptive margin, and `today`/`peek` window-aware aggregation** (so all three surfaces match `morning` during a drain). Plus the highest-value validation: **one real overnight/weekend drain run** against a live project to confirm the loop in the wild (and capture the real rate-limit stderr wording — the classifier's format table is currently built against plausible-but-unverified strings; Spike 0 confirmed no headless `claude usage` query exists, so the stderr classifier is load-bearing).
 
 <details><summary>v0.8.0 design + build history (for context)</summary>
 
