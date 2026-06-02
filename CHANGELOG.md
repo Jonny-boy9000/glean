@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.1 — 2026-06-02
+
+Drain UX polish: the scheduler is correct out of the box wherever you are, a run's outcome is now a durable shareable artifact, and the README finally matches the tool you'd install today.
+
+### Added
+- **Work-week-aware schedule default.** `glean schedule enable` now derives the trigger day from your system timezone — Thursday for Israel's Sun–Thu work week, Friday otherwise — and prints the resolved choice plus the one-flag override. `--day` and `config.drain_trigger.day` still win. (Was hardcoded Thursday.)
+- **Shareable `RECEIPT.md`.** Every run/drain window now writes a durable Markdown receipt (project + capacity outcome + totals: N branches / M dossiers / +X/−Y / minutes drained, then per-item detail) to the date-dossier dir, so the "while you slept" result survives the terminal and pastes cleanly into a PR/Slack. `glean morning --md` prints it to stdout.
+
+### Changed
+- README rewritten to v0.8 reality: npm install (`npm i -g @jonny-boy9000/glean`), a commands table, the drain core + draft-impl + scheduler in "How it works", corrected FAQs (drain pause/resume, draft-impl shipped, scheduling shipped), and the real `base_branch`/`test_command`/`drain_trigger` config.
+
+### Internal
+- `defaultTriggerDay(tz)` is a pure, timezone-injected unit; `PLAIN`/`outcomeLine` exported from render-morning so the markdown receipt reuses the one honesty switch (only a real weekly-limit signal claims "drained weekly capacity"). 352 tests passing. Independent review: PASS, no critical/important findings.
+
 ## v0.8.0 — 2026-06-02
 
 The drain core (first slice). `glean` can now consume a whole weekend's leftover Claude capacity unattended, instead of stopping on the first rate-limit. It works by **exit-and-re-enter**: each run is a bounded burst that, on a 5-hour session limit, saves its place and exits; a Windows Task Scheduler trigger re-launches it after the window reopens, across the several 5-hour windows between Thursday evening and the weekly reset. The Monday `glean morning` receipt aggregates the whole weekend. (Robustness polish — circuit-breaker tuning, mid-weekend re-discovery, anti-spill margin, `today`/`peek` window views — is deferred to v0.8.1.)
