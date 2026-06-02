@@ -146,7 +146,8 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 |------|---------|
 | `docs/ROADMAP.md` | Planned-work source of truth. |
 | `docs/PROJECT-MAP.md` | This index. |
-| `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — what's next after v0.8.2 shipped (ADR-0001 validation gate, launch, roadmap candidates). **Read this to pick up cold.** |
+| `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — what's next after v0.8.2/v0.8.3 shipped (ADR-0001 validation gate, launch, roadmap candidates). **Read this to pick up cold.** |
+| `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
 | `docs/handoff/v0.8.2-handoff.md` | Historical — the v0.8.2 bucket (shipped, marked ✅). |
 | `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = the rate-limit signal source. See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |

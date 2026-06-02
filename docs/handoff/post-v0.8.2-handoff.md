@@ -87,6 +87,12 @@ drain state). And the new discipline: **a finding that overturns a prior decisio
 disprove, not a conclusion** — verify the negative case before asserting (this is exactly how the
 ADR-0001 over-claim got caught).
 
+## Reusable orchestration prompt
+For a buildable roadmap item, the ready-to-paste kickoff that drives the gstack pipeline +
+Superpowers subagents (the pattern below) lives at
+[`ORCHESTRATION-PROMPT.md`](./ORCHESTRATION-PROMPT.md) — fill in `<TASK>` and paste it as a fresh
+session's first message. (Not for ADR-0001 or launch — those have their own prompts in this file.)
+
 ## How this v0.8.2 was built (the working pattern, for reference)
 office-hours (design + adversarial review) → plan-eng-review (architecture + per-lane test plan) →
 superpowers `subagent-driven-development` with **parallel worktree-isolated TDD lanes** (split by
