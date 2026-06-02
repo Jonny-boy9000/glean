@@ -3,7 +3,15 @@
 // clock is never touched. See classify.ts for format-extension notes.
 
 import { describe, it, expect } from 'vitest';
-import { classifyRateLimit } from './classify.js';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { classifyRateLimit, parseRateLimitEventResetAt } from './classify.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = join(
+  __dirname, '..', '..', 'test', 'fixtures', 'captured-rate-limit', 'real-five-hour-events.jsonl',
+);
 
 // Fixed epoch: 2026-06-02T12:00:00Z  →  1780401600000 ms
 const FIXED_NOW = 1780401600000;
@@ -278,5 +286,54 @@ describe('rate-limit keyword variants', () => {
   it('triggers on "weekly limit"', () => {
     const result = classifyRateLimit('weekly limit hit, in 2 days', now);
     expect(result.reset_at).toBe(nowPlus(2 * 24 * H));
+  });
+});
+
+// ── rate_limit_event resetsAt enrichment (ADR-0001: VERIFIED warning-only) ────
+// parseRateLimitEventResetAt reads the stream-json `rate_limit_event` telemetry
+// (verified shape — a WARNING, not a block) and returns the `resetsAt` epoch as
+// ISO UTC. This is enrichment for the anti-spill margin, NOT the block detector;
+// classifyRateLimit (stderr) is unchanged and remains load-bearing for the block.
+describe('parseRateLimitEventResetAt (rate_limit_event enrichment)', () => {
+  it('returns the resetsAt ISO from the committed warning-only fixture', () => {
+    const text = readFileSync(FIXTURE, 'utf8');
+    // Fixture resetsAt = 1779619200 (epoch seconds) → 2026-05-24T10:40:00.000Z
+    expect(parseRateLimitEventResetAt(text)).toBe('2026-05-24T10:40:00.000Z');
+  });
+
+  it('returns null when there is no rate_limit_event line', () => {
+    const text = [
+      '{"type":"message_start","message":{"id":"m1","role":"assistant"}}',
+      '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+    ].join('\n');
+    expect(parseRateLimitEventResetAt(text)).toBeNull();
+  });
+
+  it('returns null for empty input', () => {
+    expect(parseRateLimitEventResetAt('')).toBeNull();
+  });
+
+  it('tolerates malformed / non-JSON lines around a valid event', () => {
+    const text = [
+      'this is not json at all',
+      '{"type":"rate_limit_event"',                       // truncated JSON
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779619200}}',
+      '}{ also broken',
+    ].join('\n');
+    expect(parseRateLimitEventResetAt(text)).toBe('2026-05-24T10:40:00.000Z');
+  });
+
+  it('prefers the LAST rate_limit_event when several are present', () => {
+    const text = [
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1779619200}}',
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1779622800}}',
+    ].join('\n');
+    // The second event's resetsAt (1779622800) → 2026-05-24T11:40:00.000Z
+    expect(parseRateLimitEventResetAt(text)).toBe('2026-05-24T11:40:00.000Z');
+  });
+
+  it('returns null for a rate_limit_event missing resetsAt', () => {
+    const text = '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}';
+    expect(parseRateLimitEventResetAt(text)).toBeNull();
   });
 });

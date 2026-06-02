@@ -1,0 +1,9 @@
+# Rate-limit burst that ALSO emitted a stream-json rate_limit_event carrying a
+# verified `resetsAt` (epoch seconds). The stderr trips the block detector but has
+# NO parseable timestamp, so reset_at must be back-filled from the captured .jsonl.
+# resetsAt 1779619200 → 2026-05-24T10:40:00.000Z
+stdout_lines:
+  - '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1779619200,"rateLimitType":"five_hour","utilization":0.94}}'
+stderr_lines:
+  - 'error: 5-hour limit reached, please retry later'
+exit_code: 1
