@@ -2,10 +2,19 @@
 
 > Self-contained handoff so a **fresh session** can pick up cold. Everything needed is here or linked.
 
-**As of:** 2026-06-02. `main` is at **v0.8.2**, published to npm as `@jonny-boy9000/glean@0.8.2`
-(merge `f1ff650`/PR #13, tag `v0.8.2`). 402 tests + 2 documented skips. The v0.8.0 drain core +
-v0.8.1 UX polish + v0.8.2 drain robustness are all shipped and published. The drain engine is
-feature-complete for now; what remains is **validation in the wild** and **distribution/adoption**.
+**As of:** 2026-06-02. `main` is at **v0.8.3**, published to npm as `@jonny-boy9000/glean@0.8.3`
+(merge `7e08e3a`/PR #14, tag `v0.8.3` — a patch fixing the `schedule status`/`disable` query, found
+in live validation). Built on v0.8.0 drain core + v0.8.1 UX polish + v0.8.2 drain robustness, all
+shipped + published. 406 tests + 2 documented skips. The drain engine is feature-complete for now;
+what remains is **validation in the wild** (now in motion) and **distribution/adoption**.
+
+> **🟢 LIVE VALIDATION STATUS (2026-06-02).** First real `glean run` (4 tasks, 0 failed) + a `--drain`
+> tick both succeeded against real `claude -p` on the logged-in Windows machine. The unattended drain
+> is **scheduled and armed** (`glean schedule enable` → `\Glean\Drain`, fires **Thu 2026-06-04 18:00**).
+> So the ADR-0001 gate below is now **waiting on a real weekly-cap hit, not on setup** — the scheduled
+> drain runs unattended and the BLOCK-CAPTURE tripwire grabs the block automatically. Two live findings:
+> (1) the schedule-status bug → fixed in v0.8.3; (2) **`fetch-docs` degrades under the deny-list**
+> (context7/WebFetch/WebSearch declined in the spawned session) → roadmap item.
 
 ## Read first (orient a cold session)
 - `CLAUDE.md` — load-bearing constraints (do not violate) + current state. Read the new
