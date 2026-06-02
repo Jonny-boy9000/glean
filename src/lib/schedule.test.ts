@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRegisterScript,
-  DEFAULT_DAY,
+  defaultTriggerDay,
   DEFAULT_TIME,
   DEFAULT_REPEAT_MINUTES,
   DEFAULT_DURATION_HOURS,
@@ -17,19 +17,49 @@ function makeOpts(overrides: Partial<Parameters<typeof buildRegisterScript>[0]> 
     nodePath:    'C:\\Program Files\\nodejs\\node.exe',
     cliEntry:    'C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\@jonny-boy9000\\glean\\bin\\glean.js',
     projectPath: 'C:\\Glean',
+    // Explicit day so buildRegisterScript tests are deterministic regardless of the
+    // machine's timezone (the day default is now timezone-derived — tested separately).
+    day:         'Thursday',
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// defaultTriggerDay — work-week-aware default (timezone-injected, deterministic)
+// ---------------------------------------------------------------------------
+
+describe('defaultTriggerDay', () => {
+  it('returns Thursday for Israel (Sun–Thu work week)', () => {
+    expect(defaultTriggerDay('Asia/Jerusalem')).toBe('Thursday');
+  });
+  it('returns Friday for a Mon–Fri timezone', () => {
+    expect(defaultTriggerDay('America/New_York')).toBe('Friday');
+    expect(defaultTriggerDay('Europe/London')).toBe('Friday');
+  });
+  it('returns Friday for UTC / unknown zones (safe default)', () => {
+    expect(defaultTriggerDay('UTC')).toBe('Friday');
+    expect(defaultTriggerDay('Not/AZone')).toBe('Friday');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Default behaviour
 // ---------------------------------------------------------------------------
 
 describe('buildRegisterScript — defaults', () => {
-  it('uses Thursday + 18:00 by default', () => {
+  it('uses the given day + 18:00 default time', () => {
     const script = buildRegisterScript(makeOpts());
-    expect(script).toContain(DEFAULT_DAY);        // 'Thursday'
+    expect(script).toContain('Thursday');
     expect(script).toContain(`"${DEFAULT_TIME}"`); // '"18:00"'
+  });
+
+  it('falls back to a timezone-derived day when none is given', () => {
+    const { day, ...noDay } = makeOpts();
+    void day;
+    const script = buildRegisterScript(noDay);
+    // The fallback is defaultTriggerDay() for the current machine — assert it is
+    // one of the two valid values rather than a machine-specific one.
+    expect(script).toMatch(/-DaysOfWeek (Thursday|Friday)/);
   });
 
   it('sets 60-minute repetition interval by default', () => {
