@@ -68,6 +68,46 @@ export function classifyRateLimit(
   return { kind: 'weekly', reset_at, reset_horizon: 'days' };
 }
 
+// ── rate_limit_event resetsAt enrichment (ADR-0001) ──────────────────────────
+//
+// VERIFIED (unlike the stderr block guess above): the `claude -p` stream-json
+// output emits discrete `{"type":"rate_limit_event","rate_limit_info":{…}}`
+// messages, captured by the executor to ~/glean/logs/<run>/<task>.jsonl. The
+// `resetsAt` field (epoch SECONDS) is a real reset moment. NOTE: every event we
+// have observed is a WARNING (status=allowed/allowed_warning), NOT a block — so
+// this is ENRICHMENT only (feeds reset_at / the anti-spill margin). It is NOT the
+// block detector: classifyRateLimit (stderr) stays the load-bearing block path.
+//
+// Scans stream-json lines for the LAST rate_limit_event carrying a numeric
+// `resetsAt` and returns it as an ISO UTC string, else null. Tolerant of
+// malformed lines (try/catch per line) so a partial/corrupt log never throws.
+export function parseRateLimitEventResetAt(jsonlText: string): string | null {
+  if (!jsonlText) return null;
+  let resetAt: string | null = null;
+  for (const line of jsonlText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Cheap pre-filter so we only JSON.parse plausible event lines.
+    if (!trimmed.includes('rate_limit_event')) continue;
+    try {
+      const obj = JSON.parse(trimmed) as {
+        type?: unknown;
+        rate_limit_info?: { resetsAt?: unknown };
+      };
+      if (obj?.type !== 'rate_limit_event') continue;
+      const secs = obj.rate_limit_info?.resetsAt;
+      if (typeof secs !== 'number' || !Number.isFinite(secs)) continue;
+      const d = new Date(secs * 1000);
+      if (!Number.isFinite(d.getTime())) continue;
+      // Keep scanning so the LAST valid event wins.
+      resetAt = d.toISOString();
+    } catch {
+      // Malformed / truncated line — skip it.
+    }
+  }
+  return resetAt;
+}
+
 // ── Parsers (ordered: most specific / unambiguous first) ─────────────────────
 
 type Parser = (text: string, nowMs: number) => Date | null;

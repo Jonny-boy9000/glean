@@ -9,7 +9,7 @@ import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
-import { classifyRateLimit, type RateLimitClassification } from './classify.js';
+import { classifyRateLimit, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
 
 // ASSUMPTION[ADR-0001] — UNVERIFIED. This regex is glean's primary detector for a
 // real `claude -p` rate-limit BLOCK, matched against the spawn's stderr. We have
@@ -46,7 +46,62 @@ function classifySpawnStderr(spawn: SpawnOutcome): RateLimitClassification {
       text = '';
     }
   }
-  return classifyRateLimit(text);
+  const classification = classifyRateLimit(text);
+  // ADR-0001 enrichment: the stderr block is the load-bearing signal and stays
+  // PRIMARY, but it often carries no parseable reset moment. When it doesn't,
+  // back-fill reset_at from the VERIFIED rate_limit_event.resetsAt in the
+  // captured stream-json (.jsonl). This only fills a missing timestamp — `kind`
+  // (the stderr classifier's decision) is never changed. Best-effort: swallow
+  // any read/parse error so an unreadable jsonl degrades to the stderr result.
+  if (classification.reset_at === null) {
+    try {
+      const jsonl = readFileSync(spawn.jsonlPath, 'utf8');
+      const resetAt = parseRateLimitEventResetAt(jsonl);
+      if (resetAt !== null) {
+        return { ...classification, reset_at: resetAt };
+      }
+    } catch {
+      // Missing/unreadable jsonl — keep the stderr-only classification.
+    }
+  }
+  return classification;
+}
+
+// ADR-0001 self-capturing tripwire: the real `claude -p` hard-BLOCK shape has
+// never been captured. The FIRST time a spawn is flagged rateLimited, dump the
+// full raw stderr + the last ~50 lines of the captured stream-json (.jsonl) to
+// <logDir>/<taskId>.BLOCK-CAPTURE.txt so the missing block shape captures itself
+// instead of waiting on a human to remember. LOCAL file write only — no spawn,
+// no network. Best-effort: NEVER throws out of the capture path.
+const BLOCK_CAPTURE_JSONL_TAIL_LINES = 50;
+function captureBlockSignal(taskId: string, logDir: string, spawn: SpawnOutcome): void {
+  try {
+    let stderrRaw = spawn.stderrText ?? '';
+    // Prefer the full on-disk stderr, but the stream end() is async so the file
+    // may not be flushed yet — fall back to the in-memory tail if the read is
+    // empty or throws, so the capture is never blank when we have the signal.
+    try {
+      const fromFile = readFileSync(spawn.stderrPath, 'utf8');
+      if (fromFile) stderrRaw = fromFile;
+    } catch { /* keep the in-memory tail */ }
+    let jsonlTail = '';
+    try {
+      const lines = readFileSync(spawn.jsonlPath, 'utf8').split(/\r?\n/);
+      jsonlTail = lines.slice(-BLOCK_CAPTURE_JSONL_TAIL_LINES).join('\n');
+    } catch { /* jsonl missing — capture stderr alone */ }
+    const body =
+      `# glean BLOCK-CAPTURE (ADR-0001 self-capturing tripwire)\n` +
+      `# Task: ${taskId}\n` +
+      `# Captured: ${new Date().toISOString()}\n` +
+      `# This is the first observed rate-limit flag for this task. If a status\n` +
+      `# below is NOT allowed/allowed_warning, the real BLOCK shape has finally\n` +
+      `# been captured — drop it into a fixture and close ADR-0001.\n` +
+      `\n## raw stderr\n${stderrRaw}\n` +
+      `\n## stream-json tail (last ${BLOCK_CAPTURE_JSONL_TAIL_LINES} lines)\n${jsonlTail}\n`;
+    writeFileSync(join(logDir, `${taskId}.BLOCK-CAPTURE.txt`), body);
+  } catch {
+    // Capture is strictly best-effort diagnostics — never let it break a run.
+  }
 }
 
 export type ExecCtx = {
@@ -714,7 +769,13 @@ async function runClaude(
 
   // We reach here only after job.exit resolved and (above) all kills were
   // awaited, so the spawned process tree is fully dead.
-  return { exitCode, rateLimited, timedOut, stderrPath, stderrText, jsonlPath, descendantsDead: true };
+  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, jsonlPath, descendantsDead: true };
+
+  // ADR-0001 self-capturing tripwire: dump the raw block signal the first (and
+  // every) time a spawn is flagged rateLimited. Best-effort, never throws.
+  if (rateLimited) captureBlockSignal(c.id, logDir, outcome);
+
+  return outcome;
 }
 
 const SAFETY_FOOTER = '\n\nspeculative — produce a draft, never push, write findings to `OUT.md` in the current working directory.\n';
