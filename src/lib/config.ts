@@ -15,10 +15,12 @@ const Schema = z.object({
     duration_hours: z.number().optional(),
     // v0.8.2 item 1: configurable circuit-breaker threshold (was the hard-coded
     // MAX_UNPRODUCTIVE = 3). Optional — defaults to 3 in runDrain when unset.
-    max_unproductive: z.number().optional(),
-    // v0.8.2 item 3: anti-spill pre-emptive margin in minutes. Optional —
-    // defaults to 15 in runDrain when unset.
-    anti_spill_margin_minutes: z.number().optional(),
+    // Integer: it's compared against the whole-number unproductive_reentries
+    // counter, so a fractional value (e.g. 3.7) would never trip the guard.
+    max_unproductive: z.number().int().optional(),
+    // v0.8.2 item 3: anti-spill pre-emptive margin in minutes (whole minutes).
+    // Optional — defaults to 15 in runDrain when unset.
+    anti_spill_margin_minutes: z.number().int().optional(),
   }).optional(),
 });
 

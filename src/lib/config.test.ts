@@ -71,4 +71,17 @@ describe('loadConfig', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 'soon' } }));
     expect(() => loadConfig(p)).toThrow(/anti_spill_margin_minutes/);
   });
+
+  // These are whole-unit quantities: max_unproductive is compared against an
+  // integer counter, and a fractional margin is meaningless. A non-integer must
+  // be rejected, not silently accepted (a 3.7 threshold would never trip the guard).
+  it('rejects a fractional max_unproductive', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 3.7 } }));
+    expect(() => loadConfig(p)).toThrow(/max_unproductive/);
+  });
+
+  it('rejects a fractional anti_spill_margin_minutes', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 14.9 } }));
+    expect(() => loadConfig(p)).toThrow(/anti_spill_margin_minutes/);
+  });
 });

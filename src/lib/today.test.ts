@@ -358,4 +358,25 @@ describe('findTodayDossiers window-aware aggregation (v0.8.2 item 4)', () => {
     const r = findTodayDossiers(root);
     expect(r.projects).toEqual([]);
   });
+
+  it('active window + memory.db present but all runs predate the window → windowRuns.length===0 guard (not the no-db guard)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-today-zeroburst-db-'));
+    // A real memory.db exists with a run, but that run STARTED BEFORE the window
+    // opened — so getRunsWithCandidatesSince(windowStart) returns []. This drives
+    // the `windowRuns.length === 0` branch specifically (the prior test hits the
+    // !existsSync(dbPath) guard instead). Must fall through to the legacy path,
+    // never fabricate the out-of-window run.
+    const pastRun = Date.parse('2026-06-01T03:00:00.000Z');
+    await seedWindowDb(
+      root,
+      [{ run_id: 'run-old', project_path: 'C:\\projects\\demoproj', started_at: pastRun, ended_at: pastRun + 1000 }],
+      [{ run_id: 'run-old', candidate_slug: 's1', candidate_type: 'research-dossier', title: 'Out-of-window task', outcome: 'ok', dossier_path: 'OUT.md', prep_branch: null }],
+    );
+    // Window opens AFTER the run → zero runs fall inside it.
+    writeWindow(root, pastRun + 3_600_000);
+    const r = findTodayDossiers(root);
+    // No INDEX dirs for today either → legacy path returns empty; the out-of-window
+    // DB run is NOT surfaced.
+    expect(r.projects).toEqual([]);
+  });
 });

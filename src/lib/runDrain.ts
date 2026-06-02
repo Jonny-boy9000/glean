@@ -57,6 +57,10 @@ export type DrainOpts = {
 // Reasons that NEVER count toward the no-progress backstop (item 1): a transient
 // no-op (discovery hiccup / another burst held the lock / window not yet eligible)
 // is not the window genuinely "trying and producing nothing".
+// NOTE: of these, only 'discovery-failed' is actually produced by a burst and
+// reaches the productivity fold below — 'lock-busy' (guard 5) and 'not-eligible'
+// (guard 3c) early-return before the fold. They are kept here as defensive cover
+// so the classification stays correct if guard ordering is ever refactored.
 const TRANSIENT_REASONS: ReadonlySet<RunSummary['reason']> = new Set([
   'discovery-failed',
   'lock-busy',

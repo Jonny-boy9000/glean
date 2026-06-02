@@ -42,8 +42,16 @@ export function findTodayDossiers(gleanRoot: string, date?: string): TodayReport
   // STRICTLY gated above the legacy path: only when a budget.json parses, its
   // drain_window_started_at is a finite ms, AND ≥1 run falls inside the window.
   // Any other case falls through to the EXACT single-day code below
-  // (byte-identical to pre-v0.8.2 behavior).
-  const windowReport = tryWindowReport(gleanRoot, date);
+  // (byte-identical to pre-v0.8.2 behavior). The window attempt is wrapped so a
+  // DB/state error (e.g. a corrupt or busy memory.db) degrades silently to the
+  // legacy path rather than crashing `glean today` — preserving the invariant
+  // that the no-window path is unaffected by any window-aggregation failure.
+  let windowReport: TodayReport | null = null;
+  try {
+    windowReport = tryWindowReport(gleanRoot, date);
+  } catch {
+    windowReport = null;
+  }
   if (windowReport) return windowReport;
 
   const targetDate = date ?? localDateString(new Date());

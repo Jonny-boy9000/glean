@@ -771,8 +771,11 @@ async function runClaude(
   // awaited, so the spawned process tree is fully dead.
   const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, jsonlPath, descendantsDead: true };
 
-  // ADR-0001 self-capturing tripwire: dump the raw block signal the first (and
-  // every) time a spawn is flagged rateLimited. Best-effort, never throws.
+  // ADR-0001 self-capturing tripwire: each spawn flagged rateLimited writes its
+  // OWN capture file (keyed by task id `<id>.BLOCK-CAPTURE.txt`), so the
+  // never-yet-observed real block shape captures itself the first time it ever
+  // happens. Per-task (not once-global) — distinct task ids never collide.
+  // Best-effort, never throws.
   if (rateLimited) captureBlockSignal(c.id, logDir, outcome);
 
   return outcome;
