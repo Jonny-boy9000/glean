@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**v0.7.1 shipped and published to npm** (`@jonny-boy9000/glean@0.7.1`). **v0.8.0 drain core is built and in an open PR** off `feature/v0.8-drain` (343 tests passing + 1 documented skip). Public repo at https://github.com/Jonny-boy9000/glean. Install: `npm i -g @jonny-boy9000/glean` (the CLI command is still `glean`).
+**v0.7.1 published to npm** (`@jonny-boy9000/glean@0.7.1`). **v0.8.0 drain core merged to `main`** (PR #6, merge `0e6a63d`; 343 tests passing + 1 documented skip) — not yet npm-published. Public repo at https://github.com/Jonny-boy9000/glean. Install: `npm i -g @jonny-boy9000/glean` (the CLI command is still `glean`).
 
 Done so far: the MVP + quality patches (v0.1.x), the persistent-memory + usefulness-telemetry loop (v0.2–v0.6: `glean today`/`rate`/`peek`, dossier sweep), the **`draft-impl` engine** (v0.7.0 — AI-drafts code for the top TODO into an isolated `git worktree` on a `prep/glean-*` branch; safety enforced by a scoped tool allow-list; `glean gc` for worktree expiry), the **`glean morning` receipt** with verified draft test status (v0.7.1), and the **v0.8.0 drain core** (`glean run --drain` exit-and-re-enter + `glean schedule` Windows Task Scheduler + rate-limit horizon classifier + window-aggregated morning receipt). Both make-or-break gates were cleared empirically before building (no headless `claude usage` query; `claude -p` authenticates under Task Scheduler).
 
