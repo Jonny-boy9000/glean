@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { runPipeline } from './pipeline.js';
+import { runPipeline, isNonTrivialOutput } from './pipeline.js';
+import type { TaskResult } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +40,8 @@ describe('runPipeline', () => {
     expect(summary.reason === 'completed' || summary.reason === 'no-candidates').toBe(true);
     if (summary.reason === 'completed') {
       expect(summary.ran).toBeGreaterThan(0);
+      // item 1: a real dossier run wrote output → the burst is productive.
+      expect(summary.productive).toBe(true);
     }
   });
 
@@ -145,6 +148,59 @@ describe('runPipeline', () => {
     expect(summary.ran).toBe(0);                          // ...but all were skipped
     expect(summary.reason).toBe('completed');
     vi.resetModules();
+  });
+
+  // v0.8.2 item 2: mid-window re-discovery. A candidate whose evidence_hash is NOT
+  // in the completed set is still picked up and run on a later burst — the window
+  // never works off a stale day-1 snapshot. We seed the skip-set with a bogus hash
+  // that matches nothing, so every real candidate must still run.
+  it('runs a candidate NOT in completedTaskIds (mid-window re-discovery)', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const scenario = join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml');
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: scenario },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+      // a skip-set that matches NO real candidate → nothing is filtered out.
+      completedTaskIds: ['hash-that-matches-nothing'],
+    });
+    expect(summary.candidates_total).toBeGreaterThan(0);
+    expect(summary.ran).toBeGreaterThan(0);
+    expect(summary.reason).toBe('completed');
+  });
+});
+
+// v0.8.2 item 1: the triviality classifier the `productive` summary field is
+// derived from. A dossier file always counts; a draft branch counts only if its
+// diff is real; a result with no output never counts.
+describe('isNonTrivialOutput (item 1)', () => {
+  const base = { status: 'ok' as const, elapsed_ms: 1 };
+  it('a dossier file result is non-trivial', () => {
+    const r: TaskResult = { ...base, output: { kind: 'file', path: '/x/OUT.md' } };
+    expect(isNonTrivialOutput(r)).toBe(true);
+  });
+  it('a draft branch with a real diff is non-trivial', () => {
+    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 2, insertions: 10, deletions: 1, tests: 'pass' } };
+    expect(isNonTrivialOutput(r)).toBe(true);
+  });
+  it('a draft branch with an empty diff (0 files) is trivial', () => {
+    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 0, insertions: 0, deletions: 0, tests: 'none' } };
+    expect(isNonTrivialOutput(r)).toBe(false);
+  });
+  it('a draft branch with files but 0 changed lines is trivial', () => {
+    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 1, insertions: 0, deletions: 0, tests: 'none' } };
+    expect(isNonTrivialOutput(r)).toBe(false);
+  });
+  it('a result with no output is trivial', () => {
+    const r: TaskResult = { status: 'failed', elapsed_ms: 1 };
+    expect(isNonTrivialOutput(r)).toBe(false);
   });
 });
 

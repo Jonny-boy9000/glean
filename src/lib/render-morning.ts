@@ -181,6 +181,11 @@ export function outcomeLine(reason: string | null, c: Painter): string {
       return c.dim('Outcome: stopped early: unrecognized rate-limit signal.');
     case 'discovery-failed':
       return c.dim('Outcome: stopped early: discovery failed (transient).');
+    case 'anti-spill':
+      // v0.8.2 item 3: held off near the upcoming reset. Must NOT use the words
+      // "drained" or "weekly" (honesty rule) — it deliberately did NOT work, to
+      // avoid spilling into next week's fresh allowance.
+      return c.dim('Outcome: held off near the upcoming reset (anti-spill margin).');
     default:
       return c.dim(`Outcome: ${reason ?? 'unknown'}.`);
   }

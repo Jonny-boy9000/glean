@@ -13,6 +13,12 @@ const Schema = z.object({
     time: z.string().optional(),
     repeat_minutes: z.number().optional(),
     duration_hours: z.number().optional(),
+    // v0.8.2 item 1: configurable circuit-breaker threshold (was the hard-coded
+    // MAX_UNPRODUCTIVE = 3). Optional — defaults to 3 in runDrain when unset.
+    max_unproductive: z.number().optional(),
+    // v0.8.2 item 3: anti-spill pre-emptive margin in minutes. Optional —
+    // defaults to 15 in runDrain when unset.
+    anti_spill_margin_minutes: z.number().optional(),
   }).optional(),
 });
 

@@ -58,6 +58,10 @@ function baseSummary(over: Partial<RunSummary> = {}): RunSummary {
     failed: 0,
     timed_out: 0,
     exit_code: 0,
+    // v0.8.2 item 1: the default baseSummary models a normal SUCCESSFUL burst
+    // that produced real output, so it resets the no-progress backstop. Tests
+    // exercising the unproductive path override this to false.
+    productive: true,
     ...over,
   };
 }
@@ -393,7 +397,9 @@ describe('runDrain — post-burst state transitions', () => {
   it('productive burst resets unproductive_reentries to 0', async () => {
     const root = tmpRoot();
     writeDrainState(root, existingState({ unproductive_reentries: 2 }));
-    const { fn } = fakeBurst(baseSummary({ reason: 'completed', ran: 3 }));
+    // v0.8.2 item 1: "ran>0" alone is no longer enough — the burst must report
+    // productive=true (non-trivial output) to reset the backstop.
+    const { fn } = fakeBurst(baseSummary({ reason: 'completed', ran: 3, productive: true }));
     const summary = await runDrain(opts(root), clockAt(T0), fn);
     expect(summary.reason).toBe('completed');
     const read = readDrainState(root);
@@ -404,7 +410,7 @@ describe('runDrain — post-burst state transitions', () => {
   it('unproductive burst (ran 0, no rate-limit) increments the counter', async () => {
     const root = tmpRoot();
     writeDrainState(root, existingState({ unproductive_reentries: 1 }));
-    const { fn } = fakeBurst(baseSummary({ reason: 'no-candidates', ran: 0 }));
+    const { fn } = fakeBurst(baseSummary({ reason: 'no-candidates', ran: 0, productive: false }));
     const summary = await runDrain(opts(root), clockAt(T0), fn);
     expect(summary.reason).toBe('no-candidates');
     const read = readDrainState(root);
@@ -418,5 +424,173 @@ describe('runDrain — post-burst state transitions', () => {
     const { fn, calls } = fakeBurst(baseSummary());
     await runDrain(opts(root), clockAt(T0), fn);
     expect(calls[0].completedTaskIds).toEqual(['a', 'b']);
+  });
+});
+
+// ── item 1: configurable circuit breaker + richer productive signal ──────────
+
+describe('runDrain — circuit breaker (item 1)', () => {
+  it('default threshold is unchanged (3): at 3 unproductive → no-progress', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 3 }));
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('no-progress');
+  });
+
+  it('honors a configured max_unproductive threshold from drainOpts', async () => {
+    const root = tmpRoot();
+    // 3 would NOT trip a threshold of 5 — the burst must run.
+    writeDrainState(root, existingState({ unproductive_reentries: 3 }));
+    const { fn, calls } = fakeBurst(baseSummary({ reason: 'completed', ran: 1, productive: true }));
+    const summary = await runDrain(opts(root), clockAt(T0), fn, { maxUnproductive: 5 });
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).toBe('completed');
+  });
+
+  it('a configured threshold of 5 → at 5 unproductive returns no-progress (no burst)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 5 }));
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled, { maxUnproductive: 5 });
+    expect(summary.reason).toBe('no-progress');
+  });
+
+  it('a burst that ran>0 but produced only trivial output increments unproductive', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 1 }));
+    // ran>0 (a task "succeeded") but productive is NOT true (all-empty diff) →
+    // under the richer rule this still counts as a no-progress burst.
+    const { fn } = fakeBurst(baseSummary({ reason: 'completed', ran: 2, productive: false }));
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(summary.reason).toBe('completed');
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(2);
+  });
+
+  it('a genuinely productive burst (productive=true) resets unproductive to 0', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 2 }));
+    const { fn } = fakeBurst(baseSummary({ reason: 'completed', ran: 1, productive: true }));
+    await runDrain(opts(root), clockAt(T0), fn);
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(0);
+  });
+
+  it('a rate-limit pause (classification present) never increments unproductive', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 2 }));
+    // ran 0, not productive, BUT a session rate-limit classification → legit wait.
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, productive: false, classification: SESSION_CLS }));
+    await runDrain(opts(root), clockAt(T0), fn);
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(0);
+  });
+
+  it('transient reasons (discovery-failed/lock-busy/not-eligible) never increment unproductive', async () => {
+    for (const reason of ['discovery-failed', 'not-eligible'] as const) {
+      const root = tmpRoot();
+      writeDrainState(root, existingState({ unproductive_reentries: 1 }));
+      const { fn } = fakeBurst(baseSummary({ reason, ran: 0, productive: false }));
+      await runDrain(opts(root), clockAt(T0), fn);
+      const read = readDrainState(root);
+      if (read.kind !== 'ok') throw new Error('expected ok');
+      // transient → counter held, NOT incremented.
+      expect(read.state.unproductive_reentries).toBe(1);
+    }
+  });
+
+  it('reaching the configured threshold via trivial bursts eventually trips guard 3d', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 0 }));
+    const { fn } = fakeBurst(baseSummary({ reason: 'completed', ran: 1, productive: false }));
+    // 3 trivial bursts → counter climbs 1,2,3.
+    for (let i = 0; i < 3; i++) await runDrain(opts(root), clockAt(T0), fn);
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(3);
+    // 4th tick: guard 3d fires (>= default 3) before the burst.
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('no-progress');
+  });
+});
+
+// ── item 3: per-burst anti-spill guard 3e ────────────────────────────────────
+
+describe('runDrain — anti-spill guard 3e (item 3)', () => {
+  // A reset 10 min out; default margin 15 → now is INSIDE the margin → hold off.
+  // week_exhausted stays false so guard 3b doesn't pre-empt this case.
+  it('within the default 15-min margin of a known reset → anti-spill, no burst', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 10 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('anti-spill');
+    expect(summary.ran).toBe(0);
+  });
+
+  it('anti-spill writes NO burst row and leaves state unchanged', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 5 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const raw = readFileSync(drainStatePath(root), 'utf8');
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('anti-spill');
+    // budget.json untouched (no-op tick, consistent with guards 3a-3d).
+    expect(readFileSync(drainStatePath(root), 'utf8')).toBe(raw);
+    expect(existsSync(join(root, 'state', summary.run_id))).toBe(false);
+  });
+
+  it('OUTSIDE the margin (reset far in the future) → burst runs', async () => {
+    const root = tmpRoot();
+    // reset is 2h out, margin 15 min → now is well before the margin → run.
+    const reset = new Date(T0 + 120 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('now AT/after the reset → reactive (NOT anti-spill); window restarts via pastWeeklyReset', async () => {
+    const root = tmpRoot();
+    // reset already passed by 1 min. pastWeeklyReset → fresh window → reset cleared
+    // → no anti-spill, burst runs.
+    const reset = new Date(T0 - 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('a configurable margin is honored (60 min margin trips at a 30-min-out reset)', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 30 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    // default 15-min margin would NOT trip at 30 min out, but a 60-min margin does.
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled, { antiSpillMarginMinutes: 60 });
+    expect(summary.reason).toBe('anti-spill');
+  });
+
+  it('no reset estimate (FIRST burst of a fresh window) → reactive, no anti-spill', async () => {
+    const root = tmpRoot();
+    // last_observed_weekly_reset null → the margin guard cannot fire (the genuine
+    // blind spot: a fresh window has no reset estimate yet).
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: null }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('an unparseable reset → reactive, no anti-spill (best-effort, never throws)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: 'not-a-date' }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
   });
 });

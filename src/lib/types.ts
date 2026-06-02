@@ -68,7 +68,11 @@ export type RunReason =
   | 'discovery-failed'
   // A drain "tick" that found the window not yet eligible to run (no-op; no
   // pipeline invoked, no memory run row).
-  | 'not-eligible';
+  | 'not-eligible'
+  // v0.8.2 item 3: a drain tick held off because now() is within the anti-spill
+  // margin before a known weekly reset (no-op; no burst, refuses to spill into
+  // next week's fresh allowance).
+  | 'anti-spill';
 
 export type RunSummary = {
   run_id: string;
@@ -90,6 +94,13 @@ export type RunSummary = {
   // unions these into its skip-set so a re-entry does not redo completed work
   // (candidate ids are random per discovery and cannot match across bursts).
   completed_evidence_hashes?: string[];
+  // v0.8.2 item 1: true iff this burst produced at least one NON-TRIVIAL output
+  // (a dossier with bytes, or a draft whose diff touched ≥1 file with ≥1 changed
+  // line). Used by the drain wrapper's no-progress backstop: a burst that "ran
+  // tasks but they were all empty" is NOT productive and counts toward the
+  // circuit breaker. Optional + inert for the bare `glean run` path (only the
+  // drain wrapper reads it).
+  productive?: boolean;
 };
 
 export type DrainTrigger = {
@@ -97,6 +108,16 @@ export type DrainTrigger = {
   time?: string;           // e.g. '18:00'
   repeat_minutes?: number; // repetition interval within the trigger window
   duration_hours?: number; // how long the trigger window stays active
+  // v0.8.2 item 1: configurable circuit-breaker threshold. The number of
+  // consecutive genuinely-unproductive bursts before runDrain stops the window
+  // with 'no-progress'. Optional — defaults to 3 (the prior hard-coded constant)
+  // when unset, so a config without it is byte-identical to pre-v0.8.2 behavior.
+  max_unproductive?: number;
+  // v0.8.2 item 3: anti-spill pre-emptive margin in MINUTES. When now() is within
+  // this many minutes before a KNOWN weekly reset, runDrain holds off the burst
+  // (returns 'anti-spill') rather than starting work that could spill into next
+  // week's fresh allowance. Optional — defaults to 15 in runDrain when unset.
+  anti_spill_margin_minutes?: number;
 };
 
 export type GleanConfig = {
