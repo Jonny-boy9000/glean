@@ -31,6 +31,10 @@ export const DRAIN_DURATION_MS = 60 * 3600_000;
 // After this many consecutive unproductive re-entries (a burst that ran 0 tasks)
 // we stop the window with 'no-progress' rather than spinning forever.
 export const MAX_UNPRODUCTIVE = 3;
+// v0.8.2 item 3: default anti-spill margin (minutes) before a known weekly reset.
+// Inside this margin runDrain holds off rather than starting work that could run
+// into next week's fresh allowance.
+export const ANTI_SPILL_MARGIN_MINUTES = 15;
 // Fallback session pause when a session-kind rate-limit gives no parseable reset
 // moment: 5h (session window) + 15m slack.
 export const SESSION_FALLBACK_MS = 5 * 3600_000 + 15 * 60_000;
@@ -67,6 +71,8 @@ export async function runDrain(
 ): Promise<RunSummary> {
   // item 1: resolve the configurable circuit-breaker threshold (default 3).
   const maxUnproductive = drainOpts.maxUnproductive ?? MAX_UNPRODUCTIVE;
+  // item 3: resolve the anti-spill margin in minutes (default 15).
+  const antiSpillMarginMinutes = drainOpts.antiSpillMarginMinutes ?? ANTI_SPILL_MARGIN_MINUTES;
   // ── 1. Read persisted drain state ──────────────────────────────────────────
   const read = readDrainState(opts.gleanRoot);
 
@@ -118,6 +124,17 @@ export async function runDrain(
   // Threshold is configurable (item 1); defaults to MAX_UNPRODUCTIVE (3).
   if (state.unproductive_reentries >= maxUnproductive) {
     return synthSummary('no-progress', now, opts);
+  }
+
+  // 3e. Anti-spill (item 3): if a weekly reset is KNOWN and now() is within the
+  // configured margin BEFORE it (reset - margin <= now < reset), hold off this
+  // burst rather than starting work that could spill into next week's fresh
+  // allowance. A no-op tick consistent with guards 3a-3d (no burst, no state
+  // write). Reset source for this lane is last_observed_weekly_reset ONLY; if it
+  // is absent (the first burst of a fresh window — the genuine blind spot) or
+  // unparseable, the guard does not fire and the drain stays reactive.
+  if (withinAntiSpillMargin(state.last_observed_weekly_reset, antiSpillMarginMinutes, now)) {
+    return synthSummary('anti-spill', now, opts);
   }
 
   // ── 4. Eligible → run one burst ────────────────────────────────────────────
@@ -240,6 +257,23 @@ function freshWindow(now: () => number): DrainState {
     consecutive_ambiguous: 0,
     schema: 1,
   };
+}
+
+// item 3: true iff a weekly reset is known/parseable AND now() falls in the
+// half-open window [reset - margin, reset). A reset already at/after now() (now
+// >= reset) is NOT anti-spill — that's handled reactively (the window restarts
+// via pastWeeklyReset). An absent/unparseable reset → false (stay reactive).
+function withinAntiSpillMargin(
+  lastReset: string | null,
+  marginMinutes: number,
+  now: () => number,
+): boolean {
+  if (lastReset === null) return false;
+  const resetMs = Date.parse(lastReset);
+  if (!Number.isFinite(resetMs)) return false;
+  const marginMs = marginMinutes * 60_000;
+  const t = now();
+  return t >= resetMs - marginMs && t < resetMs;
 }
 
 function pastWeeklyReset(state: DrainState, now: () => number): boolean {

@@ -80,6 +80,7 @@ const runCmd = defineCommand({
     const summary = args.drain
       ? await runDrain(pipelineOpts, undefined, undefined, {
           maxUnproductive: cfg.drain_trigger?.max_unproductive,
+          antiSpillMarginMinutes: cfg.drain_trigger?.anti_spill_margin_minutes,
         })
       : await runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);

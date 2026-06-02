@@ -515,3 +515,82 @@ describe('runDrain — circuit breaker (item 1)', () => {
     expect(summary.reason).toBe('no-progress');
   });
 });
+
+// ── item 3: per-burst anti-spill guard 3e ────────────────────────────────────
+
+describe('runDrain — anti-spill guard 3e (item 3)', () => {
+  // A reset 10 min out; default margin 15 → now is INSIDE the margin → hold off.
+  // week_exhausted stays false so guard 3b doesn't pre-empt this case.
+  it('within the default 15-min margin of a known reset → anti-spill, no burst', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 10 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('anti-spill');
+    expect(summary.ran).toBe(0);
+  });
+
+  it('anti-spill writes NO burst row and leaves state unchanged', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 5 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const raw = readFileSync(drainStatePath(root), 'utf8');
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled);
+    expect(summary.reason).toBe('anti-spill');
+    // budget.json untouched (no-op tick, consistent with guards 3a-3d).
+    expect(readFileSync(drainStatePath(root), 'utf8')).toBe(raw);
+    expect(existsSync(join(root, 'state', summary.run_id))).toBe(false);
+  });
+
+  it('OUTSIDE the margin (reset far in the future) → burst runs', async () => {
+    const root = tmpRoot();
+    // reset is 2h out, margin 15 min → now is well before the margin → run.
+    const reset = new Date(T0 + 120 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('now AT/after the reset → reactive (NOT anti-spill); window restarts via pastWeeklyReset', async () => {
+    const root = tmpRoot();
+    // reset already passed by 1 min. pastWeeklyReset → fresh window → reset cleared
+    // → no anti-spill, burst runs.
+    const reset = new Date(T0 - 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('a configurable margin is honored (60 min margin trips at a 30-min-out reset)', async () => {
+    const root = tmpRoot();
+    const reset = new Date(T0 + 30 * 60_000).toISOString();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: reset }));
+    // default 15-min margin would NOT trip at 30 min out, but a 60-min margin does.
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled, { antiSpillMarginMinutes: 60 });
+    expect(summary.reason).toBe('anti-spill');
+  });
+
+  it('no reset estimate (FIRST burst of a fresh window) → reactive, no anti-spill', async () => {
+    const root = tmpRoot();
+    // last_observed_weekly_reset null → the margin guard cannot fire (the genuine
+    // blind spot: a fresh window has no reset estimate yet).
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: null }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+
+  it('an unparseable reset → reactive, no anti-spill (best-effort, never throws)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ week_exhausted: false, last_observed_weekly_reset: 'not-a-date' }));
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn);
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('anti-spill');
+  });
+});

@@ -68,7 +68,11 @@ export type RunReason =
   | 'discovery-failed'
   // A drain "tick" that found the window not yet eligible to run (no-op; no
   // pipeline invoked, no memory run row).
-  | 'not-eligible';
+  | 'not-eligible'
+  // v0.8.2 item 3: a drain tick held off because now() is within the anti-spill
+  // margin before a known weekly reset (no-op; no burst, refuses to spill into
+  // next week's fresh allowance).
+  | 'anti-spill';
 
 export type RunSummary = {
   run_id: string;
@@ -109,6 +113,11 @@ export type DrainTrigger = {
   // with 'no-progress'. Optional — defaults to 3 (the prior hard-coded constant)
   // when unset, so a config without it is byte-identical to pre-v0.8.2 behavior.
   max_unproductive?: number;
+  // v0.8.2 item 3: anti-spill pre-emptive margin in MINUTES. When now() is within
+  // this many minutes before a KNOWN weekly reset, runDrain holds off the burst
+  // (returns 'anti-spill') rather than starting work that could spill into next
+  // week's fresh allowance. Optional — defaults to 15 in runDrain when unset.
+  anti_spill_margin_minutes?: number;
 };
 
 export type GleanConfig = {

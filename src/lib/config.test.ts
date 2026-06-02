@@ -53,4 +53,22 @@ describe('loadConfig', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 'lots' } }));
     expect(() => loadConfig(p)).toThrow(/max_unproductive/);
   });
+
+  // v0.8.2 item 3: anti-spill pre-emptive margin on drain_trigger.
+  it('parses drain_trigger.anti_spill_margin_minutes', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 30 } }));
+    const cfg = loadConfig(p);
+    expect(cfg.drain_trigger?.anti_spill_margin_minutes).toBe(30);
+  });
+
+  it('leaves anti_spill_margin_minutes undefined when absent (default 15 in runDrain)', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { day: 'Friday' } }));
+    const cfg = loadConfig(p);
+    expect(cfg.drain_trigger?.anti_spill_margin_minutes).toBeUndefined();
+  });
+
+  it('rejects a non-numeric anti_spill_margin_minutes', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 'soon' } }));
+    expect(() => loadConfig(p)).toThrow(/anti_spill_margin_minutes/);
+  });
 });
