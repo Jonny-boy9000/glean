@@ -12,15 +12,26 @@
 
 ## Stage 1 — Pre-flight (≈30–45 min, do before any post)
 
-### 1.1 Turn on GitHub Discussions
-1. Go to **https://github.com/Jonny-boy9000/glean/settings**
-2. Scroll to **Features** → check **Discussions**.
-3. Open **https://github.com/Jonny-boy9000/glean/discussions** → **Categories** (pencil/edit) and make sure these exist:
-   - `📣 Show & tell` (Announcement or Open-ended)
-   - `💡 Ideas`
-   - `🙏 Q&A` (Question/Answer format)
-   - `🧪 Drain reports` (Open-ended) ← the important one
-4. Done. The issue-template `config.yml` (already committed) points people here.
+### 1.1 GitHub Discussions — ✅ enabled, two small things left
+Discussions is on. When GitHub enables it, you already get default categories:
+**Announcements, General, 💡 Ideas, 🙏 Q&A, 🙌 Show and tell, 📊 Polls.** So Show & tell /
+Ideas / Q&A are covered. Two finishing touches (no API for either — do them in the UI):
+
+1. **Add the one custom category** that matters for our signal:
+   - https://github.com/Jonny-boy9000/glean/discussions → **Edit categories** (pencil, top-right) → **New category**
+   - Name: `🧪 Drain reports`  · Format: **Open-ended discussion**
+   - Description: *"Ran glean on a real repo? Tell us what it drafted and what you kept vs. discarded — even a partial report helps."*
+2. **Seed a welcome post in 🙌 Show and tell** so the tab isn't empty when the first
+   visitor arrives (empty Discussions reads as "dead project"):
+   - **New discussion** → category **Show and tell** → title `Welcome — show us what glean drafted for you`
+   - Body:
+     ```
+     If you've run glean, drop your Monday-morning receipt here — what it drafted, what you kept, what you tossed. Screenshots welcome. This is the place for "here's what it did for me" (use Issues for bugs, and the 🧪 Drain reports category for full run reports).
+
+     New here? Start with the pinned "Known limitations & where I'd love help" issue so the honest state is clear: it's early and Windows-first. — Jonny
+     ```
+   - After posting, **pin** it (••• menu on the discussion → Pin).
+3. The issue-template `config.yml` (already committed) routes open-ended feedback here, so this is wired end-to-end.
 
 ### 1.2 Issue templates — already created, just commit + push
 These three files are in the repo now:
@@ -83,78 +94,81 @@ Open the repo README on github.com and confirm `docs/assets/glean-morning.png` s
 
 ---
 
-## Stage 2 — Claude Discord soft launch (Day 1, Tue, late morning ET)
+## Stage 2 — Claude Discord `#Built-With-Claude` board (Day 1, Tue, late morning ET)
 
 Lowest-stakes venue. Goal: first round of "wait, does it…" questions to sharpen the Reddit post.
 
+> **This board has explicit rules — the copy below is written to satisfy each one.** Don't strip these elements:
+> - built with Claude/Claude Code → the post says so explicitly (and it's true — glean was)
+> - clear description of *what you built, how Claude helped, what it does* → all three present
+> - free to try → stated (MIT, npm, free)
+> - **minimal promotional language, context not just links** → tone is plain; no hype words
+> - **downloadable executable → security disclaimer + transparent about what data/credentials it accesses** → the "Security & data" paragraph is mandatory here
+> - no affiliate/referral links · no job-seeking · careful with personal info → none present
+
 ### Steps
-1. **Join:** https://discord.com/invite/prcdpx7qMm (the Claude community server, 100k+ members). If that invite is stale, search "Claude Discord" from claude.ai / Anthropic's site for the current link.
-2. **Find the right channel.** Look for a project-showcase / "what are you building" / "i-made-this" channel. **Do not post in general chat.** If unsure, ask in a meta/help channel which channel is right for sharing a tool.
-3. **Read the channel pins/rules** before posting (some servers require a specific format or limit self-promo to a thread).
-4. **Post the message below.** Attach `docs/assets/glean-morning.png` directly to the message (drag-drop) so the receipt shows inline.
-5. **Stay present** for a couple of hours. Answer everything. DM anyone who says "I'll try it" and offer to walk them through `glean schedule enable`.
-6. **Capture every point of confusion** — each one is a README/FAQ edit before Stage 3.
+1. **Join:** https://discord.com/invite/prcdpx7qMm (the Claude community server). If that invite is stale, get the current link from claude.ai / Anthropic.
+2. Go to the **`#Built-With-Claude`** community board. Re-read its pinned requirements once more before posting.
+3. **Post the message below.** Attach `docs/assets/glean-morning.png` directly (drag-drop) so the receipt shows inline — this is "context, not just a link," which is exactly what the board asks for.
+4. **Stay present** for a couple of hours. Answer everything. DM anyone who says "I'll try it" and offer to walk them through setup.
+5. **Capture every point of confusion** — each one is a README/FAQ edit before Stage 3.
 
-### Text to post (GIF deferred → screenshot attached)
+### Text to post (rules-compliant; GIF deferred → screenshot attached)
 ```
-Built a thing for the weekly-limit problem we all have 👇
+glean — spends your leftover weekly Claude capacity on prep work while you're away
 
-Your Pro/Max weekly window resets Saturday and whatever capacity you didn't spend just evaporates. `glean` is a CLI that spends that idle tail for you: it scans your repos + Claude session history for unfinished work and spawns headless `claude -p` sessions to draft code into throwaway git worktree branches (never touches main), write research dossiers, and pre-fetch docs. Point Windows Task Scheduler at it and it drains the weekend's leftover unattended. Monday you run `glean morning` and get a receipt — each draft branch with a verified `tests: pass` and the command to review it.
+What it is: a local CLI for the problem we all have on Pro/Max — the weekly rate-limit window resets Saturday and whatever capacity you didn't spend just evaporates. In that idle tail, glean spawns headless `claude -p` sessions to do speculative prep on your own repos: it drafts code for your top TODO into a throwaway git worktree branch (never touches main), writes research dossiers for unfinished threads it finds in your session history + `git grep TODO/FIXME`, and pre-fetches library docs. Point Windows Task Scheduler at it and it drains the weekend's leftover unattended. Monday you run `glean morning` and get a receipt — each draft branch with a verified `tests: pass` and the command to review it. (Real receipt screenshot below.)
 
-(screenshot of a real `glean morning` receipt attached 👇)
+How Claude helped: glean was built almost entirely with Claude Code — the discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, and its 352 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
 
-Honest status: it's early and Windows-first right now. Single-run + draft-branch path is dogfooded and tested; the unattended multi-day drain is built but hasn't had its first real overnight run in the wild — so I'm partly here to find people who'll try it and tell me what breaks.
+Security & data (it's a downloadable CLI, so here's exactly what it touches): glean runs entirely on your machine. It reads — read-only — your local git repos and your `~/.claude/projects` session history to find unfinished work, and it drives your own already-logged-in `claude` CLI. It never reads, stores, or transmits your credentials, makes no direct API calls, and sends nothing off your machine; all output is written locally under `~/glean`. Every spawned session runs under a deny-list that blocks `git push` / `checkout` / `reset` and `gh pr` mutations, so it can't touch your main branch or publish anything. MIT-licensed and fully inspectable.
 
-Repo: https://github.com/Jonny-boy9000/glean  (npm: @jonny-boy9000/glean)
+Free: yes, MIT, `npm i -g @jonny-boy9000/glean`. Honest status: early and Windows-first; the single-run + draft path is dogfooded, but the unattended multi-day drain hasn't had its first real overnight run in the wild yet — so I'd genuinely value people trying it and telling me what breaks.
 
-Question for the room: if it could pre-draft ONE thing on your repo before Monday, what would you want it to be — the top TODO, a failing test, a PR reply?
+https://github.com/Jonny-boy9000/glean
+
+If it could pre-draft ONE thing on your repo before Monday, what would you want it to be — the top TODO, a failing test, a PR reply?
 ```
 
-**Stage 2 exit check:** posted in showcase · present + replied for ~2h · confusion points written down · README/FAQ tweaks queued.
+**Stage 2 exit check:** posted in `#Built-With-Claude` with the security paragraph + "how Claude helped" intact · screenshot attached · present + replied ~2h · confusion points → README/FAQ tweaks queued.
 
 ---
 
-## Stage 3 — r/ClaudeAI (Day 2, Wed, 8–11am ET / 5–8am PT)
+## Stage 3 — r/ClaudeAI "Built with Claude" Showcase Megathread (Day 2, Wed, 8–11am ET / 5–8am PT)
 
-Apply the Discord learnings first, then post to the densest concentration of the exact audience.
+The sanctioned route on r/ClaudeAI is a **comment in the Showcase Megathread**, not a
+standalone post — respect that first. (A standalone Self-Promotion post is a *possible*
+follow-up later if the comment gets real traction and people ask for more, but lead with
+the megathread; it's where the mods and the right audience expect project shares.)
+
+**Megathread:** https://www.reddit.com/r/ClaudeAI/comments/1sly3jm/built_with_claude_project_showcase_megathread/
 
 ### Steps
-1. **Apply Stage 2 fixes** to the README/FAQ and to the body text below.
-2. Go to **https://www.reddit.com/r/ClaudeAI/**.
-3. **Read the rules** (right sidebar → "Rules" / "About"). Confirm two things:
-   - Whether there's a **weekly self-promotion megathread** this week. If yes, post there first (or in addition).
-   - That a standalone tool post is allowed with the right flair.
-4. **Create the post** → it's a **text/self post** with an image. Paste the title + body below. Attach `docs/assets/glean-morning.png` as the image.
-5. **Set the flair to `Self-Promotion`** (required). The post will likely be auto-removed without it.
-6. **Be present 3–4 hours.** Reply to every comment. Convert any bug into a GitHub issue immediately and link it back in the thread ("filed as #N, thanks").
-7. **Loop your testers:** anyone who says "installing" — follow up next day asking for a drain report (link the template).
+1. **Apply the Stage 2 fixes** to the README/FAQ and to the comment text below.
+2. Open the megathread (link above). **Skim the top-level post + a few existing comments** for any stated format the mods want (I couldn't auto-fetch it — Reddit blocks automated reads — so eyeball it yourself).
+3. **Post the comment below as a top-level reply** to the megathread. Reddit comments render the screenshot only as a link, so add the image link inline (use the GitHub raw URL of the receipt, already in the README): `https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/glean-morning.png`
+4. **No title, no flair** — it's a comment, not a post.
+5. **Be present 3–4 hours.** Reply to every response. Convert any bug into a GitHub issue immediately and link it back ("filed as #N, thanks").
+6. **Loop your testers:** anyone who says "installing" — follow up next day asking for a [drain report](https://github.com/Jonny-boy9000/glean/issues/new?template=drain-report.md).
 
-### Title
+### Comment text (megathread; "Built with Claude" framing, GIF deferred → screenshot linked)
 ```
-I built a CLI that drains my leftover weekly Claude capacity into Monday-morning draft branches (early, Windows-first)
-```
+**glean** — it spends your leftover weekly Claude capacity on prep work while you're away.
 
-### Body (GIF deferred → image attached to the post)
-```
-Like most of you, my Pro/Max weekly window resets Saturday and by Thursday I've spent the high-value work — leaving capacity that doesn't roll over. That bugged me enough to build `glean`.
+Built with: Claude Code, top to bottom — discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, 352 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
 
-In that idle tail it spawns its own headless `claude -p` sessions to do speculative prep on my own repos:
-- drafts code for my top TODO into an isolated `git worktree` on a `prep/glean-*` branch (main is never checked out, pushed, or merged)
-- writes research dossiers for unfinished threads it finds in my session history + `git grep TODO/FIXME`
-- pre-fetches library docs as cheap filler
+What it does: on Pro/Max your weekly rate-limit window resets Saturday and the capacity you didn't spend just evaporates. In that idle tail, glean does speculative prep on your own repos — drafts code for your top TODO into a throwaway `git worktree` branch (never touches main), writes research dossiers for unfinished threads it finds in your `~/.claude` session history + `git grep TODO/FIXME`, and pre-fetches docs. Point Windows Task Scheduler at it and it drains the weekend's leftover unattended, pausing at each 5-hour limit and stopping the moment the weekly cap fires so it never spills into next week. Monday: `glean morning` prints a receipt — each draft branch with a verified `tests: pass` and the command to review it.
 
-Point Windows Task Scheduler at it (`glean schedule enable`) and it drains the whole weekend's leftover unattended — it pauses at each 5-hour limit, resumes when the window reopens, and stops the moment the weekly cap fires so it never spills into the new week. Monday I run `glean morning` and get a receipt of everything it did, each draft branch with a verified `tests: pass`. (Screenshot of a real receipt below.)
+Real receipt: https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/glean-morning.png
 
-On "is this allowed": it drives my own logged-in `claude` CLI — the same `claude -p` calls I could type by hand. No API key, no proxying. Every spawned session runs under a deny-list blocking `git push`/`checkout`/`reset`/`gh pr` mutations.
+Safe by design: it drives your own logged-in `claude` CLI (no API key, no proxying, nothing leaves your machine), reads your repos + session history read-only, and every spawned session runs under a deny-list blocking `git push`/`checkout`/`reset`/`gh pr` so it can't touch main or publish anything. MIT, free: `npm i -g @jonny-boy9000/glean`.
 
-Honest caveats: it's early and Windows-first (macOS/Linux is the top tracked issue). The single-run + draft path is dogfooded and tested (352 tests). The unattended multi-day drain is built but hasn't had its first real overnight validation run yet — so genuinely looking for people to try it and report back.
+Honest status: early and Windows-first (macOS/Linux is the top tracked issue). Single-run + draft path is dogfooded; the unattended multi-day drain is built but hasn't had its first real overnight run in the wild yet — so I'd love for someone to try it and tell me what breaks.
 
-Repo + install: https://github.com/Jonny-boy9000/glean  (`npm i -g @jonny-boy9000/glean`)
-
-What would you want it to draft first on your own projects? And does anyone else actually feel the Friday-capacity waste, or is it just me?
+Repo: https://github.com/Jonny-boy9000/glean — what would you want it to draft first on your own projects?
 ```
 
-**Stage 3 exit check:** Self-Promotion flair set · image attached · present + replied 3–4h · bugs → issues + linked in-thread · testers followed up with the drain-report link.
+**Stage 3 exit check:** posted as a megathread comment (no standalone post) · receipt image linked via raw URL · present + replied 3–4h · bugs → issues + linked in-thread · testers followed up with the drain-report link.
 
 ---
 

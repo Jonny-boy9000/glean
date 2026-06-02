@@ -55,15 +55,15 @@ Ranked by **density of the exact audience × ease of getting real install + feed
 | 7 | **Lobste.rs** | Sharp technical audience, but invite-only and strict on self-promo. Only if you have an account. | Low | Tue–Thu morning ET |
 
 ### 2.1 r/ClaudeAI — soft launch #1
-- **Norms / rules:** Subreddit is explicitly for Claude + Claude Code discussion and has a dedicated **"Self-Promotion" post category/flair** — use it; do not post a tool without it. General Reddit rule of thumb the mods enforce: be transparent you're the author, and the post must give value beyond "go install my thing." Check the sidebar/pinned rules before posting (Reddit blocks automated rule fetch; verify manually) — some weeks have a dedicated self-promo megathread; if so, post there first.
+- **Norms / rules (confirmed):** The sanctioned route is a **comment in the standing "Built with Claude" Project Showcase Megathread** (https://www.reddit.com/r/ClaudeAI/comments/1sly3jm/built_with_claude_project_showcase_megathread/), **not** a standalone post. Lead there. A standalone Self-Promotion-flaired post is only a possible later follow-up if the comment earns traction. Be transparent you're the author; give context, not just a link. Exact comment copy is in the [runbook](./RUNBOOK-stages-1-3.md) §Stage 3.
 - **Format that works here:** A "I built this to scratch my own itch" story post, the GIF, an honest caveats line, and a genuine question to the room ("does anyone else feel the Friday waste? what would you want it to draft first?"). Ask for feedback, not stars.
 - **Best time:** Tue–Thu, 8–11am ET. Be present in the thread for the first 3–4 hours to answer every comment.
 
-### 2.2 Claude Discord — soft launch #0 (do this first)
-- **Where:** The official Claude community Discord (100k+ members). Post in the project-showcase / "what are you building" channel, not general chat. Read the channel's pinned rules first.
-- **Why first:** Lowest stakes, fastest iteration. Feedback here sharpens the Reddit post, which sharpens the Show HN. Treat it as a focus group.
-- **Format:** Short message + GIF + repo link + one question. Respond fast, DM willing testers, offer to walk them through setup.
-- **Best time:** Tue–Thu midday ET when the channel is liveliest.
+### 2.2 Claude Discord `#Built-With-Claude` — soft launch #0 (do this first)
+- **Where:** The official Claude community Discord (100k+ members), the **`#Built-With-Claude`** community board. Read its pinned requirements first.
+- **Board rules that shape the copy (confirmed):** must be built with Claude/Claude Code; describe *what you built, how Claude helped, what it does*; free to try; **minimal promotional language** (context, not just links); **for a downloadable executable, include a security disclaimer + be transparent about what data/credentials it accesses**; no affiliate/referral links; no job posts. glean fits cleanly — and the security/data transparency requirement plays directly to its honesty angle. Exact rules-compliant copy is in the [runbook](./RUNBOOK-stages-1-3.md) §Stage 2.
+- **Why first:** Lowest stakes, fastest iteration. Feedback here sharpens the Reddit comment, which sharpens the Show HN. Treat it as a focus group.
+- **Best time:** Tue–Thu midday ET when the board is liveliest.
 
 ### 2.3 Hacker News — Show HN (the main event)
 - **Rules (from the official Show HN guidelines):**
