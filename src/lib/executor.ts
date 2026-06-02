@@ -11,6 +11,12 @@ import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 import { classifyRateLimit, type RateLimitClassification } from './classify.js';
 
+// ASSUMPTION[ADR-0001] — UNVERIFIED. This regex is glean's primary detector for a
+// real `claude -p` rate-limit BLOCK, matched against the spawn's stderr. We have
+// never observed an actual block, so these words are a guess (the only signal we
+// have). Keep this load-bearing + unchanged until a real block is captured; see
+// docs/decisions/0001-rate-limit-signal-source.md. (The verified stream-json
+// rate_limit_event is a WARNING, not a block — do not swap this for it.)
 const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
 
 // Classify the rate-limit signal (session vs weekly vs ambiguous) from the

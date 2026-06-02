@@ -147,6 +147,7 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 | `docs/ROADMAP.md` | Planned-work source of truth. |
 | `docs/PROJECT-MAP.md` | This index. |
 | `docs/handoff/v0.8.2-handoff.md` | Cold-start handoff for the v0.8.2 bucket. |
+| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = the rate-limit signal source. See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |
@@ -231,6 +232,7 @@ whenever the structure changes (not behavior — that's the changelog's job):
 1. **A file/dir is added, moved, deleted, or changes responsibility** → update the relevant table.
 2. **A new tree/location appears** (new external store, new runtime dir) → update [§0](#0-the-three-trees-read-this-first).
 3. **A strategic-review item (R#) is resolved** → flip its Status and add a one-line note.
+3b. **A load-bearing or unverified decision is made/reversed** → add or supersede an ADR in `docs/decisions/` and tag the code site `ASSUMPTION[ADR-NNNN]` (see `docs/decisions/README.md`).
 4. **On every release** → bump the "Last updated" line + reconcile LOC/test-count drift if material.
 5. Commit map-only changes with `docs(map): <what changed>` (outside the brainstorm→spec→plan cycle, like ROADMAP).
 

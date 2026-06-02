@@ -17,6 +17,21 @@ function nowPlus(ms: number): string {
 const H = 3600_000; // 1 hour in ms
 const M = 60_000;   // 1 minute in ms
 
+// ── ADR-0001 tripwire ────────────────────────────────────────────────────────
+// This skipped test is an intentional, visible reminder that the load-bearing
+// assumption behind this whole module is UNVERIFIED: we have never captured what a
+// real `claude -p` rate-limit BLOCK looks like (all observed rate_limit_events are
+// warnings). See docs/decisions/0001-rate-limit-signal-source.md. When a real block
+// is captured (auto-captured by the executor tripwire, or via a live --drain run),
+// drop the fixture in, un-skip this, assert classify handles the verified shape, and
+// supersede ADR-0001. Until then it shows up as `1 skipped` on every run by design.
+describe('ADR-0001: real-block signal (UNVERIFIED)', () => {
+  it.skip('classifies a captured real claude -p rate-limit BLOCK (no fixture yet — ADR-0001 open)', () => {
+    // Intentionally empty: there is no real-block fixture to assert against yet.
+    // The presence of this skipped test is the tripwire.
+  });
+});
+
 // ── No rate-limit text ───────────────────────────────────────────────────────
 
 describe('no rate-limit indication', () => {

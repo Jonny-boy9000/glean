@@ -22,6 +22,22 @@ A local CLI (`glean`) that consumes idle Claude Pro/Max subscription capacity at
 
 It is **not** an API-token reseller or marketplace — that alternative was explicitly dropped (see `glean.md` §2) because Anthropic's terms prohibit reselling/proxying Claude access.
 
+## Decision records & assumptions
+
+Load-bearing decisions — and especially **unverified assumptions** — are recorded as tiny ADRs in
+[`docs/decisions/`](./docs/decisions/) and tagged at the code site (`ASSUMPTION[ADR-NNNN]` /
+`INVARIANT[ADR-NNNN]`). This exists because rationale stated as *fact* (in a comment or memory)
+once led a later session to "correct" a subsystem wrongly — the fix is to mark **verified vs.
+assumed, loudly, where the code is**. Rules:
+
+- Touching a subsystem with an `ASSUMPTION[ADR-NNNN]` tag? **Read that ADR first.** It tells you
+  what's a guess and what would change it.
+- Making a load-bearing or unverified decision, or reversing one? **Add/supersede an ADR** (never
+  edit an old one; supersede it) and tag the code site. See `docs/decisions/README.md`.
+- **A finding that overturns a prior decision is a hypothesis to disprove, not a conclusion** —
+  verify the negative case before asserting (evidence before assertions). The rate-limit signal
+  (ADR-0001) is the worked example: a "real signal found!" claim was a warning, not the block.
+
 ## Load-bearing constraints (do not violate)
 
 - **Subscription auth, no API key.** Capacity is consumed by spawning `claude -p "<prompt>"` subprocesses. Never introduce direct Anthropic API calls or `ANTHROPIC_API_KEY` usage — the whole tool assumes Pro/Max session auth.

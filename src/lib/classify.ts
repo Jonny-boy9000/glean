@@ -1,9 +1,17 @@
 // classify.ts — pure rate-limit signal classifier.
 //
-// NOTE: real `claude -p` stderr formats are TBD (captured by "Spike B").
+// ASSUMPTION[ADR-0001] — UNVERIFIED. This classifier reads the text of a rate-limit
+// signal to derive session-vs-weekly + a reset moment. The exact wording of a REAL
+// `claude -p` hard BLOCK has NEVER been captured: every rate_limit_event we have
+// observed is status=allowed/allowed_warning from runs that COMPLETED (see
+// docs/decisions/0001-rate-limit-signal-source.md + docs/open-work/06-...). So the
+// strings below are a GUESS, not verified. Do NOT treat this module as authoritative
+// for the block until ADR-0001 is closed by a real capture. resetsAt/utilization from
+// the stream-json rate_limit_event ARE verified, but that is a WARNING, not the block.
+//
 // This module is intentionally defensive and easy to extend:
 //
-//   FORMAT TABLE (update here as Spike B lands real samples)
+//   FORMAT TABLE (update here when ADR-0001 lands a real block sample)
 //   ──────────────────────────────────────────────────────────────────────────
 //   Shape        Example                                    Parser used
 //   ──────────────────────────────────────────────────────────────────────────
