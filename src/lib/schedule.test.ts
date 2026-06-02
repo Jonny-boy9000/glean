@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRegisterScript,
+  buildStatusScript,
+  buildUnregisterCommand,
   defaultTriggerDay,
   DEFAULT_TIME,
   DEFAULT_REPEAT_MINUTES,
@@ -251,5 +253,38 @@ describe('buildRegisterScript — live PowerShell validity', () => {
       encoding: 'utf8', windowsHide: true,
     });
     expect(out).toContain('BUILT');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression (found live on Windows 2026-06-02): the read/delete cmdlets must
+// query the task by the split -TaskPath '\Glean\' -TaskName 'Drain' form. The
+// combined 'Glean\Drain' (what Register accepts) does NOT match in
+// Get-ScheduledTask / Unregister-ScheduledTask, so `glean schedule status`
+// reported a registered task as "not registered". Pin the correct query shape.
+// ---------------------------------------------------------------------------
+
+describe('buildStatusScript — queries the task by split path + leaf', () => {
+  const script = buildStatusScript();
+
+  it('uses -TaskPath \\Glean\\ + -TaskName Drain for Get-ScheduledTask', () => {
+    expect(script).toContain("Get-ScheduledTask -TaskPath '\\Glean\\' -TaskName 'Drain'");
+  });
+
+  it('uses the split form for Get-ScheduledTaskInfo too', () => {
+    expect(script).toContain("Get-ScheduledTaskInfo -TaskPath '\\Glean\\' -TaskName 'Drain'");
+  });
+
+  it('does NOT use the combined Glean\\Drain form that fails to match', () => {
+    expect(script).not.toContain("-TaskName 'Glean\\Drain'");
+  });
+});
+
+describe('buildUnregisterCommand — deletes by split path + leaf', () => {
+  it('uses -TaskPath \\Glean\\ + -TaskName Drain, not the combined form', () => {
+    const cmd = buildUnregisterCommand();
+    expect(cmd).toContain("Unregister-ScheduledTask -TaskPath '\\Glean\\' -TaskName 'Drain'");
+    expect(cmd).not.toContain("-TaskName 'Glean\\Drain'");
+    expect(cmd).toContain('-Confirm:$false');
   });
 });

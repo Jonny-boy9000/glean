@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.3 — 2026-06-02
+
+### Fixed
+- **`glean schedule status` (and `disable`) misreported a registered task as "not registered."** Found live on Windows: `Register-ScheduledTask` accepts the combined `Glean\Drain` name and creates the `\Glean` folder, but `Get-ScheduledTask` / `Get-ScheduledTaskInfo` / `Unregister-ScheduledTask` don't match that combined form — they need the path and leaf split (`-TaskPath '\Glean\' -TaskName 'Drain'`). `status` now correctly reports the task's state + next-run, and `disable` correctly removes it. The status/unregister PowerShell is now built by pure, unit-tested `buildStatusScript()` / `buildUnregisterCommand()` helpers with a regression test pinning the query shape. (The scheduled drain itself was always registered correctly — only the status/disable readback was wrong.)
+
 ## v0.8.2 — 2026-06-02
 
 Drain robustness: the unattended weekend drain is now tunable, keeps finding fresh work across a multi-day window without redoing old work, refuses to spill into next week's allowance, and reports the same picture from every surface. Plus the rate-limit classifier is now honest about what it actually knows.

@@ -14,6 +14,14 @@
 import { execFileSync } from 'node:child_process';
 
 export const TASK_NAME = 'Glean\\Drain';
+// Register-ScheduledTask accepts the combined "folder\name" form in -TaskName and
+// auto-creates the \Glean folder. But the READ/DELETE cmdlets (Get-ScheduledTask,
+// Get-ScheduledTaskInfo, Unregister-ScheduledTask) do NOT match the combined form —
+// they need the folder and leaf split into -TaskPath + -TaskName. Querying with the
+// combined 'Glean\Drain' returns nothing, so `glean schedule status` misreported a
+// registered task as "not registered" (found live on Windows, 2026-06-02).
+export const TASK_PATH = '\\Glean\\';
+export const TASK_LEAF = 'Drain';
 
 // Defaults mirrored in the spec.
 export const DEFAULT_TIME           = '18:00';
@@ -154,9 +162,16 @@ export function enableSchedule(opts: EnableScheduleOpts): void {
  * Unregisters the Glean\Drain scheduled task.
  * A no-op (exit 0) if the task does not exist.
  */
+// Pure (testable) — the PowerShell to unregister the task. Uses the split
+// -TaskPath/-TaskName form because Unregister-ScheduledTask does not match the
+// combined 'Glean\Drain' that Register accepts.
+export function buildUnregisterCommand(): string {
+  return `Unregister-ScheduledTask -TaskPath '${TASK_PATH}' -TaskName '${TASK_LEAF}' -Confirm:$false -ErrorAction SilentlyContinue`;
+}
+
 export function disableSchedule(): void {
   assertWindows();
-  const cmd = `Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue`;
+  const cmd = buildUnregisterCommand();
   execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', cmd], {
     stdio: ['ignore', 'inherit', 'inherit'],
     windowsHide: true,
@@ -172,19 +187,26 @@ export type ScheduleStatusResult =
  * Returns the current status of the Glean\Drain task.
  * Returns { found: false } when the task does not exist.
  */
-export function scheduleStatus(): ScheduleStatusResult {
-  assertWindows();
-
-  const cmd = `
+// Pure (testable) — the PowerShell that reads task status. Uses the split
+// -TaskPath/-TaskName form: Get-ScheduledTask / Get-ScheduledTaskInfo do not match
+// the combined 'Glean\Drain' that Register accepts (the status-misreport bug).
+export function buildStatusScript(): string {
+  return `
 $ErrorActionPreference = 'SilentlyContinue'
-$t = Get-ScheduledTask -TaskName '${TASK_NAME}' 2>$null
+$t = Get-ScheduledTask -TaskPath '${TASK_PATH}' -TaskName '${TASK_LEAF}' 2>$null
 if (-not $t) { Write-Output 'NOT_FOUND'; exit 0 }
-$info = Get-ScheduledTaskInfo -TaskName '${TASK_NAME}' 2>$null
+$info = Get-ScheduledTaskInfo -TaskPath '${TASK_PATH}' -TaskName '${TASK_LEAF}' 2>$null
 $state = $t.State
 $lastRun = if ($info.LastRunTime) { $info.LastRunTime.ToString('o') } else { 'never' }
 $nextRun = if ($info.NextRunTime) { $info.NextRunTime.ToString('o') } else { 'unknown' }
 Write-Output "FOUND|$state|$lastRun|$nextRun"
 `.trim();
+}
+
+export function scheduleStatus(): ScheduleStatusResult {
+  assertWindows();
+
+  const cmd = buildStatusScript();
 
   let raw: string;
   try {
