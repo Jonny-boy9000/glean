@@ -39,11 +39,34 @@ export const SESSION_FALLBACK_MS = 5 * 3600_000 + 15 * 60_000;
 // state-transition logic can be unit-tested without spawning a real pipeline.
 export type RunBurst = (opts: PipelineOpts) => Promise<RunSummary>;
 
+// v0.8.2: tunables resolved from config.json's drain_trigger and threaded into
+// the state machine. Every field is optional and defaults to the prior hard-coded
+// constant, so an absent/empty DrainOpts is byte-identical to pre-v0.8.2 behavior.
+export type DrainOpts = {
+  // item 1: circuit-breaker threshold (was the hard-coded MAX_UNPRODUCTIVE = 3).
+  maxUnproductive?: number;
+  // item 3: anti-spill pre-emptive margin, in minutes, before a known weekly
+  // reset (default 15). A burst is held off inside this margin.
+  antiSpillMarginMinutes?: number;
+};
+
+// Reasons that NEVER count toward the no-progress backstop (item 1): a transient
+// no-op (discovery hiccup / another burst held the lock / window not yet eligible)
+// is not the window genuinely "trying and producing nothing".
+const TRANSIENT_REASONS: ReadonlySet<RunSummary['reason']> = new Set([
+  'discovery-failed',
+  'lock-busy',
+  'not-eligible',
+]);
+
 export async function runDrain(
   opts: PipelineOpts,
   now: () => number = () => Date.now(),
   runBurst: RunBurst = runPipeline,
+  drainOpts: DrainOpts = {},
 ): Promise<RunSummary> {
+  // item 1: resolve the configurable circuit-breaker threshold (default 3).
+  const maxUnproductive = drainOpts.maxUnproductive ?? MAX_UNPRODUCTIVE;
   // ── 1. Read persisted drain state ──────────────────────────────────────────
   const read = readDrainState(opts.gleanRoot);
 
@@ -92,7 +115,8 @@ export async function runDrain(
   }
 
   // 3d. Too many unproductive re-entries in a row → give up on this window.
-  if (state.unproductive_reentries >= MAX_UNPRODUCTIVE) {
+  // Threshold is configurable (item 1); defaults to MAX_UNPRODUCTIVE (3).
+  if (state.unproductive_reentries >= maxUnproductive) {
     return synthSummary('no-progress', now, opts);
   }
 
@@ -119,14 +143,29 @@ export async function runDrain(
     ]),
   };
 
-  // Productivity bookkeeping for guard 3d (the no-progress backstop). A burst is
-  // "unproductive" ONLY if it ran 0 tasks AND got no rate-limit signal — i.e. it
-  // woke up with nothing to do or everything failed. A session/weekly/ambiguous
-  // rate-limit is a legitimate "come back later" WAIT across the window, not a
-  // stall: counting it would self-terminate a normal multi-session weekend drain
-  // after 3 pauses, abandoning most of the week's capacity.
-  next.unproductive_reentries =
-    summary.ran > 0 || summary.classification != null ? 0 : state.unproductive_reentries + 1;
+  // Productivity bookkeeping for guard 3d (the no-progress backstop, item 1).
+  // The richer rule: a burst counts as unproductive ONLY when it genuinely TRIED
+  // and produced nothing — i.e. it reported productive !== true (no non-trivial
+  // output; "ran but everything was empty" now counts, not just ran===0) AND it
+  // got no rate-limit classification AND its reason is not transient.
+  //   - productive===true                → real progress → RESET to 0.
+  //   - classification present           → a legit "come back later" WAIT (a
+  //     session/weekly/ambiguous pause) → RESET to 0; counting these would
+  //     self-terminate a normal weekend drain after a few pauses (the v0.8.0 bug).
+  //   - transient reason (discovery hiccup, etc.) → HOLD the counter unchanged
+  //     (neither a stall nor progress).
+  //   - otherwise (tried, empty, no signal) → INCREMENT.
+  const isTransient = TRANSIENT_REASONS.has(summary.reason);
+  const isUnproductive =
+    summary.productive !== true && summary.classification == null && !isTransient;
+  if (summary.productive === true || summary.classification != null) {
+    next.unproductive_reentries = 0;
+  } else if (isUnproductive) {
+    next.unproductive_reentries = state.unproductive_reentries + 1;
+  } else {
+    // transient → hold
+    next.unproductive_reentries = state.unproductive_reentries;
+  }
 
   const cls = summary.classification;
 

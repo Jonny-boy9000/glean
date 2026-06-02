@@ -35,4 +35,22 @@ describe('loadConfig', () => {
     const p = tmpFile(JSON.stringify({ claude_bin: 123 }));
     expect(() => loadConfig(p)).toThrow(/claude_bin/);
   });
+
+  // v0.8.2 item 1: configurable circuit-breaker threshold on drain_trigger.
+  it('parses drain_trigger.max_unproductive', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 5 } }));
+    const cfg = loadConfig(p);
+    expect(cfg.drain_trigger?.max_unproductive).toBe(5);
+  });
+
+  it('leaves max_unproductive undefined when absent (inert default)', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { day: 'Friday' } }));
+    const cfg = loadConfig(p);
+    expect(cfg.drain_trigger?.max_unproductive).toBeUndefined();
+  });
+
+  it('rejects a non-numeric max_unproductive', () => {
+    const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 'lots' } }));
+    expect(() => loadConfig(p)).toThrow(/max_unproductive/);
+  });
 });
