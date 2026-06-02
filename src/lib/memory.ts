@@ -412,6 +412,71 @@ export class Memory {
     return { run, candidates };
   }
 
+  // T6: fetch ALL runs with started_at >= sinceMs, ordered oldest-first, each
+  // with its candidate rows. Used by morning.ts to aggregate a drain window into
+  // one receipt. Returns an empty array when no runs fall in the window.
+  getRunsWithCandidatesSince(sinceMs: number): Array<{
+    run: {
+      run_id: string;
+      started_at: number;
+      ended_at: number | null;
+      project_path: string;
+      exit_reason: string | null;
+    };
+    candidates: Array<{
+      candidate_slug: string;
+      candidate_type: CandidateType;
+      title: string;
+      outcome: string | null;
+      dossier_path: string | null;
+      stderr_rate_limit_hits: number;
+      draft_files: number | null;
+      draft_insertions: number | null;
+      draft_deletions: number | null;
+      prep_branch: string | null;
+      draft_tests: string | null;
+    }>;
+  }> {
+    const runs = this.db.prepare(
+      `SELECT run_id, started_at, ended_at, project_path, exit_reason
+         FROM runs
+        WHERE started_at >= ?
+        ORDER BY started_at ASC, rowid ASC`,
+    ).all(sinceMs) as Array<{
+      run_id: string;
+      started_at: number;
+      ended_at: number | null;
+      project_path: string;
+      exit_reason: string | null;
+    }>;
+
+    const candidateStmt = this.db.prepare(
+      `SELECT candidate_slug, candidate_type, title, outcome, dossier_path,
+              stderr_rate_limit_hits, draft_files, draft_insertions,
+              draft_deletions, prep_branch, draft_tests
+         FROM candidates
+        WHERE run_id = ?
+        ORDER BY priority_rank ASC, id ASC`,
+    );
+
+    return runs.map((run) => ({
+      run,
+      candidates: candidateStmt.all(run.run_id) as Array<{
+        candidate_slug: string;
+        candidate_type: CandidateType;
+        title: string;
+        outcome: string | null;
+        dossier_path: string | null;
+        stderr_rate_limit_hits: number;
+        draft_files: number | null;
+        draft_insertions: number | null;
+        draft_deletions: number | null;
+        prep_branch: string | null;
+        draft_tests: string | null;
+      }>,
+    }));
+  }
+
   private projectPathFor(runId: string): string {
     const row = this.db.prepare('SELECT project_path FROM runs WHERE run_id = ?').get(runId) as
       { project_path: string } | undefined;

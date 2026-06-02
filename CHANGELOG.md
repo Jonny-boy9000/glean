@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.0 — 2026-06-02
+
+The drain core (first slice). `glean` can now consume a whole weekend's leftover Claude capacity unattended, instead of stopping on the first rate-limit. It works by **exit-and-re-enter**: each run is a bounded burst that, on a 5-hour session limit, saves its place and exits; a Windows Task Scheduler trigger re-launches it after the window reopens, across the several 5-hour windows between Thursday evening and the weekly reset. The Monday `glean morning` receipt aggregates the whole weekend. (Robustness polish — circuit-breaker tuning, mid-weekend re-discovery, anti-spill margin, `today`/`peek` window views — is deferred to v0.8.1.)
+
+### Added
+- **`glean run --drain`.** Wraps a normal run in the drain window state machine: a lock-free eligibility guard (a no-op tick exits before any side effect), a classified rate-limit fold, a stable-`evidence_hash` resume cursor so a re-entry never redoes completed work, and a no-progress backstop. The bare `glean run` path is unchanged.
+- **`glean schedule enable|disable|status`.** Registers one Windows Scheduled Task (`Glean\Drain`) via PowerShell `Register-ScheduledTask`: weekly Thursday-evening trigger repeating across the drain weekend, battery-safe (`AllowStartIfOnBatteries` + `DontStopIfGoingOnBatteries`), `StartWhenAvailable`, `MultipleInstances IgnoreNew`, "run only when logged on". The scheduled action invokes `node bin/glean.js` directly (not the `.cmd` shim). Off by default. Configurable via `drain_trigger` in `config.json`.
+- **Rate-limit signal classifier.** Reads the reset horizon from `claude -p` stderr and classifies session (<6h, pause and resume) vs weekly (>=6h, stop and report "drained weekly capacity") vs ambiguous (fail-safe). Horizon-first, so it degrades gracefully on an unrecognized format.
+- **`glean morning` window aggregation.** The receipt now stitches every burst in the drain window into one summary (branches + dossiers across the weekend) and reports honest coverage ("woke for N bursts"). Only a real weekly-limit signal may claim "drained weekly capacity".
+
+### Changed
+- Drain state persists in a single atomic `state/budget.json` (`next_eligible_at`, `week_exhausted`, resume cursor). `glean stop` is timestamp-scoped, so it halts the current weekend without permanently disabling future ones. `acquireLock` now reclaims a lock older than 20 minutes. All drain timestamps are UTC.
+
+### Verified
+- Both make-or-break gates cleared empirically before building: no headless `claude usage` query exists (so the stderr classifier is required), and `claude -p` authenticates under a Task Scheduler context (so the re-launch model works). Integration test `v21` drives the real CLI through a session pause -> no-op tick -> resume loop and a weekly stop. Load-bearing constraints unchanged: subscription-auth only, read-only against `main`, deny-list on every spawn.
+
 ## v0.7.1 — 2026-06-01
 
 `glean morning` — a "while you slept" receipt that narrates the most recent run (draft branches with diff stats and a verified test status, dossiers, and an honest outcome line). Second of the two v0.7 PRs.

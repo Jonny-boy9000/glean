@@ -202,6 +202,67 @@ describe('renderMorning — honest outcome line per exit_reason', () => {
   });
 });
 
+describe('renderMorning — v0.8 drain exit reasons (T6)', () => {
+  const drainCases: Array<[string, RegExp]> = [
+    ['session-paused',   /paused at the session limit/i],
+    ['no-progress',      /no new work produced/i],
+    ['ambiguous-signal', /unrecognized rate-limit signal/i],
+    ['discovery-failed', /discovery failed/i],
+    ['weekly-drained',   /drained weekly capacity/i],
+  ];
+
+  for (const [reason, re] of drainCases) {
+    it(`maps exit_reason '${reason}' to the correct phrase`, () => {
+      const out = renderMorning(baseReport({ exit_reason: reason }), false);
+      expect(out).toMatch(re);
+    });
+  }
+
+  it("ONLY 'weekly-drained' claims the week was drained", () => {
+    const weeklyDrainedOut = renderMorning(baseReport({ exit_reason: 'weekly-drained' }), false).toLowerCase();
+    expect(weeklyDrainedOut).toContain('drained');
+
+    // Every other v0.8 reason must NOT claim the week was drained.
+    const nonDrainReasons = ['session-paused', 'no-progress', 'ambiguous-signal', 'discovery-failed'];
+    for (const reason of nonDrainReasons) {
+      const out = renderMorning(baseReport({ exit_reason: reason }), false).toLowerCase();
+      expect(out, `exit_reason '${reason}' must not claim week was drained`).not.toContain('drained');
+      expect(out, `exit_reason '${reason}' must not claim weekly`).not.toContain('weekly');
+    }
+  });
+
+  it("'session-paused' does NOT say 'drained', 'weekly', or 'whole week'", () => {
+    const out = renderMorning(baseReport({ exit_reason: 'session-paused' }), false).toLowerCase();
+    expect(out).not.toContain('drained');
+    expect(out).not.toContain('weekly');
+    expect(out).not.toContain('whole week');
+    expect(out).toContain('paused');
+  });
+});
+
+describe('renderMorning — bursts coverage line (T6)', () => {
+  it('emits no coverage line when bursts is absent (single-run fallback — byte-identical)', () => {
+    const out = renderMorning(baseReport(), false);
+    expect(out).not.toContain('Coverage:');
+    expect(out).not.toContain('burst');
+  });
+
+  it('emits "woke for N burst(s) this window" when bursts >= 1', () => {
+    const out1 = renderMorning(baseReport({ bursts: 1 }), false);
+    expect(out1).toContain('Coverage: woke for 1 burst this window.');
+
+    const out3 = renderMorning(baseReport({ bursts: 3 }), false);
+    expect(out3).toContain('Coverage: woke for 3 bursts this window.');
+  });
+
+  it('emits "0 bursts — nothing ran this window" when bursts=0', () => {
+    const out = renderMorning(baseReport({ bursts: 0 }), false);
+    expect(out).toContain('Coverage: 0 bursts — nothing ran this window.');
+    // Must not imply success
+    expect(out).not.toContain('woke for');
+  });
+});
+
 describe('renderMorning — color vs plain', () => {
   it('emits ANSI codes when useColor=true and none when false', () => {
     const report = baseReport({

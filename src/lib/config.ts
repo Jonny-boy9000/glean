@@ -8,6 +8,12 @@ const Schema = z.object({
     base_branch: z.string().optional(),
     test_command: z.string().optional(),
   })).optional(),
+  drain_trigger: z.object({
+    day: z.string().optional(),
+    time: z.string().optional(),
+    repeat_minutes: z.number().optional(),
+    duration_hours: z.number().optional(),
+  }).optional(),
 });
 
 export function loadConfig(path: string): GleanConfig {

@@ -1,0 +1,3 @@
+stderr_lines:
+  - 'error: usage limit reached (5-hour limit). Try again in 4 hours.'
+exit_code: 1

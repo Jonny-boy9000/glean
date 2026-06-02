@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { runPipeline } from './lib/pipeline.js';
+import { runDrain } from './lib/runDrain.js';
 import { findTodayDossiers } from './lib/today.js';
 import { renderToday } from './lib/render-today.js';
 import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
@@ -12,6 +13,15 @@ import { renderRateList } from './lib/rate.js';
 import { findPeekDossier } from './lib/peek.js';
 import { findMorningRun } from './lib/morning.js';
 import { renderMorning } from './lib/render-morning.js';
+import {
+  enableSchedule,
+  disableSchedule,
+  scheduleStatus,
+  DEFAULT_DAY,
+  DEFAULT_TIME,
+  DEFAULT_REPEAT_MINUTES,
+  DEFAULT_DURATION_HOURS,
+} from './lib/schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -23,6 +33,7 @@ const runCmd = defineCommand({
     budget: { type: 'string', default: '60m', description: 'Wall-clock budget, e.g. 60m, 1h, 30m' },
     'task-timeout': { type: 'string', default: '8m', description: 'Per-task timeout (e.g. 8m, 30s, 2m)' },
     'dry-run': { type: 'boolean', default: false, description: 'Stop after candidates.json is written' },
+    drain: { type: 'boolean', default: false, description: 'Run as a drain tick (exit-and-re-enter window) instead of a single burst' },
   },
   async run({ args }) {
     const projectPath = resolve(args.project as string);
@@ -49,7 +60,7 @@ const runCmd = defineCommand({
     const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
-    const summary = await runPipeline({
+    const pipelineOpts = {
       projectPath,
       gleanRoot: gleanRoot(),
       claudeBin,
@@ -62,7 +73,12 @@ const runCmd = defineCommand({
       baseBranchFor,
       testCommandAllow,
       testCommandFor,
-    });
+    };
+    // --drain wraps the burst in the drain window state machine (eligibility
+    // guards + classified rate-limit handling). Default is a single burst.
+    const summary = args.drain
+      ? await runDrain(pipelineOpts)
+      : await runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     process.exit(summary.exit_code);
   },
@@ -193,6 +209,84 @@ const morningCmd = defineCommand({
   },
 });
 
+const scheduleCmd = defineCommand({
+  meta: { name: 'schedule', description: 'Manage the Glean\\Drain Windows Scheduled Task (enable | disable | status)' },
+  args: {
+    action: { type: 'positional', required: true, description: 'enable | disable | status' },
+    project: { type: 'string', required: false, description: 'Project path to target (required for enable)' },
+    // No citty `default:` here — defaults are applied AFTER the config fallback
+    // below, so a config-file drain_trigger is reachable (citty defaults would
+    // otherwise always populate args.* and shadow the config).
+    day: { type: 'string', description: `Day of week for the weekly trigger (default: ${DEFAULT_DAY})` },
+    time: { type: 'string', description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME})` },
+    'repeat-minutes': { type: 'string', description: `Repetition interval in minutes (default: ${DEFAULT_REPEAT_MINUTES})` },
+    'duration-hours': { type: 'string', description: `Repetition window duration in hours (default: ${DEFAULT_DURATION_HOURS})` },
+  },
+  async run({ args }) {
+    const action = (args.action as string).toLowerCase();
+
+    if (action === 'disable') {
+      disableSchedule();
+      return;
+    }
+
+    if (action === 'status') {
+      const result = scheduleStatus();
+      if (!result.found) {
+        console.log('Glean\\Drain: not registered');
+      } else {
+        console.log(`Glean\\Drain: ${result.state}`);
+        console.log(`  last run: ${result.lastRun}`);
+        console.log(`  next run: ${result.nextRun}`);
+      }
+      return;
+    }
+
+    if (action === 'enable') {
+      // Resolve project path from --project flag, then config defaults.
+      const cfg = loadConfig(defaultConfigPath());
+
+      // Read drain_trigger overrides from config; CLI flags take precedence.
+      const cfgTrigger = cfg.drain_trigger ?? {};
+
+      const day           = (args.day  as string | undefined) ?? cfgTrigger.day  ?? DEFAULT_DAY;
+      const time          = (args.time as string | undefined) ?? cfgTrigger.time ?? DEFAULT_TIME;
+      const repeatMinutes = Number((args['repeat-minutes'] as string | undefined) ?? cfgTrigger.repeat_minutes ?? DEFAULT_REPEAT_MINUTES);
+      const durationHours = Number((args['duration-hours'] as string | undefined) ?? cfgTrigger.duration_hours ?? DEFAULT_DURATION_HOURS);
+
+      // Resolve the project path: --project flag beats config keys (use first configured if only one).
+      let projectPath = args.project ? resolve(args.project as string) : '';
+      if (!projectPath) {
+        const projects = Object.keys(cfg.projects ?? {});
+        if (projects.length === 1) {
+          projectPath = projects[0];
+        } else if (projects.length > 1) {
+          console.error('error: multiple projects configured — pass --project <path> to specify which one to drain');
+          process.exit(1);
+        } else {
+          console.error('error: no project configured and --project not passed');
+          process.exit(1);
+        }
+      }
+      if (!existsSync(projectPath)) {
+        console.error(`error: project path does not exist: ${projectPath}`);
+        process.exit(1);
+      }
+
+      // Resolve node executable and absolute path to this package's bin/glean.js.
+      const nodePath = process.execPath;
+      // __dirname here is dist/; bin/glean.js is one level up.
+      const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
+
+      enableSchedule({ nodePath, cliEntry, projectPath, day, time, repeatMinutes, durationHours });
+      return;
+    }
+
+    console.error(`error: unknown action '${action}' — use: enable | disable | status`);
+    process.exit(1);
+  },
+});
+
 const gcCmd = defineCommand({
   meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
   args: {
@@ -220,7 +314,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd },
 });
 
 export function main(argv: string[]): void {

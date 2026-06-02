@@ -1,6 +1,21 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, unlinkSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, copyFileSync, unlinkSync } from 'node:fs';
+import { join, basename, dirname } from 'node:path';
 import type { RunSummary } from './types.js';
+
+export type DrainState = {
+  drain_window_id: string;
+  drain_window_started_at: string;        // ISO UTC
+  next_eligible_at: string | null;        // ISO UTC; when the session window reopens
+  week_exhausted: boolean;
+  last_observed_weekly_reset: string | null;
+  completed_task_ids: string[];           // STABLE evidence_hashes completed this window
+  unproductive_reentries: number;
+  // Consecutive ambiguous (unclassifiable) rate-limit signals. Tracked separately
+  // from unproductive_reentries so the one-retry grace before stopping is reliable.
+  // Optional for backward-compat with budget.json written before this field.
+  consecutive_ambiguous?: number;
+  schema: 1;
+};
 
 export function gleanRoot(): string {
   const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
@@ -19,6 +34,8 @@ export function ensureDefaultConfig(root: string): { created: boolean; path: str
   return { created: true, path };
 }
 
+export const STALE_LOCK_MS = 20 * 60_000;
+
 type LockResult =
   | { acquired: true; recovered?: boolean }
   | { acquired: false; reason: 'busy'; holder: { pid: number; run_id: string; started_at: string } };
@@ -31,7 +48,11 @@ export function acquireLock(root: string, runId: string): LockResult {
   if (existsSync(lockPath)) {
     try {
       const existing = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid: number; run_id: string; started_at: string };
-      if (isPidAlive(existing.pid)) {
+      const ageMs = Date.now() - new Date(existing.started_at).getTime();
+      // A non-finite age means started_at is missing/unparseable → treat as
+      // stale (a lock we can't date is not trustworthy), not as live.
+      const isStaleByAge = !Number.isFinite(ageMs) || ageMs > STALE_LOCK_MS;
+      if (!isStaleByAge && isPidAlive(existing.pid)) {
         return { acquired: false, reason: 'busy', holder: existing };
       }
       recovered = true;
@@ -97,4 +118,44 @@ export function appendOrchestratorLog(root: string, runId: string, event: Record
   mkdirSync(dir, { recursive: true });
   const line = JSON.stringify({ t: new Date().toISOString(), ...event }) + '\n';
   writeFileSync(join(dir, 'orchestrator.log'), line, { flag: 'a' });
+}
+
+export function drainStatePath(root: string): string {
+  return join(root, 'state', 'budget.json');
+}
+
+export type ReadDrainStateResult =
+  | { kind: 'ok'; state: DrainState }
+  | { kind: 'missing' }
+  | { kind: 'corrupt' };
+
+export function readDrainState(root: string): ReadDrainStateResult {
+  const path = drainStatePath(root);
+  if (!existsSync(path)) {
+    return { kind: 'missing' };
+  }
+  try {
+    const state = JSON.parse(readFileSync(path, 'utf8')) as DrainState;
+    return { kind: 'ok', state };
+  } catch {
+    return { kind: 'corrupt' };
+  }
+}
+
+export function atomicWriteFileSync(path: string, contents: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, contents);
+    renameSync(tmp, path);
+  } catch (e) {
+    // On a failed write/rename (e.g. disk full) don't leave an orphaned temp
+    // file behind — the destination is untouched (atomicity preserved).
+    try { unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
+}
+
+export function writeDrainState(root: string, state: DrainState): void {
+  atomicWriteFileSync(drainStatePath(root), JSON.stringify(state, null, 2));
 }

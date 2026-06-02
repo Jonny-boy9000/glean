@@ -59,6 +59,39 @@ describe('executeOne', () => {
     expect(result.status).toBe('rate-limit');
   });
 
+  // v0.8: a rate-limit result carries the classified signal derived from stderr.
+  // The bundled rate-limit scenario ("5-hour limit reached, please retry later")
+  // matches the rate-limit pattern but has no parseable reset horizon → ambiguous.
+  it('attaches a rate-limit classification derived from the captured stderr', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'r1',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'rate-limit.yaml') },
+    });
+    expect(result.status).toBe('rate-limit');
+    expect(result.classification).toBeDefined();
+    expect(result.classification!.kind).toBe('ambiguous');
+  });
+
+  // A non-rate-limit (clean) result must NOT carry a classification.
+  it('does not attach a classification on a clean exit', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'r1',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+    });
+    expect(result.status).toBe('ok');
+    expect(result.classification).toBeUndefined();
+  });
+
   it('kills on task timeout', async () => {
     const root = tmpRoot();
     const result = await executeOne(candidate(), {

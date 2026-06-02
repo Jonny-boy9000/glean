@@ -1,0 +1,3 @@
+stderr_lines:
+  - 'error: weekly limit reached. Try again in 3 days.'
+exit_code: 1
