@@ -4,5 +4,6 @@ write_out_md: |
   Findings: nothing real.
 stdout_lines:
   - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"# Research dossier OUT\nThis is a fake dossier produced by the test stub.\nFindings: nothing real."}]}}'
   - '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}'
 exit_code: 0

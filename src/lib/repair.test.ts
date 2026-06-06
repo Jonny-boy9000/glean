@@ -29,7 +29,7 @@ function writeJsonlLog(root: string, runId: string, taskId: string, text: string
   const dir = join(root, 'logs', runId);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${taskId}.jsonl`),
-    JSON.stringify({ type: 'assistant', message: { content: [{ text }] } }) + '\n');
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }) + '\n');
 }
 
 describe('repairRecent', () => {

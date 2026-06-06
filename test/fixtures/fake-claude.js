@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 // Pretends to be `claude -p`. Reads scenario YAML pointed to by env var FAKE_CLAUDE_SCENARIO.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+
+// Optional: dump the argv this stub was invoked with so a test can assert on the
+// exact --add-dir / --allowedTools / --disallowedTools flags glean constructed.
+// One JSON line is appended per invocation (a drain may spawn several tasks).
+if (process.env.FAKE_CLAUDE_ARGV_OUT) {
+  try {
+    appendFileSync(process.env.FAKE_CLAUDE_ARGV_OUT, JSON.stringify(process.argv.slice(2)) + '\n');
+  } catch {
+    /* best effort */
+  }
+}
 
 const scenarioPath = process.env.FAKE_CLAUDE_SCENARIO;
 if (!scenarioPath) {
