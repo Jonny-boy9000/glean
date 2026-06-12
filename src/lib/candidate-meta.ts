@@ -9,15 +9,17 @@ export function titleFor(c: Candidate): string {
     case 'jsonl': return c.evidence.ai_title;
     case 'pr': return `PR #${c.evidence.number}: ${c.evidence.title}`;
     case 'dep': return `Pre-fetch docs for ${c.evidence.package}`;
+    case 'doc': return c.evidence.item_text.trim().slice(0, 80);
   }
 }
 
-export function sourceSignalFor(c: Candidate): 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' {
+export function sourceSignalFor(c: Candidate): 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' | 'doc' {
   switch (c.evidence.kind) {
     case 'jsonl': return 'jsonl';
     case 'todo': return 'git-todo';
     case 'pr': return 'gh-pr';
     case 'dep': return 'deps';
+    case 'doc': return 'doc';
   }
 }
 
@@ -27,6 +29,7 @@ export function filePathFor(c: Candidate): string | null {
     case 'jsonl': return null;
     case 'pr': return null;
     case 'dep': return c.evidence.manifest;
+    case 'doc': return c.evidence.file;
   }
 }
 

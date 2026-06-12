@@ -191,6 +191,46 @@ describe('runPipeline', () => {
     expect(summary.completed_evidence_hashes?.length).toBeGreaterThan(0);
   });
 
+  // ── v0.9 model routing (ADR-0006): the orchestrator log records the RESOLVED
+  // model per task (aliases drift across model generations), and PipelineOpts
+  // threads routing config + paceTier down into the spawn argv. ──────────────
+  it('task.start events carry the resolved model, and routing/paceTier reach the spawn argv', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const argvOut = join(root, 'argv.jsonl');
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: {
+        ...process.env,
+        FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml'),
+        FAKE_CLAUDE_ARGV_OUT: argvOut,
+      },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+      routing: { models: { 'research-dossier': 'opus' } },
+      // paceTier deliberately omitted → 'normal' (wave-2 pacing engine wires the real tier)
+    });
+    expect(summary.ran).toBeGreaterThan(0);
+    // 1. orchestrator log: every task.start carries the resolved model string.
+    const log = readFileSync(join(root, 'logs', summary.run_id, 'orchestrator.log'), 'utf8');
+    const starts = log.split('\n').filter((l) => l.includes('"evt":"task.start"')).map((l) => JSON.parse(l));
+    expect(starts.length).toBeGreaterThan(0);
+    for (const e of starts) {
+      expect(e.model).toBe('opus'); // tmpRepo candidates are research-dossier; config routed them to opus
+    }
+    // 2. the same resolved model reached the actual spawn argv.
+    const argvLines = readFileSync(argvOut, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]);
+    for (const argv of argvLines) {
+      expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+      expect(argv[argv.indexOf('--max-turns') + 1]).toBe('24');
+    }
+  });
+
   // ── Bug fix (same run): a structured 429 must STOP the run, not bleed tasks ──
   // The real block arrives on stdout (rate_limit_event "rejected" + result
   // is_error/429) with empty stderr. The run must break with reason 'rate-limit'

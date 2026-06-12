@@ -149,6 +149,62 @@ describe('loadConfig pacing', () => {
 
   it('rejects a non-boolean enabled', () => {
     expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { enabled: 'no' } })))).toThrow(/enabled/);
+// v0.9 model routing (ADR-0006): per-task-type model + max-turns maps, plus
+// the pacing_promote list ('large' tier route-up eligibility).
+describe('loadConfig model routing keys', () => {
+  it('parses a models map keyed by task type (aliases or full ids)', () => {
+    const p = tmpFile(JSON.stringify({
+      models: { 'fetch-docs': 'haiku', 'research-dossier': 'claude-sonnet-4-5-20250929', 'draft-impl': 'sonnet' },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.models?.['fetch-docs']).toBe('haiku');
+    expect(cfg.models?.['research-dossier']).toBe('claude-sonnet-4-5-20250929');
+    expect(cfg.models?.['draft-impl']).toBe('sonnet');
+  });
+
+  it('leaves models undefined when absent (defaults applied at resolution time)', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).models).toBeUndefined();
+  });
+
+  it('accepts a PARTIAL models map (unlisted types fall back to defaults)', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-impl': 'opus' } }));
+    const cfg = loadConfig(p);
+    expect(cfg.models?.['draft-impl']).toBe('opus');
+    expect(cfg.models?.['fetch-docs']).toBeUndefined();
+  });
+
+  it('rejects a models key that is not a known task type', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-pr-reply': 'opus' } }));
+    expect(() => loadConfig(p)).toThrow(/models/);
+  });
+
+  it('rejects a non-string model value', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-impl': 4 } }));
+    expect(() => loadConfig(p)).toThrow(/draft-impl/);
+  });
+
+  it('parses a max_turns map keyed by task type', () => {
+    const p = tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 4, 'draft-impl': 100 } }));
+    const cfg = loadConfig(p);
+    expect(cfg.max_turns?.['fetch-docs']).toBe(4);
+    expect(cfg.max_turns?.['draft-impl']).toBe(100);
+    expect(cfg.max_turns?.['research-dossier']).toBeUndefined();
+  });
+
+  it('rejects a fractional or non-positive max_turns value (whole turns only)', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 8.5 } })))).toThrow(/fetch-docs/);
+    expect(() => loadConfig(tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 0 } })))).toThrow(/fetch-docs/);
+  });
+
+  it('parses pacing_promote as a list of task types', () => {
+    const p = tmpFile(JSON.stringify({ pacing_promote: ['draft-impl', 'research-dossier'] }));
+    expect(loadConfig(p).pacing_promote).toEqual(['draft-impl', 'research-dossier']);
+  });
+
+  it('rejects an unknown task type in pacing_promote', () => {
+    const p = tmpFile(JSON.stringify({ pacing_promote: ['everything'] }));
+    expect(() => loadConfig(p)).toThrow(/pacing_promote/);
   });
 });
 

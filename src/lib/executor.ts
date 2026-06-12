@@ -11,6 +11,7 @@ import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 import { StringDecoder } from 'node:string_decoder';
 import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
+import { resolveModel, resolveMaxTurns, type ModelRoutingConfig, type PaceTier } from './model-routing.js';
 
 // ADR-0003: the REAL `claude -p` block (session limit, captured 2026-06-11) is a
 // STRUCTURED stream-json signal on stdout — see classify.ts:isStreamBlockLine —
@@ -179,6 +180,14 @@ export type ExecCtx = {
   // the test run is SKIPPED ('none', not run) so `glean stop` bounds it. (Full
   // mid-run interruption of the blocking spawn is out of scope.)
   stopRequested?: () => boolean;
+  // v0.9 model routing (ADR-0006): the config slice (models / max_turns /
+  // pacing_promote) consumed by resolveModel/resolveMaxTurns. Absent → built-in
+  // defaults (pool-aware 'sonnet' base; fetch-docs haiku).
+  routing?: ModelRoutingConfig;
+  // v0.9 pacing hook (wave-2 ready): optional pace tier threaded from
+  // PipelineOpts. Absent → 'normal'. The REAL tier arrives with the pacing
+  // engine (feat/usage-pacing); nothing here imports from it.
+  paceTier?: PaceTier;
   recordOutcome?: (status: TaskResult['status'], fields: {
     dossier_path?: string;
     started_at?: number;
@@ -777,11 +786,20 @@ async function runClaude(
   // dir AND the candidate's project_path (ADR-0002 A1: claude -p honors variadic
   // --add-dir for non-interactive read access).
   const addDirs = Array.isArray(opts.addDir) ? opts.addDir : [opts.addDir];
+  // v0.9 model routing + runaway-loop guard (ASSUMPTION[ADR-0006]): every spawn
+  // gets an explicit --model (config per-type → task-type default → pool-aware
+  // 'sonnet', with the optional pace-tier override) and a per-type --max-turns
+  // cap orthogonal to the wall-clock timeout. The resolved model is also logged
+  // on the orchestrator's task.start event — aliases drift across generations.
+  const model = resolveModel(c.type, ctx.routing ?? {}, ctx.paceTier ?? 'normal');
+  const maxTurns = resolveMaxTurns(c.type, ctx.routing ?? {});
   const claudeArgs = [
     '-p',
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
+    '--model', model,
+    '--max-turns', String(maxTurns),
     ...addDirs.flatMap((d) => ['--add-dir', d]),
     '--permission-mode', 'acceptEdits',
   ];

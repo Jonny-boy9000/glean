@@ -74,6 +74,10 @@ const runCmd = defineCommand({
       baseBranchFor,
       testCommandAllow,
       testCommandFor,
+      // v0.9 model routing (ADR-0006): the loaded config carries the optional
+      // models / max_turns / pacing_promote maps; resolution + defaults live in
+      // model-routing.ts. paceTier is wired by the pacing engine (wave 2).
+      routing: cfg,
     };
     // --drain wraps the burst in the drain window state machine (eligibility
     // guards + classified rate-limit handling). Default is a single burst.

@@ -34,7 +34,20 @@ export type EvidenceDep = {
   added_at: string;
 };
 
-export type Evidence = EvidenceTodo | EvidenceJsonl | EvidencePr | EvidenceDep;
+// v0.9 discover-docs: an actionable item mined from a project's own planning
+// docs (ROADMAP/TODO/BACKLOG/handoff "up next" lists and unchecked `- [ ]`
+// task items). `file` is project-relative with forward slashes; `line` is the
+// 1-based line of the item (volatile — stripped from the dedup hash, see
+// dedup.ts, so an edit above the item does not re-hash it).
+export type EvidenceDoc = {
+  kind: 'doc';
+  file: string;
+  heading: string;
+  item_text: string;
+  line: number;
+};
+
+export type Evidence = EvidenceTodo | EvidenceJsonl | EvidencePr | EvidenceDep | EvidenceDoc;
 
 export type CandidateStatus = 'pending' | 'running' | 'ok' | 'ok-fallback' | 'timeout' | 'failed' | 'rate-limit' | 'skipped';
 
@@ -155,6 +168,13 @@ export type GleanConfig = {
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
   pacing?: PacingConfig;
+  // v0.9 model routing (ADR-0006): per-task-type --model (alias or full id),
+  // per-task-type --max-turns guard, and the task types eligible for the
+  // 'large' pace-tier promotion. All optional — defaults live in
+  // model-routing.ts and apply at resolution time.
+  models?: Partial<Record<CandidateType, string>>;
+  max_turns?: Partial<Record<CandidateType, number>>;
+  pacing_promote?: CandidateType[];
 };
 
 // Discriminated output of a task (T7).

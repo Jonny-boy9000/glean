@@ -45,6 +45,18 @@ itself (second scheduled task gated by `glean usage --json`), morning anti-spill
 (end N hours before typical first prompt), `--model sonnet` drain default +
 `--max-turns`, dashboard pace panel.
 
+**Model routing + `--max-turns` guards BUILT 2026-06-13** (branch
+`feat/model-routing`, [ADR-0006](./decisions/0006-model-routing-pool-assumption.md)):
+every `claude -p` spawn now carries an explicit `--model` (layered resolution:
+pool-aware `sonnet` base → task-type default `fetch-docs→haiku` /
+`research-dossier→sonnet` / `draft-impl→sonnet` → config `models` map →
+pace-tier override, where 'large' may promote only `pacing_promote` types —
+default `["draft-impl"]` — one ladder tier, and 'small'/'skip' demote all to
+haiku) plus a per-type `--max-turns` runaway-loop guard (8/24/50,
+config `max_turns`). The resolved model is logged on each `task.start` event
+(alias-drift receipt). The `paceTier` param is a wave-2 hook — the real tier is
+wired by the pacing engine (`feat/usage-pacing`).
+
 **Project portfolio — registry + dials slice BUILT 2026-06-12** (branch
 `feat/project-portfolio`): `scanProjectRegistry` (real paths from session-jsonl
 `cwd`, slug never decoded; glean-spawn/worktree/temp noise filtered; deduped;
@@ -54,8 +66,21 @@ unioned with config), per-project `priority` dial in `config.json`
 per-row Run now), `GET /api/projects` + guarded `POST /api/projects/{add,priority}`,
 `/api/run` refuses `off`, and `glean projects [set <path> <priority>]` CLI parity.
 **Remaining from the portfolio design:** the multi-project drain allocator that
-weights ranking/budget by dial (needs v0.9.0 multi-project), the `discover-docs`
-pass, and post-hoc overlap learning (v0.10).
+weights ranking/budget by dial (needs v0.9.0 multi-project) and post-hoc overlap
+learning (v0.10).
+
+**`discover-docs` pass BUILT 2026-06-13** (branch `feat/discover-docs`): fourth
+parallel read-only discovery pass mining the project's OWN planning docs
+(ROADMAP/TODO/BACKLOG/PLAN, `docs/ROADMAP.md`, `docs/handoff/*.md`, plus root
+`*.md` with a planning-titled first heading) for "up next" list items and
+unchecked `- [ ]` tasks → `doc` evidence → research-dossier candidates
+(caps: 20 files / 200KB / 10 candidates; line-stable `evidence_hash`;
+est_value 28, just under the jsonl base of 30). Direct answer to supply
+root-cause #1. **Validation finding (2026-06-13):** the Terra Firma live case
+still yields 0 doc candidates — its planning content lives in non-conventional
+subdirs (`Planning/`, `phase-0-discovery/`) and its root files' first headings
+don't say roadmap/plan/backlog/next. Follow-up candidate: per-project
+configurable doc globs, or scanning well-known planning *directories*.
 
 In-flight branches (2026-06-12 session):
 - `fix/drain-rate-limit-resilience` — bug 1 (failed≠completed ledger) + bug 2 (429 short-circuit)

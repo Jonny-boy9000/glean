@@ -27,6 +27,15 @@ function stripVolatile(ev: Candidate['evidence']): unknown {
     const { added_at: _aa, ...rest } = ev;
     return rest;
   }
+  if (ev.kind === 'doc') {
+    // v0.9 discover-docs: a doc item is identified by file + heading + item_text.
+    // `line` is volatile — an edit ABOVE the item shifts it without changing the
+    // item — so it is stripped, and an unchanged roadmap item keeps a stable hash
+    // across runs (the 7-day dossier dedup + drain skip-set depend on that).
+    // Contrast with 'todo' below, where `line` deliberately stays in the hash.
+    const { line: _ln, ...rest } = ev;
+    return rest;
+  }
   // 'todo' evidence is returned UNCHANGED — its hash therefore includes each
   // todo_lines[].line as well as .text. v0.8.2 item 2 known limitation: a TODO
   // whose text is unchanged but whose LINE NUMBER shifted (an edit above it)
