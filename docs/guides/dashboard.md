@@ -18,6 +18,45 @@ can start drain runs and edit drain state), so it is intentionally not
 reachable from the network. Press `Ctrl+C` to stop it. It reads live from
 `~/glean/` and polls every 5 seconds, so you can leave it open during a drain.
 
+## Keep it always on (`glean serve install`)
+
+Plain `glean serve` is **terminal-bound**: the dashboard lives exactly as long
+as the terminal that foregrounds it, which in practice means it is down
+whenever you actually want to glance at it. To make it always available:
+
+```bash
+glean serve install              # auto-start at logon + start it right now
+glean serve install --port 8080  # same, on a custom port
+glean serve status               # registered? running? on which port?
+glean serve uninstall            # stop the dashboard and remove the auto-start
+```
+
+What `install` registers:
+
+- **Windows** — a `Glean\Serve` scheduled task (next to the `Glean\Drain`
+  schedule task): fires at **your** logon only, runs
+  `node …/glean.js serve --port N` hidden (via `conhost --headless`, so no
+  console window haunts your desktop), keeps running on battery, and
+  **restarts the dashboard automatically if it dies** (3 restarts, 1 min
+  apart).
+- **Linux** — a systemd **user** service `glean-serve.service`
+  (`~/.config/systemd/user/`), enabled via `systemctl --user enable --now`,
+  with `Restart=on-failure`. Requires a systemd user session; on
+  systemd-less boxes `install` says so and you fall back to foreground
+  `glean serve`.
+- macOS launchd: not yet (same status as `glean schedule`).
+
+`glean serve status` shows both halves: the registration (task/unit state,
+last run, installed port) and a **liveness check** — a real
+`GET /api/overview` against the port, so "registered" never masquerades as
+"actually responding".
+
+Singleton behavior: the dashboard politely refuses to double-bind. A second
+`glean serve` against a port where a glean dashboard is already live reports
+`already running at http://127.0.0.1:4317/ (installed: yes/no)` and exits 0 —
+the dashboard *is* available, which is what you asked for. A port owned by
+something that is **not** a glean dashboard is still an error.
+
 ## Overview tab
 
 ![Overview](../assets/dashboard-overview.png)

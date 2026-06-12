@@ -57,7 +57,7 @@ design history that drives every release lives partly *outside* the repo.
 
 ## 2. Source (`src/`) — module map
 
-`src/cli.ts` — citty CLI: dispatches `run [--drain]`, `serve`, `schedule`, `projects [set]`,
+`src/cli.ts` — citty CLI: dispatches `run [--drain]`, `serve [install|uninstall|status]`, `schedule`, `projects [set]`,
 `morning [--md]`, `today`, `peek`, `rate`, `gc`, `stop`, `repair`, `version`. Everything else
 is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 
@@ -129,6 +129,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 |------|----------------|
 | `serve.ts` | Node `http` server (127.0.0.1 only): static page + JSON read API (+`/api/projects` registry) + guarded POST management API (stop/resume/run/retry-failed/discard/rate/schedule/projects-add/projects-priority). `/api/run` refuses priority-`off` projects. CSRF + loopback + path-traversal guards. |
 | `dashboard-data.ts` | Pure-ish readers over `~/glean/`: `listRuns`, `getRunDetail` (orchestrator events + task table), `getTaskStream`, `listDossiers`, `readDossierBody`, `getOverview` (+health flags + `capacity`), `readCapacity` (last `rate_limit_event` from recent task streams), **`scanProjectRegistry`** (project portfolio: real paths from session-jsonl `cwd` — slug never decoded — noise-filtered via `isNoiseCwd`, deduped, unioned with config), and the two mutators `retryFailed` (un-dedup failed tasks) + `discardDossier`. |
+| `serve-install.ts` | **Always-on dashboard** (`glean serve install/uninstall/status`): pure builders for the `Glean\Serve` logon task (hidden via `conhost --headless`, RestartCount/RestartInterval) and the Linux `glean-serve.service` systemd user service (`Restart=on-failure`), split `-TaskPath/-TaskName` status/unregister per the v0.8.3 lesson, `serveAlive` liveness probe (GET `/api/overview`, hang-guard timeout), `serveStatusReport` + pure `renderServeStatus`, and the polite EADDRINUSE singleton message. Exec wrappers are thin + platform-gated, mirroring `schedule.ts`. |
 | `templates/dashboard.html` | Self-contained SPA (vanilla JS, inline CSS, polls every 5s; render-on-change so the poll never clobbers in-progress interaction). Capacity gauge, relative timestamps, ok/failed ratio bars, guided empty states, **Projects tab** (registry table, segmented priority dials, add-project, per-row Run now). Shipped via the `templates` files-glob; read by `serve.ts` at runtime. |
 
 ### Scheduling / config / types
@@ -138,14 +139,14 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `config.ts` | ~150 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`); **`pacing` keys** (`enabled`, `haircut` 0–1, `thresholds.{skip,small,normal}_above`). |
 | `types.ts` | ~175 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`, **`ModelFamily`/`DailyUsage`/`PacingConfig`** (v0.9 pacing). |
 
-> Each impl file has a co-located `*.test.ts` (vitest). 59 test files total.
+> Each impl file has a co-located `*.test.ts` (vitest). 63 test files total.
 
 ---
 
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v26-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI)).
+- **Integration specs:** `test/integration/v01…v27-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI), **v27 serve install/status surface** — read-only + singleton paths only; never registers a real task).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, `wedged` (child stuck emitting past the timeout, ADR-0004), draft-impl variants.

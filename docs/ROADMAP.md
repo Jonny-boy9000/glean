@@ -82,6 +82,18 @@ subdirs (`Planning/`, `phase-0-discovery/`) and its root files' first headings
 don't say roadmap/plan/backlog/next. Follow-up candidate: per-project
 configurable doc globs, or scanning well-known planning *directories*.
 
+**Dashboard always-on — BUILT 2026-06-13** (branch `feat/serve-autostart`):
+`glean serve install | uninstall | status` registers the dashboard to start at
+user logon and restart on failure — win32: `Glean\Serve` scheduled task (hidden
+via `conhost --headless`, RestartCount 3 / 1-min interval, split
+-TaskPath/-TaskName per the v0.8.3 lesson); linux: `glean-serve.service`
+systemd user service (`Restart=on-failure`, `enable --now`). `serve status`
+pairs registration with a real `GET /api/overview` liveness probe; foreground
+`glean serve` against an already-live glean dashboard now exits 0 with
+"already running at … (installed: yes/no)" instead of a raw EADDRINUSE. New
+`src/lib/serve-install.ts` (pure builders + thin platform-gated wrappers,
+mirroring schedule.ts) + v25 integration row.
+
 In-flight branches (2026-06-12 session):
 - `fix/drain-rate-limit-resilience` — bug 1 (failed≠completed ledger) + bug 2 (429 short-circuit)
 - `feat/dashboard-ux` — capacity/utilization panel, favicon, empty states, usability
