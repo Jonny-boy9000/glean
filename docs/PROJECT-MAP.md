@@ -139,9 +139,10 @@ design history that drives every release lives partly *outside* the repo.
 - **Integration specs:** `test/integration/v01…v22-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
-  - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, draft-impl variants.
+  - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, draft-impl variants.
   - `sessions*/` — sample `.jsonl` session histories for discovery tests.
-  - **`captured-rate-limit/real-five-hour-events.jsonl`** — ⭐ REAL `claude -p` `rate_limit_event` lines harvested from `~/glean/logs` (2026-06-02). Verified session-limit shape; see [§6](#6-runtime-output-tree-3--glean).
+  - **`captured-rate-limit/real-five-hour-events.jsonl`** — ⭐ REAL `claude -p` `rate_limit_event` WARNING lines harvested from `~/glean/logs` (2026-06-02); see [§6](#6-runtime-output-tree-3--glean).
+  - **`captured-rate-limit/real-session-429-block.jsonl`** — ⭐ the REAL session-limit BLOCK (sanitized; run `2026-06-11-1800-d705f9`): `rate_limit_event` status `rejected` + message `error:"rate_limit"` + result `is_error/429`. Closed ADR-0001 → [ADR-0003](./decisions/0003-structured-stream-json-block-signal.md).
   - **`captured-rate-limit/real-capacity-event.jsonl`** — REAL sanitized `rate_limit_event` line from the 2026-06-11 drain run (`allowed_warning`, `utilization: 0.95`, `surpassedThreshold`); drives the dashboard `readCapacity` tests.
 
 Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 skip**.
@@ -157,7 +158,7 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 | `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
 | `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
-| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = the rate-limit signal source. See its README. |
+| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |

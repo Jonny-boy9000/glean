@@ -6,11 +6,14 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyRateLimit, parseRateLimitEventResetAt } from './classify.js';
+import { classifyRateLimit, classifyStreamJson, parseRateLimitEventResetAt } from './classify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(
   __dirname, '..', '..', 'test', 'fixtures', 'captured-rate-limit', 'real-five-hour-events.jsonl',
+);
+const BLOCK_FIXTURE = join(
+  __dirname, '..', '..', 'test', 'fixtures', 'captured-rate-limit', 'real-session-429-block.jsonl',
 );
 
 // Fixed epoch: 2026-06-02T12:00:00Z  →  1780401600000 ms
@@ -25,18 +28,21 @@ function nowPlus(ms: number): string {
 const H = 3600_000; // 1 hour in ms
 const M = 60_000;   // 1 minute in ms
 
-// ── ADR-0001 tripwire ────────────────────────────────────────────────────────
-// This skipped test is an intentional, visible reminder that the load-bearing
-// assumption behind this whole module is UNVERIFIED: we have never captured what a
-// real `claude -p` rate-limit BLOCK looks like (all observed rate_limit_events are
-// warnings). See docs/decisions/0001-rate-limit-signal-source.md. When a real block
-// is captured (auto-captured by the executor tripwire, or via a live --drain run),
-// drop the fixture in, un-skip this, assert classify handles the verified shape, and
-// supersede ADR-0001. Until then it shows up as `1 skipped` on every run by design.
-describe('ADR-0001: real-block signal (UNVERIFIED)', () => {
-  it.skip('classifies a captured real claude -p rate-limit BLOCK (no fixture yet — ADR-0001 open)', () => {
-    // Intentionally empty: there is no real-block fixture to assert against yet.
-    // The presence of this skipped test is the tripwire.
+// ── ADR-0001 → ADR-0003 tripwire (now scoped to the WEEKLY block) ────────────
+// This skipped test is an intentional, visible reminder of the remaining
+// UNVERIFIED assumption. The SESSION block WAS captured 2026-06-11 (run d705f9;
+// fixture real-session-429-block.jsonl, asserted by the classifyStreamJson tests
+// below) — but the WEEKLY block shape has still never been observed; weekly is
+// currently inferred via the 6-hour resetsAt cut. See
+// docs/decisions/0003-structured-stream-json-block-signal.md. When a real WEEKLY
+// block is captured (the executor BLOCK-CAPTURE tripwire stays armed), drop the
+// fixture in, un-skip this, assert classify handles the verified shape, and
+// supersede ADR-0003 if the inference was wrong. Until then it shows up as
+// `1 skipped` on every run by design.
+describe('ADR-0003: real WEEKLY-block signal (UNVERIFIED)', () => {
+  it.skip('classifies a captured real claude -p WEEKLY rate-limit BLOCK (no fixture yet — ADR-0003 open)', () => {
+    // Intentionally empty: there is no real weekly-block fixture to assert
+    // against yet. The presence of this skipped test is the tripwire.
   });
 });
 
@@ -286,6 +292,107 @@ describe('rate-limit keyword variants', () => {
   it('triggers on "weekly limit"', () => {
     const result = classifyRateLimit('weekly limit hit, in 2 days', now);
     expect(result.reset_at).toBe(nowPlus(2 * 24 * H));
+  });
+});
+
+// ── classifyStreamJson — the structured BLOCK detector (ADR-0003) ─────────────
+// The REAL session-limit block was captured 2026-06-11 (run 2026-06-11-1800-d705f9):
+// a rate_limit_event with status "rejected" + an assistant message with top-level
+// error:"rate_limit" + a result with is_error:true and api_error_status:429, all on
+// stdout with EMPTY stderr. classifyStreamJson is the primary detector for that
+// shape; it returns null when the stream carries no block (warnings are not blocks).
+describe('classifyStreamJson (structured block detector — ADR-0003)', () => {
+  // Fixture resetsAt = 1781197200 (epoch seconds) → 2026-06-11T17:00:00.000Z
+  const RESET_MS = 1781197200000;
+
+  it('classifies the captured real session-429 block as session with the event resetsAt', () => {
+    const text = readFileSync(BLOCK_FIXTURE, 'utf8');
+    const cls = classifyStreamJson(text, () => RESET_MS - 2 * H);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('session');
+    expect(cls!.reset_at).toBe('2026-06-11T17:00:00.000Z');
+    expect(cls!.reset_horizon).toBe('hours');
+  });
+
+  it('a rejected event whose resetsAt is >= 6h away classifies as weekly', () => {
+    const line = JSON.stringify({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'rejected', resetsAt: 1781197200 },
+    });
+    const cls = classifyStreamJson(line, () => RESET_MS - 8 * H);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('weekly');
+    expect(cls!.reset_horizon).toBe('days');
+  });
+
+  it('returns null for warning-only telemetry (allowed/allowed_warning is NOT a block)', () => {
+    const text = readFileSync(FIXTURE, 'utf8');
+    expect(classifyStreamJson(text, now)).toBeNull();
+  });
+
+  it('returns null for unrelated stream lines and for empty input', () => {
+    const text = [
+      '{"type":"message_start","message":{"id":"m1","role":"assistant"}}',
+      '{"type":"result","subtype":"success","is_error":false,"result":"done"}',
+    ].join('\n');
+    expect(classifyStreamJson(text, now)).toBeNull();
+    expect(classifyStreamJson('', now)).toBeNull();
+  });
+
+  it('a 429 result with no rate_limit_event degrades to ambiguous via the prose', () => {
+    // "resets 8pm (Asia/Jerusalem)" carries no parseable reset moment.
+    const line = JSON.stringify({
+      type: 'result', subtype: 'success', is_error: true, api_error_status: 429,
+      result: "You've hit your session limit · resets 8pm (Asia/Jerusalem)",
+    });
+    const cls = classifyStreamJson(line, now);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('ambiguous');
+    expect(cls!.reset_at).toBeNull();
+  });
+
+  it('a 429 result with parseable prose derives the horizon from the prose', () => {
+    const line = JSON.stringify({
+      type: 'result', subtype: 'success', is_error: true, api_error_status: 429,
+      result: 'usage limit reached, try again in 4 hours',
+    });
+    const cls = classifyStreamJson(line, now);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('session');
+    expect(cls!.reset_at).toBe(nowPlus(4 * H));
+  });
+
+  it('an assistant message with top-level error:"rate_limit" alone is a block', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: "You've hit your session limit · resets 8pm" }] },
+      error: 'rate_limit',
+    });
+    const cls = classifyStreamJson(line, now);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('ambiguous');
+  });
+
+  it('tolerates malformed / non-JSON lines around the block', () => {
+    const text = [
+      'not json',
+      '{"type":"result","is_error":true',
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1781197200}}',
+      '}{ broken',
+    ].join('\n');
+    const cls = classifyStreamJson(text, () => RESET_MS - 1 * H);
+    expect(cls).not.toBeNull();
+    expect(cls!.kind).toBe('session');
+  });
+});
+
+// The observed block prose says "session limit" — the keyword guard (and the
+// executor's stderr fallback regex, kept in sync) must trigger on it.
+describe('rate-limit keyword: "session limit" (observed 2026-06-11)', () => {
+  it('triggers on "session limit" with a parseable horizon', () => {
+    const result = classifyRateLimit('session limit reached, try again in 2 hours', now);
+    expect(result.kind).toBe('session');
+    expect(result.reset_at).toBe(nowPlus(2 * H));
   });
 });
 
