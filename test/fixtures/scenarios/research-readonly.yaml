@@ -1,0 +1,10 @@
+# Read-only research-dossier spawn (ADR-0002): the session writes NO OUT.md.
+# It emits the dossier as its final assistant message (multiple text blocks +
+# a thinking block to prove glean concatenates text and skips thinking). glean
+# (the orchestrator) reconstructs OUT.md from this stream via
+# extractLastAssistantText.
+stdout_lines:
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private reasoning not for the dossier"},{"type":"text","text":"# Research dossier\n\n## Summary\nGrounded in real file contents.\n"},{"type":"text","text":"## Findings\n- a real observation from reading the code\n"}]}}'
+  - '{"type":"message_delta","delta":{"stop_reason":"end_turn"}}'
+exit_code: 0

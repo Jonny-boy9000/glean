@@ -8,7 +8,7 @@ import { render } from './render.js';
 import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
-import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
+import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 import { StringDecoder } from 'node:string_decoder';
 import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
 
@@ -87,7 +87,7 @@ function classifySpawnSignal(spawn: SpawnOutcome): RateLimitClassification {
   return classification;
 }
 
-// ADR-0001/0002 self-capturing tripwire: whenever a spawn is flagged
+// ADR-0001/0003 self-capturing tripwire: whenever a spawn is flagged
 // rateLimited, dump the full raw stderr + the last ~50 lines of the captured
 // stream-json (.jsonl) to <logDir>/<taskId>.BLOCK-CAPTURE.txt. This is how the
 // session-block shape captured itself on 2026-06-11; it stays armed because the
@@ -216,12 +216,17 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
   const promptPath = join(workDir, 'prompt.md');
   writeFileSync(promptPath, prompt);
 
+  // research-dossier (ADR-0002): grant READ access to the project being researched
+  // (in addition to the dossier output dir), and make the session write-incapable
+  // via a scoped read-only allow-list. fetch-docs (`docs`) keeps the original
+  // output-dir-only scope for now (separate roadmap item).
+  const isResearch = c.type === 'research-dossier';
   const spawn = await runClaude(c, ctx, {
     prompt,
     cwd: workDir,
-    addDir: workDir,
+    addDir: isResearch ? [workDir, c.project_path] : workDir,
     deny: BASE_DENY,
-    allowedTools: undefined,
+    allowedTools: isResearch ? researchAllowedTools() : undefined,
   });
 
   const startedAt = start;
@@ -261,8 +266,19 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
     return finalize('failed', undefined, tail);
   }
 
-  // Look for output
-  const outPath = c.type === 'research-dossier' ? join(workDir, 'OUT.md') : findFirstFile(workDir, /\.md$/);
+  // research-dossier (ADR-0002): glean (the orchestrator) writes OUT.md from the
+  // captured final assistant message — this is now the PRIMARY capture path, since
+  // the read-only session can no longer write OUT.md itself.
+  if (isResearch) {
+    const outPath = join(workDir, 'OUT.md');
+    const body = extractLastAssistantText(spawn.jsonlPath);
+    writeFileSync(outPath, body);
+    return finalize('ok', outPath, undefined);
+  }
+
+  // fetch-docs (`docs`): the session writes a markdown file itself; capture it,
+  // falling back to the stream if it's missing/too small (unchanged behavior).
+  const outPath = findFirstFile(workDir, /\.md$/);
   if (outPath && existsSync(outPath)) {
     const bytes = readFileSync(outPath).length;
     if (bytes < 50) {
@@ -720,7 +736,7 @@ function clearStaleIndexLock(main: string, worktree: string, descendantsDead: bo
 async function runClaude(
   c: Candidate,
   ctx: ExecCtx,
-  opts: { prompt: string; cwd: string; addDir: string; deny: string; allowedTools?: string },
+  opts: { prompt: string; cwd: string; addDir: string | string[]; deny: string; allowedTools?: string },
 ): Promise<SpawnOutcome> {
   const logDir = join(ctx.gleanRoot, 'logs', ctx.runId);
   mkdirSync(logDir, { recursive: true });
@@ -735,12 +751,16 @@ async function runClaude(
 
   // Pass prompt via stdin to avoid Windows command-line length limits (~8191 chars).
   // --verbose is required for --output-format stream-json in -p (print) mode.
+  // One --add-dir per granted read dir. research-dossier grants BOTH its output
+  // dir AND the candidate's project_path (ADR-0002 A1: claude -p honors variadic
+  // --add-dir for non-interactive read access).
+  const addDirs = Array.isArray(opts.addDir) ? opts.addDir : [opts.addDir];
   const claudeArgs = [
     '-p',
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--add-dir', opts.addDir,
+    ...addDirs.flatMap((d) => ['--add-dir', d]),
     '--permission-mode', 'acceptEdits',
   ];
   // draft-impl is the first path that runs Bash (git commit, tests); pass explicit

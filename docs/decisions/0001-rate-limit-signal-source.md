@@ -1,6 +1,6 @@
 # ADR-0001 — Rate-limit signal source (stderr vs. stream-json `rate_limit_event`)
 
-- Status: **Superseded by [0002](./0003-structured-stream-json-block-signal.md)** (2026-06-12 — the real SESSION block was captured 2026-06-11; the weekly shape is still unobserved and stays open under ADR-0003)
+- Status: **Superseded by [0003](./0003-structured-stream-json-block-signal.md)** (2026-06-12 — the real SESSION block was captured 2026-06-11; the weekly shape is still unobserved and stays open under ADR-0003)
 - Date: 2026-06-02
 - Enforced at: `src/lib/classify.ts` (the parser table) + `src/lib/executor.ts:RATE_LIMIT_RE` (the block detector), both tagged `ASSUMPTION[ADR-0001]`; tripwire test `classify: no real-block fixture yet (ADR-0001)` in `src/lib/classify.test.ts`.
 - Related: [`docs/open-work/06-rate-limit-signal-findings.md`](../open-work/06-rate-limit-signal-findings.md), [`docs/PROJECT-MAP.md`](../PROJECT-MAP.md) §6.

@@ -25,7 +25,7 @@ entries:
 # index
 `);
     writeFileSync(join(logsDir, 'task-foo.jsonl'),
-      JSON.stringify({ type: 'assistant', message: { content: [{ text: 'A'.repeat(300) }] } }) + '\n');
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'A'.repeat(300) }] } }) + '\n');
 
     const res = spawnSync('node', ['bin/glean.js', 'repair', '--days', '30'], {
       env: { ...process.env, USERPROFILE: home, HOME: home },

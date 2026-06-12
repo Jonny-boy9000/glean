@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW, testCommandAllowFor } from './deny.js';
+import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW, testCommandAllowFor } from './deny.js';
 
 describe('deny-list', () => {
   it('BASE_DENY contains the four core blocked prefixes', () => {
@@ -75,6 +75,67 @@ describe('draftImplAllowedTools (CRITICAL 1: scoped Bash allow-list)', () => {
     expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(npm run:*)');
     expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(npx vitest:*)');
     expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(node:*)');
+  });
+});
+
+describe('researchAllowedTools (read-only scope for research-dossier spawns)', () => {
+  it('grants the read tools Read/Grep/Glob', () => {
+    const allow = researchAllowedTools();
+    const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+    expect(tokens).toContain('Read');
+    expect(tokens).toContain('Grep');
+    expect(tokens).toContain('Glob');
+  });
+
+  it('grants only the read-only git/rg Bash verbs', () => {
+    const allow = researchAllowedTools();
+    expect(allow).toContain('Bash(git log:*)');
+    expect(allow).toContain('Bash(git diff:*)');
+    expect(allow).toContain('Bash(git show:*)');
+    expect(allow).toContain('Bash(git status:*)');
+    expect(allow).toContain('Bash(rg:*)');
+  });
+
+  it('never grants bare Bash (wholesale shell)', () => {
+    const allow = researchAllowedTools();
+    // Tokenize keeping Bash(...) specs intact; a bare grant is the standalone 'Bash'.
+    const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+    expect(tokens).not.toContain('Bash');
+    for (const t of tokens) {
+      if (t.startsWith('Bash')) expect(t).toMatch(/^Bash\(.+\)$/);
+    }
+  });
+
+  it('never grants write tools (Edit/Write/NotebookEdit)', () => {
+    const allow = researchAllowedTools();
+    expect(allow).not.toContain('Edit');
+    expect(allow).not.toContain('Write');
+    expect(allow).not.toContain('NotebookEdit');
+  });
+
+  it('does NOT grant ref-mutating or publishing git verbs', () => {
+    const allow = researchAllowedTools();
+    expect(allow).not.toContain('Bash(git push');
+    expect(allow).not.toContain('Bash(git commit');
+    expect(allow).not.toContain('Bash(git add');
+    expect(allow).not.toContain('Bash(git reset');
+  });
+});
+
+describe('draft-impl regression guard (research change must not alter it)', () => {
+  it('draftImplAllowedTools output is byte-for-byte unchanged', () => {
+    expect(draftImplAllowedTools(DEFAULT_TEST_COMMAND_ALLOW)).toBe(
+      'Edit Write Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) ' +
+      'Bash(npm test:*) Bash(npm run:*) Bash(npx vitest:*) Bash(node:*)',
+    );
+  });
+
+  it('DRAFT_IMPL_DENY output is byte-for-byte unchanged', () => {
+    expect(DRAFT_IMPL_DENY).toBe(
+      'Bash(git push:*) Bash(git checkout main:*) Bash(gh pr merge:*) Bash(gh pr create:*) ' +
+      'Bash(git switch:*) Bash(git branch:*) Bash(git reset:*) Bash(git worktree:*) ' +
+      'Bash(git -C:*) Bash(git --git-dir:*) Bash(git --work-tree:*)',
+    );
   });
 });
 

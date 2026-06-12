@@ -2,11 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { executeOne, __diffStat, __commitsBeyondBase, __clearStaleIndexLock } from './executor.js';
 import * as jobobject from './jobobject.js';
+import { researchAllowedTools } from './deny.js';
 import type { Candidate } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -430,6 +431,53 @@ describe('executeOne', () => {
       expect(allow).toContain('Bash(npm test:*)');
       expect(allow).toContain('Edit');
       expect(allow).toContain('Write');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // ── ADR-0002 P1 safety proof: the dossier spawn's ACTUAL argv carries the
+  // read scope. researchAllowedTools() is unit-tested as a pure function in
+  // deny.test.ts; this proves it (and both --add-dir grants) is really plumbed
+  // into executeDossier's spawn — a regression that dropped either would leave
+  // dossiers writing filename-based guesses (or a write-capable session) again.
+  it('research-dossier: spawn argv grants --add-dir for BOTH the dossier dir and the project, plus the read-only allow-list (ADR-0002 P1)', async () => {
+    const spy = vi.spyOn(jobobject, 'spawnInJob');
+    try {
+      const root = tmpRoot();
+      const c = candidate();
+      const result = await executeOne(c, {
+        runId: 'r-adr2', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(result.status).toBe('ok');
+      expect(spy).toHaveBeenCalled();
+      // On Windows resolveSpawn wraps args as ['/c', bin, ...claudeArgs]; flag
+      // scanning below is position-independent so it covers both platforms.
+      const args = spy.mock.calls[0][1] as string[];
+
+      // Read scope: one --add-dir per granted dir — the dossier output dir AND
+      // the candidate's project_path (two distinct dirs at minimum).
+      const addDirs: string[] = [];
+      for (let i = 0; i < args.length - 1; i++) {
+        if (args[i] === '--add-dir') addDirs.push(args[i + 1]);
+      }
+      expect(addDirs.map((d) => resolve(d))).toContain(resolve(c.project_path));
+      expect(addDirs.some((d) => /[\\/]research-/.test(d))).toBe(true);
+      expect(new Set(addDirs.map((d) => resolve(d))).size).toBeGreaterThanOrEqual(2);
+
+      // Write-incapability: the allow-list is exactly researchAllowedTools() —
+      // no bare Bash, no Edit/Write — so the project read grant cannot mutate.
+      const idx = args.indexOf('--allowedTools');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const allow = args[idx + 1];
+      expect(allow).toBe(researchAllowedTools());
+      const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+      expect(tokens).not.toContain('Bash');
+      expect(tokens).not.toContain('Edit');
+      expect(tokens).not.toContain('Write');
     } finally {
       spy.mockRestore();
     }

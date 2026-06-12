@@ -25,7 +25,7 @@ to work on this.
 {{/if}}
 
 ## Task
-Write `OUT.md` in the current working directory with these sections:
+Your **final message** must be the dossier itself, with these sections:
 1. **One-paragraph summary** — what this is and what the user should do next.
 2. **Findings** — 3–7 concrete observations from reading the code/context.
 3. **Suggested next actions** — ranked, each with the specific file/line.
@@ -33,6 +33,8 @@ Write `OUT.md` in the current working directory with these sections:
 
 ## Rules
 - Speculative work only. Do NOT make production-affecting changes.
+- You are **read-only**: read the project freely, but you have no write/edit tools.
+  Do NOT write any files — glean captures your final message as the dossier.
 - Do NOT run `git push`, `git checkout main`, or any `gh pr` mutation.
-- Read freely; write only `OUT.md` in the current working directory.
-- If you cannot do useful work, write a one-paragraph `OUT.md` explaining why.
+- If you cannot do useful work, make your final message a one-paragraph
+  explanation of why.

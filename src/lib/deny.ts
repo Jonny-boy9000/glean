@@ -70,6 +70,26 @@ export function draftImplAllowedTools(testCommandAllow: readonly string[]): stri
   return ['Edit', 'Write', ...DRAFT_IMPL_GIT_ALLOW, ...testCommandAllow].join(' ');
 }
 
+// ── Scoped read-only allow-list for research-dossier (ADR-0002) ─────────────
+// The research-dossier spawn is granted READ access to the user's project via
+// an extra --add-dir, which grants read AND write. To keep the session
+// write-incapable we mirror the draft-impl CRITICAL-1 posture: a default-deny
+// allow-list whose only Bash entries are read-only verbs. No bare `Bash` (which
+// could `echo x > <main>/file` per deny.ts:38-45), no Edit/Write/NotebookEdit.
+// Project mutation is therefore mechanically impossible, not merely discouraged.
+const RESEARCH_READONLY_BASH_ALLOW = [
+  'Bash(git log:*)',     // inspect history
+  'Bash(git diff:*)',    // inspect changes
+  'Bash(git show:*)',    // inspect a commit/blob
+  'Bash(git status:*)',  // inspect the working tree
+  'Bash(rg:*)',          // ripgrep the repo
+] as const;
+
+// Build the research-dossier --allowedTools string: read tools + read-only Bash.
+export function researchAllowedTools(): string {
+  return ['Read', 'Grep', 'Glob', ...RESEARCH_READONLY_BASH_ALLOW].join(' ');
+}
+
 // Normalize a per-project `test_command` (config.json) into a scoped Bash
 // allow-prefix. A blank/absent command falls back to the npm/node default set.
 // e.g. "pytest" → ["Bash(pytest:*)"], "cargo test" → ["Bash(cargo test:*)"].
