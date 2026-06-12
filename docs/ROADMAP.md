@@ -26,7 +26,36 @@ per-project priority dials steering allocation; a `discover-docs` pass mining ea
 project's roadmap/handoff docs as candidates; post-hoc overlap learning — compare
 what glean prepped vs what the user actually advanced, recomputed from git/JSONL
 each run, nudging allocation within the user's dial).
-New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `doctor` (`projects` shipped — below).
+New CLI verbs planned: `resume`, `retry <run-id>`, `doctor` (`projects` and `usage` shipped — below).
+
+**`glean usage` + pacing engine — BUILT 2026-06-13** (branch `feat/usage-pacing`):
+the design's "Pacing definition" math, pinned and tested — `src/lib/usage.ts`
+(internal JSONL loader; **deviation from the ccusage/data-loader plan recorded in
+[ADR-0007](./decisions/0007-internal-usage-loader.md)**: ccusage v20 is binary-only,
+v19 dropped the export, and its daily aggregation can't apply glean's cwd-based
+own-session exclusion), `src/lib/pacing.ts` (pure, injectable clock: weighted
+tokens per family per [ADR-0005](./decisions/0005-model-weight-multipliers.md),
+4-complete-calendar-week per-weekday median baseline, pace ratio, tiers
+skip/small/normal/large with config-overridable thresholds, cold-start +
+zero-baseline pinned conservative, `pacing.haircut` + `pacing.enabled` config),
+`glean usage [--json]` (week-vs-baseline table, tier + reasoning, blind-spot note,
+last five_hour utilization). **`recommendTier()` is the wave-2 public API** the
+nightly preset will consume. **Remaining for wave 2:** the nightly schedule preset
+itself (second scheduled task gated by `glean usage --json`), morning anti-spill
+(end N hours before typical first prompt), `--model sonnet` drain default +
+`--max-turns`, dashboard pace panel.
+
+**Model routing + `--max-turns` guards BUILT 2026-06-13** (branch
+`feat/model-routing`, [ADR-0006](./decisions/0006-model-routing-pool-assumption.md)):
+every `claude -p` spawn now carries an explicit `--model` (layered resolution:
+pool-aware `sonnet` base → task-type default `fetch-docs→haiku` /
+`research-dossier→sonnet` / `draft-impl→sonnet` → config `models` map →
+pace-tier override, where 'large' may promote only `pacing_promote` types —
+default `["draft-impl"]` — one ladder tier, and 'small'/'skip' demote all to
+haiku) plus a per-type `--max-turns` runaway-loop guard (8/24/50,
+config `max_turns`). The resolved model is logged on each `task.start` event
+(alias-drift receipt). The `paceTier` param is a wave-2 hook — the real tier is
+wired by the pacing engine (`feat/usage-pacing`).
 
 **Project portfolio — registry + dials slice BUILT 2026-06-12** (branch
 `feat/project-portfolio`): `scanProjectRegistry` (real paths from session-jsonl
@@ -37,8 +66,21 @@ unioned with config), per-project `priority` dial in `config.json`
 per-row Run now), `GET /api/projects` + guarded `POST /api/projects/{add,priority}`,
 `/api/run` refuses `off`, and `glean projects [set <path> <priority>]` CLI parity.
 **Remaining from the portfolio design:** the multi-project drain allocator that
-weights ranking/budget by dial (needs v0.9.0 multi-project), the `discover-docs`
-pass, and post-hoc overlap learning (v0.10).
+weights ranking/budget by dial (needs v0.9.0 multi-project) and post-hoc overlap
+learning (v0.10).
+
+**`discover-docs` pass BUILT 2026-06-13** (branch `feat/discover-docs`): fourth
+parallel read-only discovery pass mining the project's OWN planning docs
+(ROADMAP/TODO/BACKLOG/PLAN, `docs/ROADMAP.md`, `docs/handoff/*.md`, plus root
+`*.md` with a planning-titled first heading) for "up next" list items and
+unchecked `- [ ]` tasks → `doc` evidence → research-dossier candidates
+(caps: 20 files / 200KB / 10 candidates; line-stable `evidence_hash`;
+est_value 28, just under the jsonl base of 30). Direct answer to supply
+root-cause #1. **Validation finding (2026-06-13):** the Terra Firma live case
+still yields 0 doc candidates — its planning content lives in non-conventional
+subdirs (`Planning/`, `phase-0-discovery/`) and its root files' first headings
+don't say roadmap/plan/backlog/next. Follow-up candidate: per-project
+configurable doc globs, or scanning well-known planning *directories*.
 
 **Dashboard always-on — BUILT 2026-06-13** (branch `feat/serve-autostart`):
 `glean serve install | uninstall | status` registers the dashboard to start at

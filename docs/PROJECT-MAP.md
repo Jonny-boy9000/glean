@@ -68,14 +68,15 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `runDrain.ts` | 246 | `runDrain` — thin exit-and-re-enter wrapper around a burst; guards (STOP/eligibility/no-progress), folds rate-limit classification into `DrainState`. **v0.8.2 lanes A/B/C live here.** |
 | `state.ts` | 161 | `DrainState` type, atomic `state/budget.json` read/write, RUN.lock, STOP sentinel, summary/candidates writers. |
 
-### Discovery (3 parallel read-only passes → candidates)
+### Discovery (4 parallel read-only passes → candidates)
 | File | LOC | Responsibility |
 |------|-----|----------------|
 | `discover-jsonl.ts` | 111 | Scan `~/.claude/projects/*.jsonl` session history for idle/unfinished signals. |
 | `discover-git.ts` | 128 | `git grep TODO/FIXME`, stale branches, `gh pr list`. |
 | `discover-deps.ts` | 226 | New-dependency detection at git boundaries (full-file, section-aware). |
+| `discover-docs.ts` | 173 | **v0.9** Mine the project's OWN planning docs (ROADMAP/TODO/BACKLOG/PLAN, `docs/ROADMAP.md`, `docs/handoff/*.md`, planning-titled root `*.md`) for "up next" list items + unchecked `- [ ]` tasks → `doc` evidence. Caps: 20 files / 200KB / 10 candidates. |
 | `jsonl-extract.ts` | 19 | Helper: pull fields from a session jsonl line. |
-| `candidate-meta.ts` | 35 | `titleFor`/`sourceSignalFor`/`filePathFor`/`today` helpers. |
+| `candidate-meta.ts` | 41 | `titleFor`/`sourceSignalFor`/`filePathFor`/`today` helpers. |
 
 ### Prioritize / dedup
 | File | LOC | Responsibility |
@@ -89,6 +90,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `executor.ts` | 789 | Per-candidate: provision (worktree/dossier), render template, spawn `claude -p` (stream-json + deny-list + timeout), capture output, classify rate-limit, draft-impl commit + test-status. Biggest file. |
 | `jobobject.ts` | 58 | Child-tree kill on timeout/stop: `taskkill /T /F` on Windows; detached process group + `kill(-pid)` on POSIX. |
 | `deny.ts` | 80 | The non-negotiable `--disallowedTools` deny-list applied to every spawn. |
+| `model-routing.ts` | 97 | **v0.9 model routing (ADR-0006)**: pure `resolveModel`/`resolveMaxTurns` — pool-aware `sonnet` base → task-type default → config `models`/`max_turns` override → pace-tier override (wave-2 `paceTier` hook). Every spawn gets `--model` + `--max-turns`; `task.start` logs the resolved model. |
 | `gc.ts` | 56 | 21-day `prep/glean-*` worktree expiry. |
 | `classify.ts` | 154 | **Rate-limit signal classifier** (session<6h / weekly≥6h / ambiguous). ⚠️ Built on *stderr prose* — but the real signal is a stream-json `rate_limit_event` (see [§6](#6-runtime-output-tree-3--glean)). **v0.8.2 lane E.** |
 
@@ -114,6 +116,13 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `render-today.ts` | 117 | `glean today` terminal output. |
 | `render-morning.ts` | 223 | `glean morning` terminal receipt; exports `PLAIN`/`outcomeLine` (single honesty switch). |
 | `render-receipt.ts` | 95 | `RECEIPT.md` markdown (reuses `render-morning`'s data model). |
+| `render-usage.ts` | ~120 | `glean usage` terminal output: week-vs-baseline mini table, pace ratio, tier, last captured utilization, blind-spot note. Exports the `UsageReport` shape `--json` emits verbatim. |
+
+### Capacity governor (v0.9 — usage accounting + pacing)
+| File | LOC | Responsibility |
+|------|-----|----------------|
+| `usage.ts` | ~180 | **Internal** JSONL usage loader (`ASSUMPTION[ADR-0007]` — NOT `ccusage/data-loader`; upstream dropped the programmatic API in v19/v20): walks `~/.claude/projects/**/*.jsonl` `message.usage` blocks → daily RAW token totals per model family. Dedup `message.id+requestId` first-entry-wins (both required); glean's own spawned sessions excluded via `isNoiseCwd`; LOCAL calendar-day attribution; `localDateKey`/`modelFamily` helpers. |
+| `pacing.ts` | ~250 | PURE pacing engine (injectable `now`): `MODEL_WEIGHTS` (`ASSUMPTION[ADR-0005]`: haiku .25 / sonnet 1 / opus 5), per-weekday median baseline over the trailing 4 complete calendar weeks (absent days = 0), pace ratio = week-cum / baseline-cum through the same weekday, tiers >1.15 skip / ≥0.85 small / ≥0.5 normal / else large (config-overridable). **`recommendTier()` is the wave-2 public API** (nightly preset) → `{tier, ratio, effective_ratio, reason, budget_minutes, model_policy, week, insufficient_baseline}`. Cold start <14d and zero-baseline pinned conservative (small/skip, never large); `haircut` adds to the measured ratio; `BLIND_SPOT_NOTE`. |
 
 ### Dashboard (`glean serve` — local management surface)
 | File | Responsibility |
@@ -127,17 +136,17 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | File | LOC | Responsibility |
 |------|-----|----------------|
 | `schedule.ts` | 450 | Weekly drain schedule register/disable/status — Windows Task Scheduler + **Linux systemd user timer (crontab fallback)**; pure builders (`buildRegisterScript`, `buildSystemdUnit`/`buildTimerUnit`/`buildCrontabLine`); `defaultTriggerDay(tz)`. |
-| `config.ts` | ~130 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`). |
-| `types.ts` | ~135 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`. |
+| `config.ts` | ~150 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`); **`pacing` keys** (`enabled`, `haircut` 0–1, `thresholds.{skip,small,normal}_above`). |
+| `types.ts` | ~175 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`, **`ModelFamily`/`DailyUsage`/`PacingConfig`** (v0.9 pacing). |
 
-> Each impl file has a co-located `*.test.ts` (vitest). 51 test files total.
+> Each impl file has a co-located `*.test.ts` (vitest). 63 test files total.
 
 ---
 
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v25-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 serve install/status surface** — read-only + singleton paths only; never registers a real task).
+- **Integration specs:** `test/integration/v01…v27-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI), **v27 serve install/status surface** — read-only + singleton paths only; never registers a real task).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, `wedged` (child stuck emitting past the timeout, ADR-0004), draft-impl variants.
@@ -159,7 +168,7 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 | `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
 | `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
-| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun). See its README. |
+| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0005` = pacing model-weight multipliers (UNVERIFIED, consistency-over-truth); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open); `0007` = internal JSONL usage loader (ccusage's programmatic API gone upstream). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |

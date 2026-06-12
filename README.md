@@ -237,7 +237,9 @@ Add this to `~/.claude/settings.json`:
       "test_command": "npm test"
     }
   },
-  "drain_trigger": { "day": "Friday", "time": "18:00", "repeat_minutes": 60, "duration_hours": 60 }
+  "drain_trigger": { "day": "Friday", "time": "18:00", "repeat_minutes": 60, "duration_hours": 60 },
+  "models": { "fetch-docs": "haiku", "research-dossier": "sonnet", "draft-impl": "sonnet" },
+  "max_turns": { "fetch-docs": 8, "research-dossier": 24, "draft-impl": 50 }
 }
 ```
 
@@ -245,6 +247,8 @@ Add this to `~/.claude/settings.json`:
 - **`projects.<absolute-path>.base_branch`** — **enables code drafts (`draft-impl`)** for that project; the draft worktree is branched off this ref. Without it, that project gets dossiers/docs only.
 - **`projects.<absolute-path>.test_command`** — what glean runs inside the draft worktree to capture a `pass`/`fail`/`none` test status (also scopes the draft session's Bash allow-list).
 - **`drain_trigger`** — overrides the scheduler default (day/time/repetition). Omit it to let `glean schedule enable` auto-detect the day from your timezone.
+- **`models`** — per-task-type `--model` for spawned sessions (alias like `sonnet` or a full model id). The values shown are the built-in defaults: speculative work runs on Sonnet (on Max plans it has its own weekly pool and burns the shared cap several times slower than Opus), doc fetches on Haiku. The resolved model is logged per task. Omit the key entirely to use the defaults.
+- **`max_turns`** — per-task-type `--max-turns` runaway-loop guard on every spawned session (orthogonal to the per-task timeout). The values shown are the defaults.
 
 To discard a day's output:
 

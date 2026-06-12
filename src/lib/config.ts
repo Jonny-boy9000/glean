@@ -4,8 +4,24 @@ import { z } from 'zod';
 import { atomicWriteFileSync } from './state.js';
 import type { GleanConfig, ProjectPriority } from './types.js';
 
+// v0.9 model routing (ADR-0006): maps are keyed STRICTLY by the known task
+// types — a typo'd / unknown type key is a schema error, not a silent no-op.
+const TASK_TYPES = ['fetch-docs', 'research-dossier', 'draft-impl'] as const;
+const TaskTypeKey = z.enum(TASK_TYPES);
+
 const Schema = z.object({
   claude_bin: z.string().optional(),
+  // v0.9 model routing: per-task-type model (alias like 'sonnet' or a full
+  // model id — accepted verbatim). Partial: unlisted types use the built-in
+  // defaults at resolution time (model-routing.ts).
+  // (z.record with an enum key validates each present key but does not require
+  // exhaustiveness at runtime — exactly the partial-map behavior we want.)
+  models: z.record(TaskTypeKey, z.string()).optional(),
+  // v0.9: per-task-type --max-turns runaway-loop guard. Whole positive turns.
+  max_turns: z.record(TaskTypeKey, z.number().int().positive()).optional(),
+  // v0.9: task types eligible for the 'large' pace-tier one-tier promotion.
+  // Absent → ['draft-impl'] at resolution time ("route up" is never blanket).
+  pacing_promote: z.array(TaskTypeKey).optional(),
   projects: z.record(z.string(), z.object({
     base_branch: z.string().optional(),
     test_command: z.string().optional(),
@@ -27,6 +43,22 @@ const Schema = z.object({
     // v0.8.2 item 3: anti-spill pre-emptive margin in minutes (whole minutes).
     // Optional — defaults to 15 in runDrain when unset.
     anti_spill_margin_minutes: z.number().int().optional(),
+  }).optional(),
+  // v0.9 capacity governor: self-relative pacing gate (consumed by
+  // `glean usage` + the nightly preset via recommendTier).
+  pacing: z.object({
+    // false turns the gate off entirely (recommendTier reports 'normal').
+    enabled: z.boolean().optional(),
+    // Manual 0..1 discount for the local-JSONL blind spot (claude.ai web/
+    // desktop + other machines share the cap but write no JSONL here).
+    haircut: z.number().min(0).max(1).optional(),
+    // Tier boundaries on the effective pace ratio; each independently
+    // overridable (defaults live in pacing.ts DEFAULT_THRESHOLDS).
+    thresholds: z.object({
+      skip_above: z.number().optional(),
+      small_above: z.number().optional(),
+      normal_above: z.number().optional(),
+    }).optional(),
   }).optional(),
 });
 

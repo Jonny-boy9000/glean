@@ -35,6 +35,17 @@ describe('candidate-meta', () => {
     expect(filePathFor({ ...base(), evidence: { kind: 'pr', number: 1, title: 't', url: 'u', updated_at: '2020', review_comments: [] } })).toBeNull();
   });
 
+  it('doc evidence: title is the item text trimmed to 80 chars, signal is doc, file path is the file', () => {
+    const doc = (item_text: string): Candidate =>
+      ({ ...base(), evidence: { kind: 'doc', file: 'docs/ROADMAP.md', heading: 'Up next', item_text, line: 3 } });
+    expect(titleFor(doc('Ship the capacity governor'))).toBe('Ship the capacity governor');
+    const long = 'w'.repeat(120);
+    expect(titleFor(doc(long))).toBe('w'.repeat(80));
+    expect(titleFor(doc('  padded item text here  '))).toBe('padded item text here');
+    expect(sourceSignalFor(doc('x'))).toBe('doc');
+    expect(filePathFor(doc('x'))).toBe('docs/ROADMAP.md');
+  });
+
   it('today returns an ISO yyyy-mm-dd date', () => {
     expect(today()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });

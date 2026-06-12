@@ -36,6 +36,15 @@ export function scoreValue(c: Candidate, hints: { fileMtime?: number } = {}): nu
     }
     case 'dep':
       return 30;
+    case 'doc':
+      // v0.9 discover-docs: 28 — a planning-doc item is explicit human intent
+      // (someone wrote it into a roadmap/handoff), so it ranks just UNDER the
+      // jsonl idle-session base of 30 (jsonl scores 30–50 with the idle bonus):
+      // a session the user actually had open still wins, but a roadmap item
+      // beats path-penalized TODO noise. Within-pass ordering (ROADMAP > TODO >
+      // handoff > others) is preserved by discover-docs' emit order + the
+      // stable sort in prioritize().
+      return 28;
   }
 }
 

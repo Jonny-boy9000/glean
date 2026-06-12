@@ -623,6 +623,88 @@ describe('executeOne', () => {
     }
   });
 
+  // ── v0.9 model routing + --max-turns (ADR-0006): every spawn's ACTUAL argv
+  // carries the resolved --model and the per-type --max-turns guard. The
+  // resolution layer is unit-tested in model-routing.test.ts; these prove it is
+  // really plumbed into runClaude's spawn-arg assembly (same proof style as the
+  // ADR-0002 P1 test above).
+  function argvFlag(args: string[], flag: string): string | undefined {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : undefined;
+  }
+
+  it('spawn argv carries the task-type default --model and --max-turns (research-dossier → sonnet/24)', async () => {
+    const spy = vi.spyOn(jobobject, 'spawnInJob');
+    try {
+      const root = tmpRoot();
+      const result = await executeOne(candidate(), {
+        runId: 'r-model-default', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(result.status).toBe('ok');
+      const args = spy.mock.calls[0][1] as string[];
+      expect(argvFlag(args, '--model')).toBe('sonnet');
+      expect(argvFlag(args, '--max-turns')).toBe('24');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('spawn argv carries haiku/8 for a fetch-docs task', async () => {
+    const spy = vi.spyOn(jobobject, 'spawnInJob');
+    try {
+      const root = tmpRoot();
+      const c: Candidate = { ...candidate(), type: 'fetch-docs' };
+      const result = await executeOne(c, {
+        runId: 'r-model-docs', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(result.status === 'ok' || result.status === 'ok-fallback').toBe(true);
+      const args = spy.mock.calls[0][1] as string[];
+      expect(argvFlag(args, '--model')).toBe('haiku');
+      expect(argvFlag(args, '--max-turns')).toBe('8');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('ctx.routing config overrides --model/--max-turns, and ctx.paceTier reaches resolution', async () => {
+    const spy = vi.spyOn(jobobject, 'spawnInJob');
+    try {
+      const root = tmpRoot();
+      // Config override threaded through ExecCtx…
+      const r1 = await executeOne(candidate(), {
+        runId: 'r-model-cfg', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        routing: { models: { 'research-dossier': 'claude-sonnet-4-5-20250929' }, max_turns: { 'research-dossier': 5 } },
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(r1.status).toBe('ok');
+      const args1 = spy.mock.calls[0][1] as string[];
+      expect(argvFlag(args1, '--model')).toBe('claude-sonnet-4-5-20250929');
+      expect(argvFlag(args1, '--max-turns')).toBe('5');
+
+      // …and the paceTier param reaches resolveModel ('small' demotes to haiku).
+      const r2 = await executeOne(candidate(), {
+        runId: 'r-model-tier', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        paceTier: 'small',
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      });
+      expect(r2.status).toBe('ok');
+      const args2 = spy.mock.calls[1][1] as string[];
+      expect(argvFlag(args2, '--model')).toBe('haiku');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('draft-impl: skips with a warning when base_branch is not configured', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-draft-nobase-'));
     execSync('git init -q -b main', { cwd: repo });

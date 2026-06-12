@@ -113,6 +113,104 @@ describe('loadConfig projects.priority', () => {
   });
 });
 
+// v0.9 capacity governor: pacing config (gates the nightly preset; consumed
+// by `glean usage` and recommendTier).
+describe('loadConfig pacing', () => {
+  it('parses pacing.enabled, pacing.haircut and pacing.thresholds', () => {
+    const p = tmpFile(JSON.stringify({
+      pacing: {
+        enabled: false,
+        haircut: 0.2,
+        thresholds: { skip_above: 1.3, small_above: 0.9, normal_above: 0.4 },
+      },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.pacing?.enabled).toBe(false);
+    expect(cfg.pacing?.haircut).toBe(0.2);
+    expect(cfg.pacing?.thresholds).toEqual({ skip_above: 1.3, small_above: 0.9, normal_above: 0.4 });
+  });
+
+  it('leaves pacing undefined when absent (backward compatible)', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).pacing).toBeUndefined();
+  });
+
+  it('accepts partial thresholds (each bound is independently overridable)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { thresholds: { skip_above: 1.5 } } }));
+    const cfg = loadConfig(p);
+    expect(cfg.pacing?.thresholds?.skip_above).toBe(1.5);
+    expect(cfg.pacing?.thresholds?.small_above).toBeUndefined();
+  });
+
+  it('rejects a haircut outside 0..1', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { haircut: 1.5 } })))).toThrow(/haircut/);
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { haircut: -0.1 } })))).toThrow(/haircut/);
+  });
+
+  it('rejects a non-boolean enabled', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { enabled: 'no' } })))).toThrow(/enabled/);
+  });
+});
+
+// v0.9 model routing (ADR-0006): per-task-type model + max-turns maps, plus
+// the pacing_promote list ('large' tier route-up eligibility).
+describe('loadConfig model routing keys', () => {
+  it('parses a models map keyed by task type (aliases or full ids)', () => {
+    const p = tmpFile(JSON.stringify({
+      models: { 'fetch-docs': 'haiku', 'research-dossier': 'claude-sonnet-4-5-20250929', 'draft-impl': 'sonnet' },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.models?.['fetch-docs']).toBe('haiku');
+    expect(cfg.models?.['research-dossier']).toBe('claude-sonnet-4-5-20250929');
+    expect(cfg.models?.['draft-impl']).toBe('sonnet');
+  });
+
+  it('leaves models undefined when absent (defaults applied at resolution time)', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).models).toBeUndefined();
+  });
+
+  it('accepts a PARTIAL models map (unlisted types fall back to defaults)', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-impl': 'opus' } }));
+    const cfg = loadConfig(p);
+    expect(cfg.models?.['draft-impl']).toBe('opus');
+    expect(cfg.models?.['fetch-docs']).toBeUndefined();
+  });
+
+  it('rejects a models key that is not a known task type', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-pr-reply': 'opus' } }));
+    expect(() => loadConfig(p)).toThrow(/models/);
+  });
+
+  it('rejects a non-string model value', () => {
+    const p = tmpFile(JSON.stringify({ models: { 'draft-impl': 4 } }));
+    expect(() => loadConfig(p)).toThrow(/draft-impl/);
+  });
+
+  it('parses a max_turns map keyed by task type', () => {
+    const p = tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 4, 'draft-impl': 100 } }));
+    const cfg = loadConfig(p);
+    expect(cfg.max_turns?.['fetch-docs']).toBe(4);
+    expect(cfg.max_turns?.['draft-impl']).toBe(100);
+    expect(cfg.max_turns?.['research-dossier']).toBeUndefined();
+  });
+
+  it('rejects a fractional or non-positive max_turns value (whole turns only)', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 8.5 } })))).toThrow(/fetch-docs/);
+    expect(() => loadConfig(tmpFile(JSON.stringify({ max_turns: { 'fetch-docs': 0 } })))).toThrow(/fetch-docs/);
+  });
+
+  it('parses pacing_promote as a list of task types', () => {
+    const p = tmpFile(JSON.stringify({ pacing_promote: ['draft-impl', 'research-dossier'] }));
+    expect(loadConfig(p).pacing_promote).toEqual(['draft-impl', 'research-dossier']);
+  });
+
+  it('rejects an unknown task type in pacing_promote', () => {
+    const p = tmpFile(JSON.stringify({ pacing_promote: ['everything'] }));
+    expect(() => loadConfig(p)).toThrow(/pacing_promote/);
+  });
+});
+
 describe('setProjectPriority', () => {
   it('round-trips a priority change on an existing project, preserving other fields', () => {
     const p = tmpFile(JSON.stringify({

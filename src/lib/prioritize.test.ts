@@ -31,6 +31,17 @@ describe('scoreValue', () => {
   it('fixed value 30 for fetch-docs', () => {
     expect(scoreValue(c({ type: 'fetch-docs', evidence: { kind: 'dep', manifest: 'package.json', package: 'x', added_at: 'now' } }), {})).toBe(30);
   });
+
+  // v0.9 discover-docs: a doc item is explicit human intent (someone wrote it
+  // into a roadmap), weighted just under a jsonl idle-session signal: below the
+  // jsonl BASE of 30, above the floor that path-penalized todo noise sits at.
+  it('doc evidence scores just under the jsonl base of 30', () => {
+    const doc = c({ evidence: { kind: 'doc', file: 'ROADMAP.md', heading: 'Up next', item_text: 'Ship the governor', line: 3 } });
+    const jsonlBase = scoreValue(c({ evidence: { kind: 'jsonl', session_id: 's', ai_title: 't', idle_hours: 0 } }), {});
+    const v = scoreValue(doc, {});
+    expect(v).toBeLessThan(jsonlBase);
+    expect(v).toBe(28);
+  });
 });
 
 describe('prioritize', () => {

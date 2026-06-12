@@ -74,6 +74,10 @@ const runCmd = defineCommand({
       baseBranchFor,
       testCommandAllow,
       testCommandFor,
+      // v0.9 model routing (ADR-0006): the loaded config carries the optional
+      // models / max_turns / pacing_promote maps; resolution + defaults live in
+      // model-routing.ts. paceTier is wired by the pacing engine (wave 2).
+      routing: cfg,
     };
     // --drain wraps the burst in the drain window state machine (eligibility
     // guards + classified rate-limit handling). Default is a single burst.
@@ -300,6 +304,49 @@ const projectsCmd = defineCommand({
     for (const r of rows) {
       console.log(`${pad(r.priority, w('priority'))}  ${pad(r.sessions, w('sessions'))}  ${pad(r.active, w('active'))}  ${pad(r.flags, w('flags'))}  ${r.path}`);
     }
+  },
+});
+
+const usageCmd = defineCommand({
+  meta: {
+    name: 'usage',
+    description: 'Self-relative weekly pacing: this week vs your 4-week baseline, pace ratio, drain tier recommendation',
+  },
+  args: {
+    json: { type: 'boolean', default: false, description: 'Emit the machine-readable report (the nightly gate consumes this)' },
+  },
+  async run({ args }) {
+    const { loadDailyUsage } = await import('./lib/usage.js');
+    const { recommendTier, BLIND_SPOT_NOTE } = await import('./lib/pacing.js');
+    const { readCapacity, defaultClaudeProjectsDir } = await import('./lib/dashboard-data.js');
+    const { renderUsage } = await import('./lib/render-usage.js');
+    const cfg = loadConfig(defaultConfigPath());
+    const now = new Date();
+    // 42-day lookback comfortably covers the 4-week baseline window + the
+    // current week (mtime-based file filter — a perf gate, not accounting).
+    const days = loadDailyUsage(defaultClaudeProjectsDir(), {
+      gleanRoot: gleanRoot(),
+      sinceMs: now.getTime() - 42 * 86_400_000,
+    });
+    const recommendation = recommendTier({
+      days,
+      now,
+      enabled: cfg.pacing?.enabled,
+      haircut: cfg.pacing?.haircut,
+      thresholds: cfg.pacing?.thresholds,
+    });
+    const report = {
+      generated_at: now.toISOString(),
+      recommendation,
+      capacity: readCapacity(gleanRoot()),
+      blind_spot: BLIND_SPOT_NOTE,
+    };
+    if (args.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      return;
+    }
+    const useColor = Boolean(process.stdout.isTTY);
+    process.stdout.write(renderUsage(report, useColor) + '\n');
   },
 });
 
@@ -535,7 +582,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd },
 });
 
 export function main(argv: string[]): void {
