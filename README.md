@@ -79,6 +79,15 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 | `glean gc` | Expire draft-impl worktrees + `prep/glean-*` branches older than 21 days. |
 | `glean stop` | Halt the active run/drain between tasks. |
 
+### The dashboard (`glean serve`)
+
+Everything glean does, in one local page — every run with its outcome and ok/failed ratio, every dossier (view, rate, discard), live session-window capacity from captured `rate_limit_event` telemetry, and one-click management (Run now, Stop/Resume, retry failed tasks, toggle the schedule). Binds to `127.0.0.1` only.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/dashboard-runs.png" alt="glean serve dashboard: runs table with outcomes, ok/failed ratio bars and durations for every drain burst" width="760">
+</p>
+<p align="center"><em>The Runs view — every burst the drain made, with honest outcomes (including the rate-limited one that taught us two bug fixes). Full walkthrough in the <a href="docs/guides/dashboard.md">dashboard guide</a>.</em></p>
+
 ---
 
 ## How it works

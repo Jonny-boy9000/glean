@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (on `main`, 2026-06-12 — PRs #15–#19; version bump pending)
+## v0.8.4 — 2026-06-12 (PRs #15–#19)
 
 ### Added
 - **`glean serve` — local management dashboard** (PR #15): 127.0.0.1-only web UI to browse runs (orchestrator timeline + per-task streams), view/rate/discard dossiers, Run now / Stop / Resume, retry failed tasks, toggle the schedule, plus a live **capacity panel** (session-window utilization gauge + reset countdown from captured `rate_limit_event` telemetry). CSRF/loopback/path-traversal/XSS guards. See `docs/guides/dashboard.md`.
