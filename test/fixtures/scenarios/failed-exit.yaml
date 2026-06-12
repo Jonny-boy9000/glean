@@ -1,0 +1,6 @@
+# A plain task failure: non-zero exit with generic (non-rate-limit) stderr and no
+# output written. Used to assert a 'failed' task does NOT enter the completed-
+# evidence ledger (it must be re-attempted by a later drain tick's discovery).
+stderr_lines:
+  - 'Error: something unrelated broke (no output produced)'
+exit_code: 1

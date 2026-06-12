@@ -150,6 +150,82 @@ describe('runPipeline', () => {
     vi.resetModules();
   });
 
+  // ── Bug fix (2026-06-11 run d705f9): failed tasks must NOT enter the ledger ──
+  // 7 tasks died on a session-limit 429 with zero output, yet their evidence
+  // hashes landed in completed_evidence_hashes → the drain skipped them forever.
+  // Only 'ok' / 'ok-fallback' outcomes may be recorded as completed; failed /
+  // timeout / rate-limit tasks must stay out so the next tick re-attempts them.
+  it('does NOT record a failed task in completed_evidence_hashes (retried next tick)', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'failed-exit.yaml') },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.failed).toBeGreaterThan(0);
+    expect(summary.completed_evidence_hashes ?? []).toEqual([]);
+  });
+
+  it('still records ok tasks in completed_evidence_hashes', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.ran).toBeGreaterThan(0);
+    expect(summary.completed_evidence_hashes?.length).toBeGreaterThan(0);
+  });
+
+  // ── Bug fix (same run): a structured 429 must STOP the run, not bleed tasks ──
+  // The real block arrives on stdout (rate_limit_event "rejected" + result
+  // is_error/429) with empty stderr. The run must break with reason 'rate-limit'
+  // after the FIRST blocked task instead of spawning every remaining candidate.
+  it('a structured 429 stops the run: reason rate-limit, no further tasks spawned', async () => {
+    const repo = tmpRepo();
+    // a second TODO file → at least 2 candidates, so a non-breaking loop would
+    // visibly start a second task.
+    writeFileSync(join(repo, 'other.ts'), '// TODO: second candidate\nexport const y = 2;');
+    execSync('git add . && git commit -q -m more', { cwd: repo });
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'structured-429.yaml') },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.candidates_total).toBeGreaterThanOrEqual(2);
+    expect(summary.reason).toBe('rate-limit');
+    expect(summary.exit_code).toBe(20);
+    expect(summary.failed).toBe(0);
+    expect(summary.classification?.kind).toBe('session');
+    // only ONE task ever started — the loop broke instead of draining the queue
+    const log = readFileSync(join(root, 'logs', summary.run_id, 'orchestrator.log'), 'utf8');
+    const starts = log.split('\n').filter((l) => l.includes('"evt":"task.start"')).length;
+    expect(starts).toBe(1);
+    // and the blocked task did NOT enter the completed ledger
+    expect(summary.completed_evidence_hashes ?? []).toEqual([]);
+  });
+
   // v0.8.2 item 2: mid-window re-discovery. A candidate whose evidence_hash is NOT
   // in the completed set is still picked up and run on a later burst — the window
   // never works off a stale day-1 snapshot. We seed the skip-set with a bogus hash

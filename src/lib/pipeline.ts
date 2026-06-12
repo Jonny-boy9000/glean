@@ -62,8 +62,10 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
   // classified session/weekly/ambiguous signal to the drain wrapper.
   let classification: RateLimitClassification | undefined;
   const completedSet = new Set(opts.completedTaskIds ?? []);
-  // STABLE evidence_hashes executed this burst — surfaced on the summary so the
-  // drain wrapper can skip them on re-entry (candidate ids are random per run).
+  // STABLE evidence_hashes COMPLETED ('ok'/'ok-fallback' only) this burst —
+  // surfaced on the summary so the drain wrapper can skip them on re-entry
+  // (candidate ids are random per run). Failed/timed-out/rate-limited tasks are
+  // deliberately NOT recorded — see the push site below.
   const completedHashes: string[] = [];
 
   const lock = acquireLock(opts.gleanRoot, runId);
@@ -249,10 +251,19 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
           : undefined,
       });
       appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.end', task_id: c.id, status: result.status, elapsed_ms: result.elapsed_ms });
-      // Record the executed candidate (any status, incl. the rate-limited one
-      // that breaks the loop) so a drain re-entry won't redo it — in particular a
-      // draft-impl that already provisioned a worktree must not be re-drafted.
-      completedHashes.push(c.evidence_hash);
+      // Only an outcome that actually produced its artifact ('ok'/'ok-fallback')
+      // enters the completed-evidence ledger. 'failed'/'timeout'/'rate-limit'
+      // must NOT: recording them buries the task for the whole drain window
+      // (2026-06-11 run d705f9: 7 tasks died on a session-429 with zero output,
+      // were recorded as completed, and every later tick skip_completed them).
+      // A deterministically-failing task retrying each tick is bounded by the
+      // drain's unproductive_reentries circuit breaker (an all-fail burst is not
+      // productive). An interrupted draft-impl is re-drafted next tick — the
+      // executor removes and re-provisions its stale worktree; retrying beats
+      // permanently losing the task.
+      if (result.status === 'ok' || result.status === 'ok-fallback') {
+        completedHashes.push(c.evidence_hash);
+      }
 
       if (result.status === 'rate-limit') {
         reason = 'rate-limit';
