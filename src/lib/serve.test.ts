@@ -1,10 +1,16 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 import { startServer } from './serve.js';
 import { writeDrainState, type DrainState } from './state.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CAPACITY_FIXTURE = join(
+  __dirname, '..', '..', 'test', 'fixtures', 'captured-rate-limit', 'real-capacity-event.jsonl',
+);
 
 let servers: Server[] = [];
 afterEach(() => {
@@ -52,6 +58,16 @@ describe('glean serve', () => {
     expect(await r.text()).toContain('<title>glean</title>');
   });
 
+  it('serves an inline SVG favicon at /favicon.svg and /favicon.ico', async () => {
+    const { url } = await boot();
+    for (const p of ['favicon.svg', 'favicon.ico']) {
+      const r = await fetch(url + p);
+      expect(r.status).toBe(200);
+      expect(r.headers.get('content-type')).toContain('image/svg+xml');
+      expect(await r.text()).toContain('<svg');
+    }
+  });
+
   it('serves overview JSON', async () => {
     const { url } = await boot();
     const r = await fetch(url + 'api/overview');
@@ -60,6 +76,25 @@ describe('glean serve', () => {
     expect(j).toHaveProperty('state');
     expect(j).toHaveProperty('drain');
     expect(j.totals.runs).toBe(1);
+  });
+
+  it('folds capacity telemetry into /api/overview (empty state when none captured)', async () => {
+    const { root, url } = await boot();
+    // No task stream yet → honest empty state.
+    let o = await (await fetch(url + 'api/overview')).json();
+    expect(o.capacity).toEqual(expect.objectContaining({ found: false, utilization: null }));
+    // Drop a real captured rate_limit_event into the run's task stream.
+    const line = readFileSync(CAPACITY_FIXTURE, 'utf8').trim();
+    writeFileSync(
+      join(root, 'logs', '2026-06-11-1800-d705f9', '049d2720-72ce-4b23-936f-2df3bf4dc8ec.jsonl'),
+      line + '\n',
+    );
+    o = await (await fetch(url + 'api/overview')).json();
+    expect(o.capacity.found).toBe(true);
+    expect(o.capacity.status).toBe('allowed_warning');
+    expect(o.capacity.rate_limit_type).toBe('five_hour');
+    expect(o.capacity.utilization).toBe(0.95);
+    expect(o.capacity.resets_at).toBe(new Date(1781197200 * 1000).toISOString());
   });
 
   it('lists runs and run detail', async () => {

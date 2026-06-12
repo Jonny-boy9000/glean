@@ -22,6 +22,9 @@ reachable from the network. Press `Ctrl+C` to stop it. It reads live from
 
 ![Overview](../assets/dashboard-overview.png)
 
+> Screenshots are slightly behind the current UI (they predate the Capacity
+> panel and the relative timestamps).
+
 The always-visible status bar shows the current state pill
 (`RUNNING` / `IDLE` / `STOPPED`), what it's doing, and the primary actions:
 
@@ -38,17 +41,34 @@ Below the bar:
   run with failed tasks (which are otherwise dedup-skipped and never retried).
 - **Stat cards**: run/dossier counts, drain-window age, unproductive re-entries,
   deduped-completed count, week-exhausted, and schedule state.
+- **Capacity** panel: the last session-window signal glean captured — the
+  structured `rate_limit_event` telemetry `claude -p` emits into each task's
+  stream log (`~/glean/logs/<run>/<task>.jsonl`). Shows utilization as a
+  colored gauge with a % label (green / amber ≥70% / red ≥90%), the window
+  type (e.g. `five hour`), the status badge (`allowed` / `allowed_warning` /
+  anything else in red), a live "resets in Xh Ym" countdown, and when/where
+  the signal was captured. Utilization is sometimes absent from real events
+  (plain `allowed` and `rejected` events omit it) — the panel says
+  "utilization unknown" rather than inventing a number, and when no run has
+  captured any telemetry at all it shows an honest empty state. Note this is
+  *last observed* data from the most recent runs, not a live probe — glean
+  deliberately has no headless `claude usage` query.
 - **Schedule** section: the `Glean\Drain` task's state plus last/next run, with
   an enable/disable button.
 - **Latest run** card with a jump link into its detail.
+
+Timestamps across the dashboard render as relative times ("2h ago") with the
+absolute time in a hover tooltip; they tick in place without re-rendering.
 
 ## Runs tab
 
 ![Runs list](../assets/dashboard-runs.png)
 
 A reverse-chronological table of every run (one row per burst/tick), with an
-outcome badge, ran/failed counts, and duration. `no-op` marks a tick that found
-no fresh work. Click any row to open its detail.
+outcome badge, a tiny green/red ok-to-failed ratio bar, ran/failed counts, and
+duration. `no-op` marks a tick that found no fresh work; rows that ran nothing
+at all are dimmed so productive runs stand out. Click any row to open its
+detail.
 
 ### Run detail
 

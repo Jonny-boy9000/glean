@@ -33,6 +33,28 @@ export type RunListItem = {
   in_progress: boolean;
 };
 
+/**
+ * Last observed session-window telemetry, read from the structured
+ * `rate_limit_event` lines `claude -p` emits into the captured task streams
+ * (logs/<run>/<task>.jsonl). VERIFIED shape (see ADR-0001 + the fixture at
+ * test/fixtures/captured-rate-limit/): rate_limit_info carries `status`
+ * ("allowed" | "allowed_warning" | …), `rateLimitType` (e.g. "five_hour"),
+ * `utilization` (a FRACTION 0..1, not a percent — and sometimes absent),
+ * `resetsAt` (epoch SECONDS), `isUsingOverage`. Every field is optional here
+ * because real captures have varied (e.g. no `utilization` on plain "allowed").
+ */
+export type CapacityInfo = {
+  found: boolean;
+  run_id: string | null;
+  task_id: string | null;
+  captured_at: string | null; // stream file mtime (the events carry no timestamp)
+  status: string | null;
+  rate_limit_type: string | null;
+  utilization: number | null; // fraction 0..1 as captured
+  resets_at: string | null; // ISO, from epoch-seconds resetsAt
+  is_using_overage: boolean | null;
+};
+
 export type OverviewData = {
   generated_at: string;
   state: 'running' | 'stopped' | 'idle';
@@ -53,6 +75,7 @@ export type OverviewData = {
   health: HealthFlag[];
   totals: { runs: number; dossiers: number };
   projects: string[];
+  capacity: CapacityInfo;
 };
 
 /** Configured project paths (the only paths `glean serve` will trigger runs for). */
@@ -232,6 +255,91 @@ export function getTaskStream(
   return { found: true, lines, result_text: resultText };
 }
 
+// ---- Capacity (rate_limit_event telemetry) ---------------------------------
+
+const NO_CAPACITY: CapacityInfo = {
+  found: false,
+  run_id: null,
+  task_id: null,
+  captured_at: null,
+  status: null,
+  rate_limit_type: null,
+  utilization: null,
+  resets_at: null,
+  is_using_overage: null,
+};
+
+type RateLimitFields = Pick<
+  CapacityInfo,
+  'status' | 'rate_limit_type' | 'utilization' | 'resets_at' | 'is_using_overage'
+>;
+
+/**
+ * Scan one task stream's text for the LAST `rate_limit_event` line and return
+ * its fields, or null when none. Defensive per-line: malformed/truncated JSON
+ * is skipped, and every rate_limit_info field is individually optional.
+ */
+export function lastRateLimitEvent(jsonlText: string): RateLimitFields | null {
+  let found: RateLimitFields | null = null;
+  for (const line of jsonlText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    // Cheap pre-filter so we only JSON.parse plausible event lines.
+    if (!trimmed || !trimmed.includes('rate_limit_event')) continue;
+    try {
+      const obj = JSON.parse(trimmed) as { type?: unknown; rate_limit_info?: unknown };
+      if (obj?.type !== 'rate_limit_event') continue;
+      const info = obj.rate_limit_info;
+      if (info === null || typeof info !== 'object') continue;
+      const i = info as Record<string, unknown>;
+      let resetsAt: string | null = null;
+      if (typeof i.resetsAt === 'number' && Number.isFinite(i.resetsAt)) {
+        const d = new Date(i.resetsAt * 1000); // epoch SECONDS (verified)
+        if (Number.isFinite(d.getTime())) resetsAt = d.toISOString();
+      }
+      // Keep scanning so the LAST valid event wins.
+      found = {
+        status: typeof i.status === 'string' ? i.status : null,
+        rate_limit_type: typeof i.rateLimitType === 'string' ? i.rateLimitType : null,
+        utilization: typeof i.utilization === 'number' && Number.isFinite(i.utilization) ? i.utilization : null,
+        resets_at: resetsAt,
+        is_using_overage: typeof i.isUsingOverage === 'boolean' ? i.isUsingOverage : null,
+      };
+    } catch {
+      /* malformed / truncated line — skip it */
+    }
+  }
+  return found;
+}
+
+/**
+ * Last observed session-window utilization: walk recent runs newest-first and
+ * return the last `rate_limit_event` from the most recently written task
+ * stream that has one. Honest empty state (`found: false`) when no run has
+ * captured any telemetry yet.
+ */
+export function readCapacity(root: string, runScanLimit = 5): CapacityInfo {
+  for (const runId of listRunIds(root).slice(0, runScanLimit)) {
+    const logDir = join(root, 'logs', runId);
+    // Newest stream first so "captured_at" really is the latest signal in the run.
+    const streams = safeReaddir(logDir)
+      .filter((n) => n.endsWith('.jsonl'))
+      .map((n) => ({ name: n, mtime: safeMtimeMs(join(logDir, n)) }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const s of streams) {
+      const fields = lastRateLimitEvent(safeRead(join(logDir, s.name)));
+      if (!fields) continue;
+      return {
+        found: true,
+        run_id: runId,
+        task_id: s.name.replace(/\.jsonl$/, ''),
+        captured_at: s.mtime > 0 ? new Date(s.mtime).toISOString() : null,
+        ...fields,
+      };
+    }
+  }
+  return NO_CAPACITY;
+}
+
 // ---- Dossiers -------------------------------------------------------------
 
 export type DossierEntry = {
@@ -402,6 +510,7 @@ export function getOverview(root: string): OverviewData {
     health,
     totals: { runs: runs.length, dossiers: listDossiers(root, 1000).length },
     projects: configuredProjects(),
+    capacity: readCapacity(root),
   };
 }
 
@@ -458,6 +567,13 @@ function safeSize(p: string): number | null {
     return statSync(p).size;
   } catch {
     return null;
+  }
+}
+function safeMtimeMs(p: string): number {
+  try {
+    return statSync(p).mtimeMs;
+  } catch {
+    return 0;
   }
 }
 function safeRead(p: string): string {

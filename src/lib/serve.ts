@@ -28,6 +28,16 @@ export type ServeOpts = {
 
 const DEFAULT_PORT = 4317;
 
+// Inline SVG favicon (no asset pipeline; matches the dashboard's dark palette).
+// Served at /favicon.svg (linked from the page) and /favicon.ico (the browser
+// default probe) so neither 404s in the console.
+const FAVICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+  '<rect width="32" height="32" rx="7" fill="#14171c"/>' +
+  '<text x="14" y="23" font-family="ui-monospace,Consolas,monospace" font-size="20" font-weight="700" text-anchor="middle" fill="#e6e9ee">g</text>' +
+  '<circle cx="25" cy="21.5" r="2.5" fill="#6ee7b7"/>' +
+  '</svg>';
+
 type Json = Record<string, unknown> | unknown[];
 
 function sendJson(res: ServerResponse, status: number, body: Json): void {
@@ -100,6 +110,12 @@ export function createHandler(opts: ServeOpts) {
         }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(readFileSync(htmlPath, 'utf8'));
+        return;
+      }
+
+      if (method === 'GET' && (path === '/favicon.svg' || path === '/favicon.ico')) {
+        res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' });
+        res.end(FAVICON_SVG);
         return;
       }
 

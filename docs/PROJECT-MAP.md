@@ -119,8 +119,8 @@ design history that drives every release lives partly *outside* the repo.
 | File | Responsibility |
 |------|----------------|
 | `serve.ts` | Node `http` server (127.0.0.1 only): static page + JSON read API + guarded POST management API (stop/resume/run/retry-failed/discard/rate/schedule). CSRF + loopback + path-traversal guards. |
-| `dashboard-data.ts` | Pure-ish readers over `~/glean/`: `listRuns`, `getRunDetail` (orchestrator events + task table), `getTaskStream`, `listDossiers`, `readDossierBody`, `getOverview` (+health flags), and the two mutators `retryFailed` (un-dedup failed tasks) + `discardDossier`. |
-| `templates/dashboard.html` | Self-contained SPA (vanilla JS, inline CSS, polls every 5s). Shipped via the `templates` files-glob; read by `serve.ts` at runtime. |
+| `dashboard-data.ts` | Pure-ish readers over `~/glean/`: `listRuns`, `getRunDetail` (orchestrator events + task table), `getTaskStream`, `listDossiers`, `readDossierBody`, `getOverview` (+health flags + `capacity`), `readCapacity` (last `rate_limit_event` from recent task streams), and the two mutators `retryFailed` (un-dedup failed tasks) + `discardDossier`. |
+| `templates/dashboard.html` | Self-contained SPA (vanilla JS, inline CSS, polls every 5s; render-on-change so the poll never clobbers in-progress interaction). Capacity gauge, relative timestamps, ok/failed ratio bars, guided empty states. Shipped via the `templates` files-glob; read by `serve.ts` at runtime. |
 
 ### Scheduling / config / types
 | File | LOC | Responsibility |
@@ -142,6 +142,7 @@ design history that drives every release lives partly *outside* the repo.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, draft-impl variants.
   - `sessions*/` — sample `.jsonl` session histories for discovery tests.
   - **`captured-rate-limit/real-five-hour-events.jsonl`** — ⭐ REAL `claude -p` `rate_limit_event` lines harvested from `~/glean/logs` (2026-06-02). Verified session-limit shape; see [§6](#6-runtime-output-tree-3--glean).
+  - **`captured-rate-limit/real-capacity-event.jsonl`** — REAL sanitized `rate_limit_event` line from the 2026-06-11 drain run (`allowed_warning`, `utilization: 0.95`, `surpassedThreshold`); drives the dashboard `readCapacity` tests.
 
 Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 skip**.
 

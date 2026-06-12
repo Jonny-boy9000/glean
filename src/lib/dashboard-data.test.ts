@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   listRuns,
   getRunDetail,
@@ -12,8 +13,16 @@ import {
   discardDossier,
   retryFailed,
   getOverview,
+  readCapacity,
+  lastRateLimitEvent,
 } from './dashboard-data.js';
 import { writeDrainState, type DrainState } from './state.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// A REAL captured rate_limit_event line (sanitized) from the 2026-06-11 drain run.
+const CAPACITY_FIXTURE = join(
+  __dirname, '..', '..', 'test', 'fixtures', 'captured-rate-limit', 'real-capacity-event.jsonl',
+);
 
 const RUN_ID = '2026-06-11-1800-d705f9';
 
@@ -158,6 +167,79 @@ describe('dossiers', () => {
     const del = discardDossier(root, 'glean/2026-06-11/research-a');
     expect(del.ok).toBe(true);
     expect(existsSync(join(root, 'dossiers', 'glean', '2026-06-11', 'research-a'))).toBe(false);
+  });
+});
+
+describe('readCapacity (rate_limit_event telemetry)', () => {
+  const realLine = readFileSync(CAPACITY_FIXTURE, 'utf8').trim();
+
+  it('finds the LAST rate_limit_event in the most recent run (real captured shape)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-dash-cap-'));
+    seedRun(root);
+    // Append an earlier (lower-utilization) event then the real fixture line:
+    // the LAST one must win.
+    const earlier = JSON.stringify({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'allowed', resetsAt: 1781190000, rateLimitType: 'five_hour', utilization: 0.5, isUsingOverage: false },
+    });
+    writeFileSync(
+      join(root, 'logs', RUN_ID, '049d2720-72ce-4b23-936f-2df3bf4dc8ec.jsonl'),
+      earlier + '\n' + realLine + '\n',
+      { flag: 'a' },
+    );
+    const cap = readCapacity(root);
+    expect(cap.found).toBe(true);
+    expect(cap.run_id).toBe(RUN_ID);
+    expect(cap.task_id).toBe('049d2720-72ce-4b23-936f-2df3bf4dc8ec');
+    expect(cap.status).toBe('allowed_warning');
+    expect(cap.rate_limit_type).toBe('five_hour');
+    expect(cap.utilization).toBe(0.95);
+    expect(cap.resets_at).toBe(new Date(1781197200 * 1000).toISOString());
+    expect(cap.is_using_overage).toBe(false);
+    expect(cap.captured_at).not.toBeNull();
+  });
+
+  it('returns an honest empty state when no stream carries telemetry', () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-dash-cap2-'));
+    seedRun(root); // the seeded stream has no rate_limit_event
+    const cap = readCapacity(root);
+    expect(cap.found).toBe(false);
+    expect(cap.utilization).toBeNull();
+  });
+
+  it('returns empty for a root with no runs at all', () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-dash-cap3-'));
+    expect(readCapacity(root).found).toBe(false);
+  });
+
+  it('skips malformed lines and tolerates absent fields', () => {
+    const text = [
+      '{"type":"rate_limit_event"', // truncated JSON — must not throw
+      '{"type":"rate_limit_event","rate_limit_info":null}', // null info — skipped
+      '{"type":"other","rate_limit_info":{"utilization":0.1}}', // wrong type — skipped
+      // valid but missing utilization + resetsAt (real "allowed" events lack utilization)
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}',
+    ].join('\n');
+    const f = lastRateLimitEvent(text);
+    expect(f).not.toBeNull();
+    expect(f!.status).toBe('allowed');
+    expect(f!.rate_limit_type).toBe('five_hour');
+    expect(f!.utilization).toBeNull();
+    expect(f!.resets_at).toBeNull();
+  });
+
+  it('returns null when the stream has no rate_limit_event lines', () => {
+    expect(lastRateLimitEvent('{"type":"assistant"}\n')).toBeNull();
+    expect(lastRateLimitEvent('')).toBeNull();
+  });
+
+  it('is folded into getOverview as capacity', () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-dash-cap4-'));
+    seedRun(root);
+    writeFileSync(join(root, 'logs', RUN_ID, '049d2720-72ce-4b23-936f-2df3bf4dc8ec.jsonl'), realLine + '\n', { flag: 'a' });
+    const o = getOverview(root);
+    expect(o.capacity.found).toBe(true);
+    expect(o.capacity.utilization).toBe(0.95);
   });
 });
 

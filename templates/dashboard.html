@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>glean</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <style>
   :root {
     --bg: #0b0d10; --panel: #14171c; --panel2: #1b1f26; --border: #262b33;
@@ -77,6 +78,21 @@
     border-left: 3px solid var(--accent2); padding: 10px 14px; border-radius: 8px; z-index: 30; opacity: 0; transition: opacity .2s; }
   .toast.show { opacity: 1; }
   .empty { color: var(--muted); padding: 30px; text-align: center; }
+  .empty pre { display: inline-block; text-align: left; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; margin: 10px 0 0; font-size: 12px; }
+  body.modal-open { overflow: hidden; }
+  /* capacity gauge (overview) */
+  .gauge { height: 10px; border-radius: 5px; background: var(--chip); overflow: hidden; margin-top: 10px; }
+  .gauge > i { display: block; height: 100%; border-radius: 5px; background: var(--ok); transition: width .3s; }
+  .gauge > i.warn { background: var(--warn); }
+  .gauge > i.bad { background: var(--bad); }
+  /* per-row ok/failed ratio bar (runs table) */
+  .ratio { display: inline-flex; width: 40px; height: 8px; border-radius: 4px; overflow: hidden;
+    background: var(--chip); vertical-align: middle; }
+  .ratio i { display: block; height: 100%; }
+  .ratio .r-ok { background: var(--ok); }
+  .ratio .r-bad { background: var(--bad); }
+  tr.noop { opacity: .55; }
 </style>
 </head>
 <body>
@@ -127,6 +143,40 @@ function fmtDur(ms) {
   const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
 }
 function fmtTime(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleString(); }
+function relTimeText(iso) {
+  const d = new Date(iso); if (!iso || isNaN(d)) return '—';
+  const diff = Date.now() - d.getTime(); const abs = Math.abs(diff);
+  const suffix = diff >= 0 ? ' ago' : ' from now';
+  const mins = Math.round(abs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm' + suffix;
+  if (mins < 48 * 60) return Math.round(mins / 60) + 'h' + suffix;
+  return Math.round(mins / 1440) + 'd' + suffix;
+}
+// "2h ago" with the absolute timestamp in a title tooltip; kept fresh by tickClocks().
+function relTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso); if (isNaN(d)) return '—';
+  return '<span data-rel="' + esc(iso) + '" title="' + esc(d.toLocaleString()) + '">' + esc(relTimeText(iso)) + '</span>';
+}
+function countdownText(iso) {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 0) return 'window has reset';
+  const m = Math.ceil(ms / 60000); const h = Math.floor(m / 60);
+  return 'resets in ' + (h > 0 ? h + 'h ' : '') + (m % 60) + 'm';
+}
+// Refresh every relative time + countdown in place — no re-render, so it can
+// never clobber something the user is about to click.
+function tickClocks() {
+  document.querySelectorAll('[data-rel]').forEach(el => { el.textContent = relTimeText(el.dataset.rel); });
+  document.querySelectorAll('[data-resets-at]').forEach(el => { el.textContent = countdownText(el.dataset.resetsAt); });
+}
+setInterval(tickClocks, 30000);
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast('Copied'); }
+  catch { toast('Copy failed'); }
+}
 function fmtBytes(b) { if (b == null) return '—'; if (b < 1024) return b + ' B'; return (b/1024).toFixed(1) + ' KB'; }
 function statusBadge(s) {
   if (!s) return '<span class="badge muted">—</span>';
@@ -157,6 +207,16 @@ function renderOverview() {
     card('Schedule', o.schedule.found ? esc(o.schedule.state) : 'not registered', 'small') +
     '</div>';
 
+  h += renderCapacity(o.capacity);
+
+  if (!(o.projects || []).length) {
+    const snippet = '{\n  "projects": {\n    "C:\\\\path\\\\to\\\\your\\\\repo": { "base_branch": "main" }\n  }\n}';
+    h += '<div class="panel-section" style="margin-top:14px"><h2>No project configured</h2>' +
+      '<div class="sub">"Run now" and "Enable schedule" need a project in <span class="mono">~/glean/config.json</span>. Add one:</div>' +
+      '<pre class="mono" style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">' + esc(snippet) + '</pre>' +
+      '<button data-copy-snippet>Copy snippet</button></div>';
+  }
+
   h += '<div class="panel-section" style="margin-top:14px"><h2>Schedule</h2>';
   if (o.schedule.found) {
     h += '<div class="sub">Task <span class="mono">Glean\\\\Drain</span> — ' + esc(o.schedule.state) + '</div>' +
@@ -173,15 +233,46 @@ function renderOverview() {
     h += '<div class="panel-section"><h2>Latest run</h2>' +
       '<div class="sub mono">' + esc(r.run_id) + '</div>' +
       '<div style="margin-top:8px">' + statusBadge(r.reason) +
-      ' &nbsp; ran ' + (r.ran ?? '—') + ' · failed ' + (r.failed ?? '—') + ' · ' + fmtDur(r.elapsed_ms) +
+      ' &nbsp; started ' + relTime(r.started_at) +
+      ' · ran ' + (r.ran ?? '—') + ' · failed ' + (r.failed ?? '—') + ' · ' + fmtDur(r.elapsed_ms) +
       ' &nbsp; <a data-openrun="' + esc(r.run_id) + '">open →</a></div></div>';
   }
   el.innerHTML = h;
   el.querySelectorAll('[data-action]').forEach(b => b.onclick = () => doAction(b.dataset.action));
   el.querySelectorAll('[data-openrun]').forEach(a => a.onclick = () => { switchTab('runs'); openRun(a.dataset.openrun); });
   el.querySelectorAll('[data-sched]').forEach(b => b.onclick = () => doSchedule(b.dataset.sched));
+  const cs = el.querySelector('[data-copy-snippet]');
+  if (cs) cs.onclick = () => copyText('{\n  "projects": {\n    "C:\\\\path\\\\to\\\\your\\\\repo": { "base_branch": "main" }\n  }\n}');
 }
 function card(k, v, cls) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v ' + (cls||'') + '">' + esc(v) + '</div></div>'; }
+
+// Session-window utilization from the last captured rate_limit_event.
+// utilization is a FRACTION (0.95 = 95%); resetsAt countdown is computed
+// client-side and kept fresh by tickClocks().
+function renderCapacity(cap) {
+  let h = '<div class="panel-section" style="margin-top:14px"><h2>Capacity</h2>';
+  if (!cap || !cap.found) {
+    h += '<div class="sub">No capacity signal captured yet — telemetry appears here after a run\'s claude session emits a rate_limit_event into its stream log.</div></div>';
+    return h;
+  }
+  const pct = cap.utilization != null ? Math.round(Math.min(Math.max(cap.utilization, 0), 1) * 100) : null;
+  const gcls = pct == null ? '' : pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+  const windowName = cap.rate_limit_type ? cap.rate_limit_type.replace(/_/g, ' ') + ' window' : 'unknown window';
+  h += '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
+    '<span style="font-size:22px;font-weight:700">' + (pct != null ? pct + '% used' : 'utilization unknown') + '</span>' +
+    '<span class="sub">' + esc(windowName) + '</span>' + capBadge(cap.status) +
+    (cap.is_using_overage ? ' <span class="badge warn">overage</span>' : '') + '</div>';
+  if (pct != null) h += '<div class="gauge"><i class="' + gcls + '" style="width:' + pct + '%"></i></div>';
+  h += '<div class="sub" style="margin-top:8px">' +
+    (cap.resets_at ? '<span data-resets-at="' + esc(cap.resets_at) + '" title="' + esc(fmtTime(cap.resets_at)) + '">' + esc(countdownText(cap.resets_at)) + '</span> · ' : '') +
+    'captured ' + relTime(cap.captured_at) + ' in run <span class="mono">' + esc(cap.run_id || '—') + '</span></div>';
+  return h + '</div>';
+}
+function capBadge(s) {
+  if (!s) return '';
+  const cls = s === 'allowed' ? 'ok' : s === 'allowed_warning' ? 'warn' : 'bad';
+  return '<span class="badge ' + cls + '">' + esc(s) + '</span>';
+}
 
 async function doAction(path) {
   try { const j = await post(path); toast(j.message || 'done'); await refreshAll(); }
@@ -202,16 +293,37 @@ async function doSchedule(which) {
 }
 
 // ---------- Runs ----------
+function drainCmd() {
+  const proj = ((STATE.overview && STATE.overview.projects) || [])[0];
+  return 'glean run --drain --project ' + (proj || '<path-to-repo>');
+}
+function ratioBar(r) {
+  const ok = Math.max(0, r.ran ?? 0), bad = Math.max(0, r.failed ?? 0), total = ok + bad;
+  if (!total) return '<span class="ratio" title="no tasks ran"></span>';
+  const okPct = Math.round((ok / total) * 100);
+  return '<span class="ratio" title="' + ok + ' ok / ' + bad + ' failed">' +
+    '<i class="r-ok" style="width:' + okPct + '%"></i>' +
+    '<i class="r-bad" style="width:' + (100 - okPct) + '%"></i></span>';
+}
 function renderRuns() {
   const el = $('#view-runs');
   if (STATE.openRun) return renderRunDetail();
-  if (!STATE.runs.length) { el.innerHTML = '<div class="empty">No runs yet.</div>'; return; }
-  let h = '<table><thead><tr><th>Run</th><th>Started</th><th>Outcome</th><th>Ran</th><th>Failed</th><th>Duration</th><th></th></tr></thead><tbody>';
+  if (!STATE.runs.length) {
+    el.innerHTML = '<div class="empty">No runs yet. Start one from a terminal:' +
+      '<br><pre class="mono">' + esc(drainCmd()) + '</pre><br>' +
+      '<button data-copy-cmd>Copy command</button>' +
+      '<div class="sub" style="margin-top:8px">…or use <b>Run now</b> in the top bar (needs a configured project).</div></div>';
+    const c = el.querySelector('[data-copy-cmd]'); if (c) c.onclick = () => copyText(drainCmd());
+    return;
+  }
+  let h = '<table><thead><tr><th>Run</th><th>Started</th><th>Outcome</th><th>Ok / failed</th><th>Ran</th><th>Failed</th><th>Duration</th><th></th></tr></thead><tbody>';
   for (const r of STATE.runs) {
-    h += '<tr class="clickable" data-run="' + esc(r.run_id) + '">' +
+    const noop = r.productive === false && (r.ran ?? 0) === 0 && (r.failed ?? 0) === 0;
+    h += '<tr class="clickable' + (noop ? ' noop' : '') + '" data-run="' + esc(r.run_id) + '">' +
       '<td class="mono">' + esc(r.run_id) + '</td>' +
-      '<td>' + fmtTime(r.started_at) + '</td>' +
+      '<td>' + relTime(r.started_at) + '</td>' +
       '<td>' + (r.in_progress ? '<span class="badge warn">in progress</span>' : statusBadge(r.reason)) + (r.productive === false ? ' <span class="badge muted">no-op</span>' : '') + '</td>' +
+      '<td>' + ratioBar(r) + '</td>' +
       '<td>' + (r.ran ?? '—') + '</td>' +
       '<td>' + ((r.failed ?? 0) > 0 ? '<span class="badge bad">' + r.failed + '</span>' : '0') + '</td>' +
       '<td>' + fmtDur(r.elapsed_ms) + '</td>' +
@@ -279,7 +391,13 @@ async function openStream(runId, taskId) {
 // ---------- Dossiers ----------
 function renderDossiers() {
   const el = $('#view-dossiers');
-  if (!STATE.dossiers.length) { el.innerHTML = '<div class="empty">No dossiers yet.</div>'; return; }
+  if (!STATE.dossiers.length) {
+    el.innerHTML = '<div class="empty">No dossiers yet — they land in <span class="mono">~/glean/dossiers/</span> when a run produces output.' +
+      '<br><pre class="mono">' + esc(drainCmd()) + '</pre><br>' +
+      '<button data-copy-cmd>Copy command</button></div>';
+    const c = el.querySelector('[data-copy-cmd]'); if (c) c.onclick = () => copyText(drainCmd());
+    return;
+  }
   let h = '<table><thead><tr><th>Title</th><th>Date</th><th>Project</th><th>Status</th><th>Output</th><th></th></tr></thead><tbody>';
   for (const d of STATE.dossiers) {
     h += '<tr><td>' + esc(d.title) + '</td><td class="sub">' + esc(d.date) + '</td>' +
@@ -349,9 +467,16 @@ function mdToHtml(md) {
 }
 
 // ---------- modal / tabs / triggers ----------
-function openModal(h) { $('#modal').innerHTML = h; $('#modalBg').classList.add('open'); const c = $('#closeModal'); if (c) c.onclick = closeModal; }
-function closeModal() { $('#modalBg').classList.remove('open'); }
+function openModal(h) {
+  $('#modal').innerHTML = h; $('#modalBg').classList.add('open');
+  document.body.classList.add('modal-open'); // lock body scroll while open
+  const c = $('#closeModal'); if (c) c.onclick = closeModal;
+}
+function closeModal() { $('#modalBg').classList.remove('open'); document.body.classList.remove('modal-open'); }
 $('#modalBg').onclick = (e) => { if (e.target === $('#modalBg')) closeModal(); };
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#modalBg').classList.contains('open')) closeModal();
+});
 
 function switchTab(tab) {
   STATE.tab = tab;
@@ -385,14 +510,26 @@ function renderBar() {
   $('#resumeBtn').style.display = o.stop_set ? '' : 'none';
 }
 
+// Poll hygiene: the 5s poll never re-renders a view whose data is unchanged,
+// so it cannot yank buttons/rows out from under a click on ANY tab (the modal
+// and the open run-detail view are additionally never poll-rendered at all —
+// the modal lives outside the views, and run detail is guarded by openRun).
+// Relative times and the capacity countdown stay fresh via tickClocks(),
+// which mutates text in place. RENDERED tracks what each view last drew.
+const RENDERED = { overview: null, runs: null, dossiers: null };
 async function refreshAll() {
   try {
     const [overview, runs, dossiers] = await Promise.all([api('/api/overview'), api('/api/runs'), api('/api/dossiers')]);
     STATE.overview = overview; STATE.runs = runs.runs; STATE.dossiers = dossiers.dossiers;
     renderBar();
-    if (STATE.tab === 'overview') renderOverview();
-    if (STATE.tab === 'runs' && !STATE.openRun) renderRuns();
-    if (STATE.tab === 'dossiers') renderDossiers();
+    // generated_at changes every poll — exclude it or overview would always re-render.
+    const oKey = JSON.stringify({ ...overview, generated_at: null });
+    const rKey = JSON.stringify(STATE.runs);
+    const dKey = JSON.stringify(STATE.dossiers);
+    if (STATE.tab === 'overview' && oKey !== RENDERED.overview) renderOverview();
+    if (STATE.tab === 'runs' && !STATE.openRun && rKey !== RENDERED.runs) renderRuns();
+    if (STATE.tab === 'dossiers' && dKey !== RENDERED.dossiers) renderDossiers();
+    RENDERED.overview = oKey; RENDERED.runs = rKey; RENDERED.dossiers = dKey;
   } catch (e) { toast('Refresh failed: ' + e.message); }
 }
 
