@@ -90,6 +90,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `executor.ts` | 789 | Per-candidate: provision (worktree/dossier), render template, spawn `claude -p` (stream-json + deny-list + timeout), capture output, classify rate-limit, draft-impl commit + test-status. Biggest file. |
 | `jobobject.ts` | 58 | Child-tree kill on timeout/stop: `taskkill /T /F` on Windows; detached process group + `kill(-pid)` on POSIX. |
 | `deny.ts` | 80 | The non-negotiable `--disallowedTools` deny-list applied to every spawn. |
+| `model-routing.ts` | 97 | **v0.9 model routing (ADR-0006)**: pure `resolveModel`/`resolveMaxTurns` — pool-aware `sonnet` base → task-type default → config `models`/`max_turns` override → pace-tier override (wave-2 `paceTier` hook). Every spawn gets `--model` + `--max-turns`; `task.start` logs the resolved model. |
 | `gc.ts` | 56 | 21-day `prep/glean-*` worktree expiry. |
 | `classify.ts` | 154 | **Rate-limit signal classifier** (session<6h / weekly≥6h / ambiguous). ⚠️ Built on *stderr prose* — but the real signal is a stream-json `rate_limit_event` (see [§6](#6-runtime-output-tree-3--glean)). **v0.8.2 lane E.** |
 
@@ -159,7 +160,7 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 | `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
 | `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
-| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun). See its README. |
+| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |
