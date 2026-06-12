@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { createServer, type Server } from 'node:http';
 import {
+  serveAlive,
+  formatAlreadyRunning,
+  renderServeStatus,
+  type ServeStatusReport,
   buildServeRegisterScript,
   buildServeStartCommand,
   buildServeUnregisterScript,
@@ -282,6 +287,176 @@ describe('parseServePortFromUnit — recover the installed port from the unit fi
 describe(`unit name is stable (${SERVE_SYSTEMD_SERVICE})`, () => {
   it('stays glean-serve.service (uninstall/status address it by name)', () => {
     expect(SERVE_SYSTEMD_SERVICE).toBe('glean-serve.service');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// serveAlive — liveness via GET /api/overview with a short timeout
+// ---------------------------------------------------------------------------
+
+let testServers: Server[] = [];
+afterEach(() => {
+  for (const s of testServers) s.close();
+  testServers = [];
+});
+
+function listen(handler: Parameters<typeof createServer>[1]): Promise<number> {
+  const server = createServer(handler);
+  testServers.push(server);
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      resolve(typeof addr === 'object' && addr ? addr.port : 0);
+    });
+  });
+}
+
+describe('serveAlive', () => {
+  it('returns true when a glean dashboard answers /api/overview', async () => {
+    const port = await listen((req, res) => {
+      if (req.url === '/api/overview') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ state: 'idle', drain: null, totals: { runs: 0 } }));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    expect(await serveAlive(port)).toBe(true);
+  });
+
+  it('returns false when nothing listens on the port', async () => {
+    // Grab a known-free port by binding and immediately closing.
+    const port = await listen(() => {});
+    await new Promise<void>((r) => testServers.pop()!.close(() => r()));
+    expect(await serveAlive(port)).toBe(false);
+  });
+
+  it('returns false when the port is owned by something that is NOT a glean dashboard', async () => {
+    const port = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>some other app</html>');
+    });
+    expect(await serveAlive(port)).toBe(false);
+  });
+
+  it('times out (false) when the server accepts but never responds', async () => {
+    const port = await listen(() => {
+      /* never respond */
+    });
+    expect(await serveAlive(port, 300)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAlreadyRunning — the polite singleton message for EADDRINUSE
+// ---------------------------------------------------------------------------
+
+describe('formatAlreadyRunning', () => {
+  it('points at the live URL and says the logon task owns it when installed', () => {
+    const msg = formatAlreadyRunning(4317, true);
+    expect(msg).toContain('already running at http://127.0.0.1:4317/');
+    expect(msg).toContain('installed: yes');
+    expect(msg).toContain('glean serve uninstall');
+  });
+
+  it('says installed: no for a plain foreground instance', () => {
+    const msg = formatAlreadyRunning(8080, false);
+    expect(msg).toContain('http://127.0.0.1:8080/');
+    expect(msg).toContain('installed: no');
+  });
+
+  it('admits when the install state is unknown', () => {
+    expect(formatAlreadyRunning(4317, null)).toContain('installed: unknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderServeStatus — pure renderer for `glean serve status`
+// ---------------------------------------------------------------------------
+
+function makeReport(overrides: Partial<ServeStatusReport> = {}): ServeStatusReport {
+  return {
+    supported: true,
+    label: 'Glean\\Serve task',
+    registered: true,
+    state: 'Running',
+    lastRun: '2026-06-13T08:00:01.0000000+03:00',
+    installedPort: 4317,
+    probePort: 4317,
+    running: true,
+    ...overrides,
+  };
+}
+
+describe('renderServeStatus', () => {
+  it('reports registered + responding with the URL', () => {
+    const out = renderServeStatus(makeReport());
+    expect(out).toContain('Glean\\Serve task: registered (Running)');
+    expect(out).toContain('last run: 2026-06-13T08:00:01.0000000+03:00');
+    expect(out).toContain('port: 4317');
+    expect(out).toContain('dashboard: responding at http://127.0.0.1:4317/');
+  });
+
+  it('reports registered but NOT responding (dead dashboard)', () => {
+    const out = renderServeStatus(makeReport({ state: 'Ready', running: false }));
+    expect(out).toContain('registered (Ready)');
+    expect(out).toContain('not responding on port 4317');
+  });
+
+  it('reports not registered, with the install hint', () => {
+    const out = renderServeStatus(makeReport({ registered: false, state: null, lastRun: null, installedPort: null, running: false }));
+    expect(out).toContain('not registered');
+    expect(out).toContain('glean serve install');
+  });
+
+  it('still shows liveness when not registered but a foreground serve is up', () => {
+    const out = renderServeStatus(makeReport({ registered: false, state: null, lastRun: null, installedPort: null, running: true }));
+    expect(out).toContain('not registered');
+    expect(out).toContain('responding at http://127.0.0.1:4317/');
+  });
+
+  it('says so when auto-start is unsupported on this platform', () => {
+    const out = renderServeStatus(makeReport({ supported: false, registered: false, state: null, lastRun: null, installedPort: null }));
+    expect(out).toContain('not supported');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exec wrappers — read-only live checks only (mirror of schedule.test.ts's
+// winOnly/linuxOnly blocks). Installing/uninstalling a REAL task in tests is
+// not ok; serveTaskStatus is a pure read of Task Scheduler / systemd state.
+// ---------------------------------------------------------------------------
+
+describe('exec wrappers (live, read-only)', () => {
+  const winOnly = process.platform === 'win32' ? it : it.skip;
+  const linuxOnly = process.platform === 'linux' ? it : it.skip;
+
+  winOnly('serveTaskStatus() reads Task Scheduler without throwing and returns a typed result', async () => {
+    const { serveTaskStatus } = await import('./serve-install.js');
+    const res = serveTaskStatus();
+    expect(typeof res.found).toBe('boolean');
+    if (res.found) {
+      expect(typeof res.state).toBe('string');
+      expect(typeof res.lastRun).toBe('string');
+    }
+  });
+
+  linuxOnly('serveTaskStatus() runs without throwing when nothing is installed', async () => {
+    const { serveTaskStatus } = await import('./serve-install.js');
+    expect(() => serveTaskStatus()).not.toThrow();
+  });
+
+  it('serveStatusReport() composes registration + liveness without touching anything', async () => {
+    const { serveStatusReport } = await import('./serve-install.js');
+    // Probe a port that was just freed — liveness must come back false, and the
+    // report must carry the platform's registration answer without throwing.
+    const port = await listen(() => {});
+    await new Promise<void>((r) => testServers.pop()!.close(() => r()));
+    const report = await serveStatusReport(port);
+    expect(report.probePort).toBe(port);
+    expect(report.running).toBe(false);
+    expect(typeof report.registered).toBe('boolean');
+    expect(typeof report.supported).toBe('boolean');
   });
 });
 

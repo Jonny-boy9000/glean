@@ -200,3 +200,251 @@ export function parseServePortFromUnit(unitText: string): number | null {
   const m = unitText.match(/serve\s+--port\s+(\d+)/);
   return m ? Number(m[1]) : null;
 }
+
+// ===========================================================================
+// Liveness — is a glean dashboard actually answering on the port?
+// ===========================================================================
+
+/**
+ * True when a *glean dashboard* answers GET /api/overview on 127.0.0.1:<port>
+ * within `timeoutMs`. A foreign process that happens to own the port (or a
+ * server that hangs) is false — the overview JSON's `drain` key is the
+ * fingerprint that this is really us.
+ */
+export async function serveAlive(port: number, timeoutMs = 1500): Promise<boolean> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/overview`, { signal: ctrl.signal });
+    if (!res.ok) return false;
+    const body: unknown = await res.json();
+    return typeof body === 'object' && body !== null && 'drain' in body;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Pure — the polite singleton message when `glean serve` finds its port
+ * already owned by a live glean dashboard. `installed` is the Glean\Serve
+ * registration answer (null when it could not be determined).
+ */
+export function formatAlreadyRunning(port: number, installed: boolean | null): string {
+  const url = `http://127.0.0.1:${port}/`;
+  const suffix =
+    installed === true
+      ? "installed: yes — the auto-start task owns it ('glean serve uninstall' removes it)"
+      : installed === false
+        ? "installed: no — another foreground 'glean serve' owns this port"
+        : 'installed: unknown';
+  return `glean dashboard already running at ${url} (${suffix})`;
+}
+
+// ===========================================================================
+// Exec wrappers — thin, platform-gated (never run in tests beyond read-only)
+// ===========================================================================
+
+function assertServeInstallSupported(): void {
+  if (process.platform !== 'win32' && process.platform !== 'linux') {
+    throw new Error(
+      'glean serve install supports Windows (Task Scheduler logon task) and Linux (systemd user service); macOS launchd is future work',
+    );
+  }
+}
+
+function powershell(command: string, capture: false): void;
+function powershell(command: string, capture: true): string;
+function powershell(command: string, capture: boolean): string | void {
+  const out = execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', command], {
+    stdio: ['ignore', capture ? 'pipe' : 'inherit', 'inherit'],
+    windowsHide: true,
+    encoding: 'utf8',
+  });
+  if (capture) return out;
+}
+
+function systemctlUser(args: string[]): void {
+  execFileSync('systemctl', ['--user', ...args], { stdio: ['ignore', 'inherit', 'inherit'] });
+}
+
+/**
+ * Registers (or replaces) the dashboard auto-start at user logon, and starts
+ * it now unless `startNow` is false (the CLI passes false when a dashboard is
+ * already live on the port, so Task Scheduler doesn't burn its restart budget
+ * on EADDRINUSE exits).
+ */
+export function installServe(opts: ServeInstallOpts, startNow = true): void {
+  assertServeInstallSupported();
+  const port = opts.port ?? DEFAULT_SERVE_PORT;
+  if (process.platform === 'linux') {
+    installServeLinux(opts, startNow);
+    return;
+  }
+  powershell(buildServeRegisterScript(opts), false);
+  if (startNow) {
+    powershell(buildServeStartCommand(), false);
+    console.log(`Glean\\Serve started: http://127.0.0.1:${port}/`);
+  }
+}
+
+function installServeLinux(opts: ServeInstallOpts, startNow: boolean): void {
+  if (!systemdUserAvailable()) {
+    throw new Error(
+      'systemd --user is unavailable on this box — glean serve install needs it to supervise the dashboard; run `glean serve` manually instead',
+    );
+  }
+  const port = opts.port ?? DEFAULT_SERVE_PORT;
+  const dir = systemdUserDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, SERVE_SYSTEMD_SERVICE), buildServeServiceUnit(opts));
+  systemctlUser(['daemon-reload']);
+  systemctlUser(startNow ? ['enable', '--now', SERVE_SYSTEMD_SERVICE] : ['enable', SERVE_SYSTEMD_SERVICE]);
+  console.log(
+    `${SERVE_SYSTEMD_SERVICE} enabled: dashboard on http://127.0.0.1:${port}/ at login (Restart=on-failure).`,
+  );
+}
+
+/**
+ * Removes the auto-start registration AND stops the running dashboard.
+ * A no-op when nothing is installed.
+ */
+export function uninstallServe(): void {
+  assertServeInstallSupported();
+  if (process.platform === 'linux') {
+    uninstallServeLinux();
+    return;
+  }
+  powershell(buildServeUnregisterScript(), false);
+  console.log('Glean\\Serve task removed (or was not present); the dashboard, if running under it, was stopped.');
+}
+
+function uninstallServeLinux(): void {
+  if (systemdUserAvailable()) {
+    try {
+      systemctlUser(['disable', '--now', SERVE_SYSTEMD_SERVICE]);
+    } catch {
+      /* not enabled — fine */
+    }
+  }
+  const unitPath = join(systemdUserDir(), SERVE_SYSTEMD_SERVICE);
+  try {
+    if (existsSync(unitPath)) unlinkSync(unitPath);
+  } catch {
+    /* best effort */
+  }
+  if (systemdUserAvailable()) {
+    try {
+      systemctlUser(['daemon-reload']);
+    } catch {
+      /* best effort */
+    }
+  }
+  console.log(`${SERVE_SYSTEMD_SERVICE} removed (or was not present).`);
+}
+
+/**
+ * Reads the auto-start registration state (read-only — safe everywhere).
+ * win32: Glean\Serve task via the status script. linux: the unit file +
+ * `systemctl --user is-active`. Throws on unsupported platforms.
+ */
+export function serveTaskStatus(): ServeTaskStatus {
+  assertServeInstallSupported();
+  if (process.platform === 'linux') return serveTaskStatusLinux();
+  let raw: string;
+  try {
+    raw = powershell(buildServeStatusScript(), true).trim();
+  } catch {
+    return { found: false };
+  }
+  return parseServeStatusOutput(raw);
+}
+
+function serveTaskStatusLinux(): ServeTaskStatus {
+  const unitPath = join(systemdUserDir(), SERVE_SYSTEMD_SERVICE);
+  if (!existsSync(unitPath)) return { found: false };
+  let port: number | null = null;
+  try {
+    port = parseServePortFromUnit(readFileSync(unitPath, 'utf8'));
+  } catch {
+    /* unreadable unit — report found with unknown port */
+  }
+  let state = 'inactive';
+  try {
+    state = execFileSync('systemctl', ['--user', 'is-active', SERVE_SYSTEMD_SERVICE], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    state = 'inactive';
+  }
+  return { found: true, state, lastRun: 'unknown', port };
+}
+
+// ===========================================================================
+// `glean serve status` — composed report + pure renderer
+// ===========================================================================
+
+export type ServeStatusReport = {
+  /** Whether auto-start install is supported on this platform at all. */
+  supported: boolean;
+  /** Platform-appropriate registration label, e.g. 'Glean\\Serve task'. */
+  label: string;
+  registered: boolean;
+  state: string | null;
+  lastRun: string | null;
+  /** Port parsed back from the registration (task args / unit file). */
+  installedPort: number | null;
+  /** Port liveness was probed on (explicit flag > installed > default). */
+  probePort: number;
+  running: boolean;
+};
+
+export function serveInstallLabel(): string {
+  return process.platform === 'win32' ? 'Glean\\Serve task' : SERVE_SYSTEMD_SERVICE;
+}
+
+/** Registration state + dashboard liveness in one read-only report. */
+export async function serveStatusReport(portFlag?: number): Promise<ServeStatusReport> {
+  let supported = true;
+  let status: ServeTaskStatus = { found: false };
+  try {
+    status = serveTaskStatus();
+  } catch {
+    supported = false;
+  }
+  const installedPort = status.found ? status.port : null;
+  const probePort = portFlag ?? installedPort ?? DEFAULT_SERVE_PORT;
+  const running = await serveAlive(probePort);
+  return {
+    supported,
+    label: serveInstallLabel(),
+    registered: status.found,
+    state: status.found ? status.state : null,
+    lastRun: status.found ? status.lastRun : null,
+    installedPort,
+    probePort,
+    running,
+  };
+}
+
+/** Pure — the `glean serve status` text. */
+export function renderServeStatus(r: ServeStatusReport): string {
+  const lines: string[] = [];
+  if (!r.supported) {
+    lines.push(`${r.label}: auto-start install not supported on this platform (Windows + Linux only)`);
+  } else if (!r.registered) {
+    lines.push(`${r.label}: not registered — \`glean serve install\` keeps the dashboard always on`);
+  } else {
+    lines.push(`${r.label}: registered (${r.state})`);
+    lines.push(`  last run: ${r.lastRun}`);
+    lines.push(`  port: ${r.installedPort ?? 'unknown'}`);
+  }
+  lines.push(
+    r.running
+      ? `dashboard: responding at http://127.0.0.1:${r.probePort}/`
+      : `dashboard: not responding on port ${r.probePort}`,
+  );
+  return lines.join('\n');
+}
