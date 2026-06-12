@@ -113,6 +113,45 @@ describe('loadConfig projects.priority', () => {
   });
 });
 
+// v0.9 capacity governor: pacing config (gates the nightly preset; consumed
+// by `glean usage` and recommendTier).
+describe('loadConfig pacing', () => {
+  it('parses pacing.enabled, pacing.haircut and pacing.thresholds', () => {
+    const p = tmpFile(JSON.stringify({
+      pacing: {
+        enabled: false,
+        haircut: 0.2,
+        thresholds: { skip_above: 1.3, small_above: 0.9, normal_above: 0.4 },
+      },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.pacing?.enabled).toBe(false);
+    expect(cfg.pacing?.haircut).toBe(0.2);
+    expect(cfg.pacing?.thresholds).toEqual({ skip_above: 1.3, small_above: 0.9, normal_above: 0.4 });
+  });
+
+  it('leaves pacing undefined when absent (backward compatible)', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).pacing).toBeUndefined();
+  });
+
+  it('accepts partial thresholds (each bound is independently overridable)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { thresholds: { skip_above: 1.5 } } }));
+    const cfg = loadConfig(p);
+    expect(cfg.pacing?.thresholds?.skip_above).toBe(1.5);
+    expect(cfg.pacing?.thresholds?.small_above).toBeUndefined();
+  });
+
+  it('rejects a haircut outside 0..1', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { haircut: 1.5 } })))).toThrow(/haircut/);
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { haircut: -0.1 } })))).toThrow(/haircut/);
+  });
+
+  it('rejects a non-boolean enabled', () => {
+    expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { enabled: 'no' } })))).toThrow(/enabled/);
+  });
+});
+
 describe('setProjectPriority', () => {
   it('round-trips a priority change on an existing project, preserving other fields', () => {
     const p = tmpFile(JSON.stringify({

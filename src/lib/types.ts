@@ -142,10 +142,19 @@ export type DailyUsage = {
   tokens: Record<ModelFamily, number>;
 };
 
+// v0.9 capacity governor: pacing gate config. All optional — absent keys fall
+// back to pacing.ts defaults (enabled, haircut 0, DEFAULT_THRESHOLDS).
+export type PacingConfig = {
+  enabled?: boolean;
+  haircut?: number; // 0..1 manual blind-spot discount
+  thresholds?: { skip_above?: number; small_above?: number; normal_above?: number };
+};
+
 export type GleanConfig = {
   claude_bin?: string;
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
+  pacing?: PacingConfig;
 };
 
 // Discriminated output of a task (T7).

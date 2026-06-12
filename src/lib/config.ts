@@ -28,6 +28,22 @@ const Schema = z.object({
     // Optional — defaults to 15 in runDrain when unset.
     anti_spill_margin_minutes: z.number().int().optional(),
   }).optional(),
+  // v0.9 capacity governor: self-relative pacing gate (consumed by
+  // `glean usage` + the nightly preset via recommendTier).
+  pacing: z.object({
+    // false turns the gate off entirely (recommendTier reports 'normal').
+    enabled: z.boolean().optional(),
+    // Manual 0..1 discount for the local-JSONL blind spot (claude.ai web/
+    // desktop + other machines share the cap but write no JSONL here).
+    haircut: z.number().min(0).max(1).optional(),
+    // Tier boundaries on the effective pace ratio; each independently
+    // overridable (defaults live in pacing.ts DEFAULT_THRESHOLDS).
+    thresholds: z.object({
+      skip_above: z.number().optional(),
+      small_above: z.number().optional(),
+      normal_above: z.number().optional(),
+    }).optional(),
+  }).optional(),
 });
 
 export function loadConfig(path: string): GleanConfig {
