@@ -3,8 +3,8 @@
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
 **Last updated:** 2026-06-12 (v0.8.4 released: PRs #15–#19 merged; Terra Firma live test run)
-**Current release:** **v0.8.4 published to npm** (`@jonny-boy9000/glean@0.8.4`, PRs #15–#19, tag `v0.8.4`) — the `glean serve` management dashboard + capacity panel, Linux beta (systemd user timers), drain-resilience fixes (honest dedup ledger + structured-429 short-circuit, ADR-0003), dossier read-scope (ADR-0002 Accepted), docs consolidation. 482 tests + 6 skips (4 Linux-gated).
-**Branch state:** `main` at v0.8.4, clean.
+**Current release:** **v0.8.5 published to npm** (`@jonny-boy9000/glean@0.8.5`, PRs #15–#23, tag `v0.8.5`) — the `glean serve` management dashboard + capacity panel, Linux beta (systemd user timers), drain-resilience fixes (honest dedup ledger + structured-429 short-circuit, ADR-0003), dossier read-scope (ADR-0002 Accepted), docs consolidation. 538 tests + 6 skips (4 Linux-gated).
+**Branch state:** `main` at v0.8.5, clean.
 **Live validation (2026-06-02):** first real `glean run` (4 tasks, 0 failed) + `--drain` tick both succeeded against `claude -p` on the logged-in machine; `glean schedule enable` registered the unattended drain (fires **Thu 2026-06-04 18:00**, Asia/Jerusalem → Thursday auto-detect). The drain will run unattended; the v0.8.2 **BLOCK-CAPTURE tripwire** auto-captures the real hard-block the first time the weekly cap is hit (closes ADR-0001 — see Up next #1).
 
 ---
