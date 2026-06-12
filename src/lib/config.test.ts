@@ -149,6 +149,9 @@ describe('loadConfig pacing', () => {
 
   it('rejects a non-boolean enabled', () => {
     expect(() => loadConfig(tmpFile(JSON.stringify({ pacing: { enabled: 'no' } })))).toThrow(/enabled/);
+  });
+});
+
 // v0.9 model routing (ADR-0006): per-task-type model + max-turns maps, plus
 // the pacing_promote list ('large' tier route-up eligibility).
 describe('loadConfig model routing keys', () => {
