@@ -68,14 +68,15 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `runDrain.ts` | 246 | `runDrain` — thin exit-and-re-enter wrapper around a burst; guards (STOP/eligibility/no-progress), folds rate-limit classification into `DrainState`. **v0.8.2 lanes A/B/C live here.** |
 | `state.ts` | 161 | `DrainState` type, atomic `state/budget.json` read/write, RUN.lock, STOP sentinel, summary/candidates writers. |
 
-### Discovery (3 parallel read-only passes → candidates)
+### Discovery (4 parallel read-only passes → candidates)
 | File | LOC | Responsibility |
 |------|-----|----------------|
 | `discover-jsonl.ts` | 111 | Scan `~/.claude/projects/*.jsonl` session history for idle/unfinished signals. |
 | `discover-git.ts` | 128 | `git grep TODO/FIXME`, stale branches, `gh pr list`. |
 | `discover-deps.ts` | 226 | New-dependency detection at git boundaries (full-file, section-aware). |
+| `discover-docs.ts` | 173 | **v0.9** Mine the project's OWN planning docs (ROADMAP/TODO/BACKLOG/PLAN, `docs/ROADMAP.md`, `docs/handoff/*.md`, planning-titled root `*.md`) for "up next" list items + unchecked `- [ ]` tasks → `doc` evidence. Caps: 20 files / 200KB / 10 candidates. |
 | `jsonl-extract.ts` | 19 | Helper: pull fields from a session jsonl line. |
-| `candidate-meta.ts` | 35 | `titleFor`/`sourceSignalFor`/`filePathFor`/`today` helpers. |
+| `candidate-meta.ts` | 41 | `titleFor`/`sourceSignalFor`/`filePathFor`/`today` helpers. |
 
 ### Prioritize / dedup
 | File | LOC | Responsibility |
@@ -136,7 +137,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v24-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**).
+- **Integration specs:** `test/integration/v01…v25-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, `wedged` (child stuck emitting past the timeout, ADR-0004), draft-impl variants.
