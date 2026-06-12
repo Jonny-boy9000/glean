@@ -47,6 +47,20 @@ if (Array.isArray(scenario.shell_commands)) {
   }
 }
 
+// Wedged-child simulation (ADR-0004): keep emitting a line on an interval for
+// the whole lifetime, holding the stdout pipe open — like the real `claude -p`
+// stuck in an api_retry loop on 2026-06-12. Combined with sleep_ms this child
+// never finishes "politely" within a test's timeout window.
+if (scenario.stdout_interval_ms && scenario.stdout_interval_line) {
+  const interval = setInterval(
+    () => process.stdout.write(scenario.stdout_interval_line + '\n'),
+    scenario.stdout_interval_ms,
+  );
+  // If our reader vanishes (executor force-resolved and destroyed its pipe
+  // end), EPIPE would crash node loudly; exit quietly instead.
+  process.stdout.on('error', () => { clearInterval(interval); process.exit(0); });
+}
+
 // Stream stdout lines (e.g., stream-json fragments) with delays
 const stdoutLines = scenario.stdout_lines ?? [];
 const stderrLines = scenario.stderr_lines ?? [];
