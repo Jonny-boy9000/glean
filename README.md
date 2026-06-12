@@ -72,7 +72,7 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 | `glean run --project <path> [--budget 60m] [--dry-run]` | One discovery + execution pass (a "burst"). |
 | `glean run --drain --project <path>` | A drain *tick*: run a burst, and on a 5-hour rate-limit save state and exit so the scheduler can re-launch it. |
 | `glean schedule enable\|disable\|status` | Register/remove the weekly schedule that drives the drain (Windows Task Scheduler, or a Linux systemd user timer). |
-| `glean serve [--port 4317] [--open]` | Launch the local management dashboard (127.0.0.1 only): browse runs/dossiers, view per-task streams, and manage operation — Run now, Stop/Resume, retry failed tasks, discard/rate dossiers, toggle the schedule. See the [dashboard guide](docs/guides/dashboard.md). |
+| `glean serve [--port 4317] [--open]` | Launch the local management dashboard (127.0.0.1 only): browse runs/dossiers, view per-task streams, and manage operation — Run now, Stop/Resume, retry failed tasks, discard/rate dossiers, toggle the schedule. **`glean serve install`** keeps it always on (auto-start at logon + restart on failure; `uninstall` / `status` manage it). See the [dashboard guide](docs/guides/dashboard.md). |
 | `glean morning [--md]` | The "while you slept" receipt for the latest run/drain window. `--md` prints shareable Markdown. |
 | `glean today` | Today's dossiers across all projects. |
 | `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |
@@ -81,7 +81,7 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 
 ### The dashboard (`glean serve`)
 
-Everything glean does, in one local page — every run with its outcome and ok/failed ratio, every dossier (view, rate, discard), live session-window capacity from captured `rate_limit_event` telemetry, and one-click management (Run now, Stop/Resume, retry failed tasks, toggle the schedule). Binds to `127.0.0.1` only.
+Everything glean does, in one local page — every run with its outcome and ok/failed ratio, every dossier (view, rate, discard), live session-window capacity from captured `rate_limit_event` telemetry, and one-click management (Run now, Stop/Resume, retry failed tasks, toggle the schedule). Binds to `127.0.0.1` only. Run `glean serve install` once and it is always there — auto-started at logon (Windows scheduled task / Linux systemd user service) and restarted if it dies; plain `glean serve` stays terminal-bound.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/dashboard-runs.png" alt="glean serve dashboard: runs table with outcomes, ok/failed ratio bars and durations for every drain burst" width="760">

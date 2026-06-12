@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Always-on dashboard: `glean serve install | uninstall | status`.** Plain `glean serve` is terminal-bound — the dashboard died with the terminal, so it was down whenever you wanted to glance at it. `install` registers it to start at user logon **and restarts it if it dies**: Windows gets a `Glean\Serve` scheduled task (current user only, battery-safe, hidden via `conhost --headless`, RestartCount 3 / 1-min interval, the status/unregister cmdlets using the split `-TaskPath`/`-TaskName` form per the v0.8.3 lesson); Linux gets a `glean-serve.service` systemd **user** service (`Restart=on-failure`, `systemctl --user enable --now`). `status` reports both registration *and* real liveness (a `GET /api/overview` probe with a hang-guard timeout), so "registered" can't masquerade as "responding". Pure script/unit builders + thin platform-gated exec wrappers, mirroring `schedule.ts`.
+- **Polite singleton.** A second `glean serve` against a port already owned by a live glean dashboard now prints `already running at http://127.0.0.1:<port>/ (installed: yes/no)` and exits 0 — the dashboard *is* available. A port owned by a non-glean process is still an error (exit 1).
+
 ## v0.8.5 — 2026-06-13 (PRs #20–#23, all found by the 2026-06-12 live multi-project test campaign)
 
 ### Added
