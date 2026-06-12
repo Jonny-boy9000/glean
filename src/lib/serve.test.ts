@@ -273,6 +273,29 @@ describe('glean serve — project portfolio', () => {
     expect(j.reason).toMatch(/priority/i);
   });
 
+  it('boots with the real bundled template and serves the Projects tab markup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'glean-serve-html-'));
+    const realTemplates = join(__dirname, '..', '..', 'templates');
+    const { server, url } = await startServer({
+      root, templatesDir: realTemplates, cliEntry: 'X:\\nope\\glean.js', nodePath: process.execPath, port: 0,
+    });
+    servers.push(server);
+    const r = await fetch(url);
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    // tab + view container
+    expect(html).toContain('data-tab="projects"');
+    expect(html).toContain('id="view-projects"');
+    // wired to the portfolio API
+    expect(html).toContain('/api/projects');
+    expect(html).toContain('/api/projects/add');
+    expect(html).toContain('/api/projects/priority');
+    // segmented priority control + add-project affordance + opt-in hint
+    expect(html).toContain('data-priority');
+    expect(html).toMatch(/Add project/i);
+    expect(html).toMatch(/set a priority to opt in/i);
+  });
+
   it('rejects portfolio POSTs without the dashboard header (CSRF guard)', async () => {
     const { url, repoA } = await bootPortfolio();
     for (const p of ['api/projects/add', 'api/projects/priority']) {
