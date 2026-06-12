@@ -8,6 +8,7 @@ import type { RateLimitClassification } from './classify.js';
 import { discoverJsonl } from './discover-jsonl.js';
 import { discoverGit } from './discover-git.js';
 import { discoverDeps } from './discover-deps.js';
+import { discoverDocs } from './discover-docs.js';
 import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
@@ -140,12 +141,15 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     // network. A transient failure there must NOT crash an unattended burst — it
     // would leave the lock held / no summary written for a drain tick. Catch it,
     // log, and finalize cleanly with reason 'discovery-failed' (exit_code 0).
-    let jsonl, git, deps;
+    let jsonl, git, deps, docs;
     try {
-      [jsonl, git, deps] = await Promise.all([
+      // v0.9 discover-docs: fourth parallel read-only pass — mines the project's
+      // OWN planning docs (ROADMAP/TODO/handoff "up next" items) as candidates.
+      [jsonl, git, deps, docs] = await Promise.all([
         discoverJsonl(opts.projectPath, { projectsRoot: opts.projectsRoot }),
         discoverGit(opts.projectPath, { ghBin: opts.ghBin }),
         discoverDeps(opts.projectPath),
+        discoverDocs(opts.projectPath),
       ]);
     } catch (e) {
       appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'discover.failed', error: (e as Error).message });
@@ -153,8 +157,8 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       exitCode = 0;
       return finalize();
     }
-    const all = [...jsonl, ...git, ...deps];
-    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'discover.done', jsonl: jsonl.length, git: git.length, deps: deps.length });
+    const all = [...jsonl, ...git, ...deps, ...docs];
+    appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'discover.done', jsonl: jsonl.length, git: git.length, deps: deps.length, docs: docs.length });
 
     const projSlug = projectSlug(opts.projectPath);
     const { kept, skipped } = filterRecentlyProduced(all, join(opts.gleanRoot, 'dossiers'), projSlug);
