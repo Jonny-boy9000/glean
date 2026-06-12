@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
@@ -10,8 +11,8 @@ import {
 } from './state.js';
 import { scheduleStatus, type ScheduleStatusResult } from './schedule.js';
 import { titleFor } from './candidate-meta.js';
-import { loadConfig, defaultConfigPath } from './config.js';
-import type { Candidate, RunSummary } from './types.js';
+import { loadConfig, defaultConfigPath, effectivePriority } from './config.js';
+import type { Candidate, GleanConfig, ProjectPriority, RunSummary } from './types.js';
 
 // dashboard-data: pure-ish readers over ~/glean/ that power `glean serve`.
 // Everything here is read-only EXCEPT retryFailed (edits budget.json) and
@@ -544,6 +545,153 @@ export function retryFailed(root: string, runId: string): { ok: boolean; removed
 
 export function budgetPath(root: string): string {
   return drainStatePath(root);
+}
+
+// ---- v0.9 project portfolio: registry scanner ------------------------------
+
+export type ProjectRegistryEntry = {
+  path: string;
+  exists: boolean;
+  is_git: boolean;
+  sessions: number;
+  last_activity: string | null; // ISO mtime of the newest session jsonl
+  configured: boolean;
+  priority: ProjectPriority;
+};
+
+// Path-prefix comparisons are done on '/'-normalized strings, case-insensitive
+// on Windows only (POSIX paths are case-sensitive).
+function normPath(p: string): string {
+  const n = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? n.toLowerCase() : n;
+}
+function isUnder(child: string, parent: string): boolean {
+  const c = normPath(child);
+  const p = normPath(parent);
+  return c === p || c.startsWith(p + '/');
+}
+
+const WORKTREE_RE = /[\\/]\.claude[\\/]worktrees([\\/]|$)/i;
+const APPDATA_TEMP_RE = /[\\/]AppData[\\/]Local[\\/]Temp([\\/]|$)/i;
+
+/**
+ * Noise filter for session cwds — all three kinds VERIFIED present on the dev
+ * machine: glean's own spawned dossier sessions (cwd under ~/glean/), agent
+ * worktree sessions (cwd under .claude\worktrees\), and temp-dir scratch
+ * sessions. `tempDirs` overrides the default temp detection (os.tmpdir() +
+ * the literal AppData\Local\Temp pattern) — tests need this because their
+ * fixtures themselves live under the real temp dir.
+ */
+export function isNoiseCwd(cwd: string, gleanRoot: string, tempDirs?: string[]): boolean {
+  if (WORKTREE_RE.test(cwd)) return true;
+  if (isUnder(cwd, gleanRoot)) return true;
+  if (tempDirs) return tempDirs.some((t) => isUnder(cwd, t));
+  return isUnder(cwd, tmpdir()) || APPDATA_TEMP_RE.test(cwd);
+}
+
+/**
+ * Extract the real project path from a session jsonl's "cwd" field. The
+ * history DIR-NAME SLUG IS NEVER DECODED — it is ambiguous (verified on this
+ * machine: slug `C--ClaudeCode-Work` actually encodes `C:\ClaudeCode_Work`).
+ * Scans lines of the given file; first parseable string `cwd` wins.
+ */
+function cwdFromJsonl(path: string): string | null {
+  for (const line of safeRead(path).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes('"cwd"')) continue; // cheap pre-filter
+    try {
+      const obj = JSON.parse(trimmed) as { cwd?: unknown };
+      if (typeof obj.cwd === 'string' && obj.cwd) return obj.cwd;
+    } catch {
+      /* malformed line — keep scanning */
+    }
+  }
+  return null;
+}
+
+/**
+ * The project registry: every project visible in ~/.claude/projects/* session
+ * history (real path from the jsonl `cwd` field, noise filtered, deduped)
+ * unioned with the configured projects from config.json. Configured projects
+ * carry their dial (absent = 'normal'); merely-discovered ones are 'off'.
+ * Sorted configured-first, then last_activity (newest first).
+ */
+export function scanProjectRegistry(
+  gleanRoot: string,
+  claudeProjectsDir: string,
+  configPath = defaultConfigPath(),
+  opts?: { tempDirs?: string[] },
+): ProjectRegistryEntry[] {
+  let cfg: GleanConfig = {};
+  try {
+    cfg = loadConfig(configPath);
+  } catch {
+    /* corrupt config — registry still shows discovered projects */
+  }
+
+  // Aggregate history dirs by resolved cwd (multiple dirs can map to one cwd).
+  const byKey = new Map<string, { path: string; sessions: number; lastMtimeMs: number }>();
+  for (const dirName of safeReaddir(claudeProjectsDir)) {
+    const dir = join(claudeProjectsDir, dirName);
+    if (!isDir(dir)) continue;
+    const files = safeReaddir(dir)
+      .filter((n) => n.endsWith('.jsonl'))
+      .map((n) => ({ path: join(dir, n), mtime: safeMtimeMs(join(dir, n)) }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length === 0) continue;
+    // Newest file first; fall back to older files until a cwd is found.
+    let cwd: string | null = null;
+    for (const f of files) {
+      cwd = cwdFromJsonl(f.path);
+      if (cwd) break;
+    }
+    if (!cwd || isNoiseCwd(cwd, gleanRoot, opts?.tempDirs)) continue;
+    const key = normPath(cwd);
+    const agg = byKey.get(key) ?? { path: cwd, sessions: 0, lastMtimeMs: 0 };
+    agg.sessions += files.length;
+    agg.lastMtimeMs = Math.max(agg.lastMtimeMs, files[0].mtime);
+    byKey.set(key, agg);
+  }
+
+  const entries: ProjectRegistryEntry[] = [];
+  const seenConfigured = new Set<string>();
+  // Configured projects first (their config-key spelling wins for display).
+  for (const projectPath of Object.keys(cfg.projects ?? {})) {
+    const key = normPath(projectPath);
+    seenConfigured.add(key);
+    const hist = byKey.get(key);
+    entries.push(makeEntry(projectPath, hist, true, effectivePriority(cfg, projectPath)));
+  }
+  // Then discovered-only projects (implicitly 'off' until the user opts in).
+  for (const [key, hist] of byKey) {
+    if (seenConfigured.has(key)) continue;
+    entries.push(makeEntry(hist.path, hist, false, 'off'));
+  }
+
+  return entries.sort((a, b) => {
+    if (a.configured !== b.configured) return a.configured ? -1 : 1;
+    const am = a.last_activity ? Date.parse(a.last_activity) : 0;
+    const bm = b.last_activity ? Date.parse(b.last_activity) : 0;
+    if (am !== bm) return bm - am;
+    return a.path.localeCompare(b.path);
+  });
+}
+
+function makeEntry(
+  path: string,
+  hist: { sessions: number; lastMtimeMs: number } | undefined,
+  configured: boolean,
+  priority: ProjectPriority,
+): ProjectRegistryEntry {
+  return {
+    path,
+    exists: isDir(path),
+    is_git: existsSync(join(path, '.git')),
+    sessions: hist?.sessions ?? 0,
+    last_activity: hist && hist.lastMtimeMs > 0 ? new Date(hist.lastMtimeMs).toISOString() : null,
+    configured,
+    priority,
+  };
 }
 
 // ---- small fs helpers -----------------------------------------------------
