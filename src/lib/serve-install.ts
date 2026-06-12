@@ -210,8 +210,16 @@ export function parseServePortFromUnit(unitText: string): number | null {
  * within `timeoutMs`. A foreign process that happens to own the port (or a
  * server that hangs) is false — the overview JSON's `drain` key is the
  * fingerprint that this is really us.
+ *
+ * The default timeout is a hang-guard, not an expected wait: a dead port
+ * fails fast (ECONNREFUSED), so the full timeout is only ever spent when the
+ * port-owner accepts but never answers. It is deliberately generous because
+ * a CROSS-PROCESS loopback connect on Windows can take ~7s (measured on the
+ * dev box: in-process connects are instant, process→process connects hit a
+ * SYN-retransmit pattern — likely WFP/AV filtering). A tighter default made
+ * the CLI misreport a live dashboard as a foreign process.
  */
-export async function serveAlive(port: number, timeoutMs = 1500): Promise<boolean> {
+export async function serveAlive(port: number, timeoutMs = 10_000): Promise<boolean> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {

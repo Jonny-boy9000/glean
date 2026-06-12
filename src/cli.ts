@@ -396,13 +396,21 @@ const scheduleCmd = defineCommand({
 });
 
 const serveCmd = defineCommand({
-  meta: { name: 'serve', description: 'Launch the local management dashboard (view runs/dossiers, stop/resume, retry failed, discard, schedule)' },
+  meta: {
+    name: 'serve',
+    description:
+      'Launch the local management dashboard (foreground), or keep it always on: serve install | uninstall | status',
+  },
   args: {
+    action: {
+      type: 'positional',
+      required: false,
+      description: 'install (auto-start at logon + start now) | uninstall | status — omit to run in the foreground',
+    },
     port: { type: 'string', default: '4317', description: 'Port to bind on 127.0.0.1' },
     open: { type: 'boolean', default: false, description: 'Open the dashboard in the default browser' },
   },
   async run({ args }) {
-    const { startServer } = await import('./lib/serve.js');
     const nodePath = process.execPath;
     const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
     const port = Number(args.port);
@@ -410,10 +418,65 @@ const serveCmd = defineCommand({
       console.error(`error: invalid port '${args.port}'`);
       process.exit(1);
     }
+
+    const action = args.action ? String(args.action).toLowerCase() : '';
+    if (action) {
+      const si = await import('./lib/serve-install.js');
+
+      if (action === 'install') {
+        // A live dashboard already owns the port → register the auto-start but
+        // skip "start now", so Task Scheduler / systemd doesn't burn its
+        // restart-on-failure budget on EADDRINUSE exits.
+        const alreadyUp = await si.serveAlive(port);
+        si.installServe({ nodePath, cliEntry, port }, !alreadyUp);
+        if (alreadyUp) {
+          console.log(
+            `dashboard already running at http://127.0.0.1:${port}/ — auto-start registered; it takes over after the current instance exits (or at next logon).`,
+          );
+          return;
+        }
+        // Start is async under the platform scheduler — wait briefly for
+        // liveness. Until the dashboard binds, each probe fails fast
+        // (ECONNREFUSED), so retry with sleeps; once bound, serveAlive's own
+        // timeout absorbs the (Windows-measured) slow cross-process connect.
+        let up = false;
+        for (let i = 0; i < 8 && !up; i++) {
+          up = await si.serveAlive(port);
+          if (!up) await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (up) {
+          console.log(`glean dashboard: http://127.0.0.1:${port}/ (always on — starts at logon, restarts on failure)`);
+        } else {
+          console.log(
+            `auto-start registered, but the dashboard is not responding on port ${port} yet — check 'glean serve status' in a moment.`,
+          );
+        }
+        return;
+      }
+
+      if (action === 'uninstall') {
+        si.uninstallServe();
+        return;
+      }
+
+      if (action === 'status') {
+        // Only override the probe port when --port was given explicitly;
+        // otherwise the report probes the *installed* port.
+        const portExplicit = process.argv.includes('--port');
+        const report = await si.serveStatusReport(portExplicit ? port : undefined);
+        console.log(si.renderServeStatus(report));
+        return;
+      }
+
+      console.error(`error: unknown action '${action}' — use: install | uninstall | status (or no action for foreground)`);
+      process.exit(1);
+    }
+
+    const { startServer } = await import('./lib/serve.js');
     try {
       const { url } = await startServer({ root: gleanRoot(), templatesDir: BUNDLED_TEMPLATES, cliEntry, nodePath, port });
       console.log(`glean dashboard: ${url}`);
-      console.log('  (127.0.0.1 only — full management surface. Ctrl+C to stop.)');
+      console.log('  (127.0.0.1 only — full management surface. Ctrl+C to stop. `glean serve install` keeps it always on.)');
       if (args.open) {
         const { spawn } = await import('node:child_process');
         const cmd = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open';
@@ -423,7 +486,20 @@ const serveCmd = defineCommand({
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err.code === 'EADDRINUSE') {
-        console.error(`error: port ${port} is already in use — pass --port <n>`);
+        // Singleton behavior: if the port-owner IS a glean dashboard, that is
+        // success ("the dashboard is available"), not an error.
+        const si = await import('./lib/serve-install.js');
+        if (await si.serveAlive(port)) {
+          let installed: boolean | null = null;
+          try {
+            installed = si.serveTaskStatus().found;
+          } catch {
+            installed = null;
+          }
+          console.log(si.formatAlreadyRunning(port, installed));
+          return;
+        }
+        console.error(`error: port ${port} is already in use (not by a glean dashboard) — pass --port <n>`);
       } else {
         console.error(`error: ${err.message}`);
       }
