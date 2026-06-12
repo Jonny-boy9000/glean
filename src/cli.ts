@@ -303,6 +303,49 @@ const projectsCmd = defineCommand({
   },
 });
 
+const usageCmd = defineCommand({
+  meta: {
+    name: 'usage',
+    description: 'Self-relative weekly pacing: this week vs your 4-week baseline, pace ratio, drain tier recommendation',
+  },
+  args: {
+    json: { type: 'boolean', default: false, description: 'Emit the machine-readable report (the nightly gate consumes this)' },
+  },
+  async run({ args }) {
+    const { loadDailyUsage } = await import('./lib/usage.js');
+    const { recommendTier, BLIND_SPOT_NOTE } = await import('./lib/pacing.js');
+    const { readCapacity, defaultClaudeProjectsDir } = await import('./lib/dashboard-data.js');
+    const { renderUsage } = await import('./lib/render-usage.js');
+    const cfg = loadConfig(defaultConfigPath());
+    const now = new Date();
+    // 42-day lookback comfortably covers the 4-week baseline window + the
+    // current week (mtime-based file filter — a perf gate, not accounting).
+    const days = loadDailyUsage(defaultClaudeProjectsDir(), {
+      gleanRoot: gleanRoot(),
+      sinceMs: now.getTime() - 42 * 86_400_000,
+    });
+    const recommendation = recommendTier({
+      days,
+      now,
+      enabled: cfg.pacing?.enabled,
+      haircut: cfg.pacing?.haircut,
+      thresholds: cfg.pacing?.thresholds,
+    });
+    const report = {
+      generated_at: now.toISOString(),
+      recommendation,
+      capacity: readCapacity(gleanRoot()),
+      blind_spot: BLIND_SPOT_NOTE,
+    };
+    if (args.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      return;
+    }
+    const useColor = Boolean(process.stdout.isTTY);
+    process.stdout.write(renderUsage(report, useColor) + '\n');
+  },
+});
+
 const scheduleCmd = defineCommand({
   meta: { name: 'schedule', description: 'Manage the weekly drain schedule — Windows Task Scheduler or Linux systemd user timer (enable | disable | status)' },
   args: {
@@ -459,7 +502,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd },
 });
 
 export function main(argv: string[]): void {
