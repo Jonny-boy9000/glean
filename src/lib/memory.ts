@@ -190,7 +190,7 @@ export class Memory {
       candidate_slug: string;
       candidate_type: CandidateType;
       title: string;
-      source_signal: 'jsonl' | 'git-todo' | 'gh-pr' | 'deps';
+      source_signal: 'jsonl' | 'git-todo' | 'gh-pr' | 'deps' | 'doc';
       file_path: string | null;
       est_value: number;
       est_tokens: number;
