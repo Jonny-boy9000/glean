@@ -11,6 +11,29 @@
 
 ## In progress
 
+### v0.9 "capacity governor" — strategy locked 2026-06-12
+
+Design: [`docs/design/2026-06-12-capacity-governor-strategy.md`](./design/2026-06-12-capacity-governor-strategy.md)
+(office-hours session; analyzes the 2026-06-11 drain — it ran out of WORK, not capacity).
+v0.9.0 scope: `glean usage` (self-relative weekly pacing via ccusage-style local JSONL
+accounting), nightly schedule preset gated by pace tier, `--model sonnet` default on
+drained tasks (Max plans: separate Sonnet weekly pool + Opus burns the shared cap
+several times faster), `--max-turns` guard on every spawn, plus the two engine fixes
+below. Later stages: utilization-aware admission control, estimate-vs-actual
+calibration, triage pass, dossier→draft-impl chaining, `glean mcp` dossier server,
+and the **project portfolio** (dashboard registry of every discovered project with
+per-project priority dials steering allocation; a `discover-docs` pass mining each
+project's roadmap/handoff docs as candidates; post-hoc overlap learning — compare
+what glean prepped vs what the user actually advanced, recomputed from git/JSONL
+each run, nudging allocation within the user's dial).
+New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `projects set`, `doctor`.
+
+In-flight branches (2026-06-12 session):
+- `fix/drain-rate-limit-resilience` — bug 1 (failed≠completed ledger) + bug 2 (429 short-circuit)
+- `feat/dashboard-ux` — capacity/utilization panel, favicon, empty states, usability
+- `feat/linux-support` — systemd user timers (Persistent=true) + POSIX process-group kill
+- `docs/consolidate-state` — this consolidation (single live handoff, stale-state fixes)
+
 ### `glean serve` — local management dashboard — **BUILT 2026-06-12 (unreleased)**
 
 A localhost web dashboard for viewing AND managing glean's operation: runs list

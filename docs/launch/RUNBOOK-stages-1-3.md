@@ -57,7 +57,7 @@ Verify at **https://github.com/Jonny-boy9000/glean/issues/new/choose** — you s
 ```markdown
 glean is early and Windows-first. Posting the honest state up front so nobody's surprised, and so it's clear where a contribution or a test report helps most.
 
-### What works today (dogfooded + tested, 352 tests)
+### What works today (dogfooded + tested, 406 tests)
 - `glean run` discovery → ranked candidates → research dossiers + pre-fetched docs
 - `draft-impl`: drafts code for the top TODO into an isolated `git worktree` on a `prep/glean-*` branch, runs your `test_command`, reports pass/fail
 - `glean morning` receipt; `glean rate` usefulness telemetry; `glean gc`
@@ -119,11 +119,11 @@ glean — spends your leftover weekly Claude capacity on prep work while you're 
 
 What it is: a local CLI for the problem we all have on Pro/Max — the weekly rate-limit window resets Saturday and whatever capacity you didn't spend just evaporates. In that idle tail, glean spawns headless `claude -p` sessions to do speculative prep on your own repos: it drafts code for your top TODO into a throwaway git worktree branch (never touches main), writes research dossiers for unfinished threads it finds in your session history + `git grep TODO/FIXME`, and pre-fetches library docs. Point Windows Task Scheduler at it and it drains the weekend's leftover unattended. Monday you run `glean morning` and get a receipt — each draft branch with a verified `tests: pass` and the command to review it. (Real receipt screenshot below.)
 
-How Claude helped: glean was built almost entirely with Claude Code — the discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, and its 352 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
+How Claude helped: glean was built almost entirely with Claude Code — the discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, and its 406 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
 
 Security & data (it's a downloadable CLI, so here's exactly what it touches): glean runs entirely on your machine. It reads — read-only — your local git repos and your `~/.claude/projects` session history to find unfinished work, and it drives your own already-logged-in `claude` CLI. It never reads, stores, or transmits your credentials, makes no direct API calls, and sends nothing off your machine; all output is written locally under `~/glean`. Every spawned session runs under a deny-list that blocks `git push` / `checkout` / `reset` and `gh pr` mutations, so it can't touch your main branch or publish anything. MIT-licensed and fully inspectable.
 
-Free: yes, MIT, `npm i -g @jonny-boy9000/glean`. Honest status: early and Windows-first; the single-run + draft path is dogfooded, but the unattended multi-day drain hasn't had its first real overnight run in the wild yet — so I'd genuinely value people trying it and telling me what breaks.
+Free: yes, MIT, `npm i -g @jonny-boy9000/glean`. Honest status: early and Windows-first. It runs for real now — my latest live run against `claude -p` produced research dossiers + pre-fetched docs with zero failures, and the unattended weekend drain is armed and ticking. The one thing I haven't watched in the wild yet is it hitting the hard weekly cap on a full multi-day drain, so I'd value people running it on their own repos and telling me what breaks.
 
 https://github.com/Jonny-boy9000/glean
 
@@ -155,7 +155,7 @@ the megathread; it's where the mods and the right audience expect project shares
 ```
 **glean** — it spends your leftover weekly Claude capacity on prep work while you're away.
 
-Built with: Claude Code, top to bottom — discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, 352 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
+Built with: Claude Code, top to bottom — discovery heuristics, the executor that wraps `claude -p`, the Windows Task Scheduler integration, 406 tests. And at runtime it *is* Claude Code: every unit of work is a headless `claude -p` session it spawns and supervises.
 
 What it does: on Pro/Max your weekly rate-limit window resets Saturday and the capacity you didn't spend just evaporates. In that idle tail, glean does speculative prep on your own repos — drafts code for your top TODO into a throwaway `git worktree` branch (never touches main), writes research dossiers for unfinished threads it finds in your `~/.claude` session history + `git grep TODO/FIXME`, and pre-fetches docs. Point Windows Task Scheduler at it and it drains the weekend's leftover unattended, pausing at each 5-hour limit and stopping the moment the weekly cap fires so it never spills into next week. Monday: `glean morning` prints a receipt — each draft branch with a verified `tests: pass` and the command to review it.
 
