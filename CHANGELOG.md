@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Model routing per spawned task** ([ADR-0006](./docs/decisions/0006-model-routing-pool-assumption.md)): every `claude -p` spawn now passes an explicit `--model`, layered base-to-top — pool-aware `sonnet` default (Max plans carry a separate Sonnet weekly pool, and Opus burns the shared cap several times faster) → task-type default (`fetch-docs→haiku`, `research-dossier→sonnet`, `draft-impl→sonnet`) → `config.json` `models` map (alias or full model id) → pace-tier override ('large' promotes one tier, only for `pacing_promote` types — default `["draft-impl"]`; 'small'/'skip' demote everything to haiku; the real tier is wired by the upcoming pacing engine). The resolved model is logged on each orchestrator `task.start` event, because aliases drift across model generations.
+- **`--max-turns` runaway-loop guard on every spawn**: defaults fetch-docs 8, research-dossier 24, draft-impl 50; `config.json` `max_turns` map overrides per type. Orthogonal to the per-task wall-clock timeout.
+
 ## v0.8.5 — 2026-06-13 (PRs #20–#23, all found by the 2026-06-12 live multi-project test campaign)
 
 ### Added

@@ -64,3 +64,5 @@ not a conclusion — verify the negative case before asserting (see `CLAUDE.md` 
 | [0001](./0001-rate-limit-signal-source.md) | Rate-limit signal source (stderr vs. stream-json `rate_limit_event`) | Superseded by 0003 |
 | [0002](./0002-dossier-project-read-scope.md) | Research-dossier sessions get read-scope to the project | **Accepted** (validated by the 2026-06-11 live drain: 9/16 dossiers repo-grounded) |
 | [0003](./0003-structured-stream-json-block-signal.md) | Rate-limit block signal: structured stream-json 429 | **Accepted** (session shape verified; weekly still unobserved) |
+| [0004](./0004-wall-clock-task-deadline-and-bounded-kill-grace.md) | Per-task timeout: wall-clock deadline polling + bounded kill grace | **Accepted** |
+| [0006](./0006-model-routing-pool-assumption.md) | Model routing: pool-aware Sonnet default + unverified Pro pool split | **Accepted** (Pro pool-split assumption open) |
