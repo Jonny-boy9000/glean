@@ -1,0 +1,11 @@
+# Simulates the 2026-06-12 live failure shape (ADR-0004): a `claude -p` wedged
+# in an api_retry loop — keeps the stdout pipe open and emitting indefinitely,
+# never finishing on its own within a test's window. Paired (in executor tests)
+# with a stubbed-out terminateTree to model a kill that fails to take the child
+# down. sleep_ms bounds the leak if a test's cleanup ever fails.
+# NOTE: the line deliberately carries no rate_limit / is_error token so it can
+# never trip the live stream block-scan.
+stdout_interval_ms: 200
+stdout_interval_line: '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"error":"unknown"}'
+sleep_ms: 30000
+exit_code: 0
