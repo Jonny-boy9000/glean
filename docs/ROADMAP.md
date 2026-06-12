@@ -2,7 +2,7 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-06-02 (v0.8.3 published; first real run + drain validated on the live machine)
+**Last updated:** 2026-06-12 (`glean serve` dashboard built + verified; two 2026-06-11 drain bugs filed)
 **Current release:** **v0.8.3 published to npm** (`@jonny-boy9000/glean@0.8.3`, merge `7e08e3a`/PR #14, tag `v0.8.3`) — patch: fix `glean schedule status`/`disable` querying Task Scheduler by the combined name (found live; misreported a registered task as "not registered"). Built on v0.8.2 drain robustness. 406 tests + 2 documented skips.
 **Branch state:** `main` at v0.8.3, clean.
 **Live validation (2026-06-02):** first real `glean run` (4 tasks, 0 failed) + `--drain` tick both succeeded against `claude -p` on the logged-in machine; `glean schedule enable` registered the unattended drain (fires **Thu 2026-06-04 18:00**, Asia/Jerusalem → Thursday auto-detect). The drain will run unattended; the v0.8.2 **BLOCK-CAPTURE tripwire** auto-captures the real hard-block the first time the weekly cap is hit (closes ADR-0001 — see Up next #1).
@@ -11,7 +11,42 @@
 
 ## In progress
 
-*(nothing currently)*
+### `glean serve` — local management dashboard — **BUILT 2026-06-12 (unreleased)**
+
+A localhost web dashboard for viewing AND managing glean's operation: runs list
+→ run detail (orchestrator timeline + task table + per-task stream) → retry
+failed tasks; dossiers list → rendered OUT.md + discard/rate; overview with
+drain-window health + STOP/schedule state + one-click Run/Stop/Resume. Built on
+Node's `http` (no new deps) + a self-contained `templates/dashboard.html`;
+127.0.0.1-only with CSRF/loopback/path-traversal guards. New files:
+`src/lib/serve.ts`, `src/lib/dashboard-data.ts`, `templates/dashboard.html`,
+`docs/design/glean-serve-dashboard.md`; +21 tests (436 total). Verified live
+against the real `~/glean` (34 runs, 62 dossiers). **Remaining before release:**
+version bump + CHANGELOG/README, and `glean serve` integration row in the
+verification checklist.
+
+---
+
+## Bugs found in the 2026-06-11 drain (file before next release)
+
+> Surfaced by reading the unattended 2026-06-11 drain (3 ticks: 18:00 productive,
+> 19:00/20:00 no-ops). Both are real and verified; the dashboard *surfaces* them
+> but the fixes belong in the drain engine.
+
+1. **Failed tasks are recorded as completed and never retried.** All 7 tasks
+   that died on a session-limit `429` (zero output) were added to
+   `budget.json.completed_task_ids` and `summary.completed_evidence_hashes`
+   (`pipeline.ts:~255` pushes the hash after *any* result, incl. failed), so
+   later ticks `task.skip_completed` them forever. Fix: only record `ok`/
+   `ok-fallback` outcomes in the dedup ledger; let failed/timeout/rate-limit
+   re-enter discovery. (`glean serve`'s **Retry failed** button is a manual
+   workaround — it removes those hashes from `completed_task_ids`.)
+2. **No rate-limit short-circuit.** After the first `429` the orchestrator
+   spawned 6 more doomed tasks (each rejected in ~2s) instead of detecting the
+   session-limit signal (present as a structured `rate_limit_event` /
+   `error:"rate_limit"` in the stream) and stopping or pausing until `resetsAt`.
+   `orchestrator.log` logged no rate-limit event at all. Ties into ADR-0001 and
+   the classifier work.
 
 ---
 

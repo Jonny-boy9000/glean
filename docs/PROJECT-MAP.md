@@ -57,7 +57,7 @@ design history that drives every release lives partly *outside* the repo.
 
 ## 2. Source (`src/`) — module map
 
-`src/cli.ts` (357 LOC) — citty CLI: dispatches `run [--drain]`, `schedule`, `morning [--md]`,
+`src/cli.ts` — citty CLI: dispatches `run [--drain]`, `serve`, `schedule`, `morning [--md]`,
 `today`, `peek`, `rate`, `gc`, `stop`, `repair`, `version`. Everything else is `src/lib/*.ts`
 (one responsibility per file). Grouped by subsystem:
 
@@ -114,6 +114,13 @@ design history that drives every release lives partly *outside* the repo.
 | `render-today.ts` | 117 | `glean today` terminal output. |
 | `render-morning.ts` | 223 | `glean morning` terminal receipt; exports `PLAIN`/`outcomeLine` (single honesty switch). |
 | `render-receipt.ts` | 95 | `RECEIPT.md` markdown (reuses `render-morning`'s data model). |
+
+### Dashboard (`glean serve` — local management surface)
+| File | Responsibility |
+|------|----------------|
+| `serve.ts` | Node `http` server (127.0.0.1 only): static page + JSON read API + guarded POST management API (stop/resume/run/retry-failed/discard/rate/schedule). CSRF + loopback + path-traversal guards. |
+| `dashboard-data.ts` | Pure-ish readers over `~/glean/`: `listRuns`, `getRunDetail` (orchestrator events + task table), `getTaskStream`, `listDossiers`, `readDossierBody`, `getOverview` (+health flags), and the two mutators `retryFailed` (un-dedup failed tasks) + `discardDossier`. |
+| `templates/dashboard.html` | Self-contained SPA (vanilla JS, inline CSS, polls every 5s). Shipped via the `templates` files-glob; read by `serve.ts` at runtime. |
 
 ### Scheduling / config / types
 | File | LOC | Responsibility |
