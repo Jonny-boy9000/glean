@@ -22,6 +22,13 @@ to work on this.
 - Session was idle {{evidence.idle_hours}}h
 - Recent assistant turns (last 3, trimmed):
 {{evidence.recent_turns | quote}}
+{{else if evidence.kind == "doc"}}
+- Planning doc: `{{evidence.file}}` (line {{evidence.line}}, under heading "{{evidence.heading}}")
+- Planned item: {{evidence.item_text}}
+- This item was written by the project's own author into a roadmap/plan/handoff
+  document — treat it as explicit intent. Read `{{evidence.file}}` (and any
+  documents it references) in the project for the full surrounding context
+  before researching.
 {{/if}}
 
 ## Task

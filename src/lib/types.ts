@@ -34,7 +34,20 @@ export type EvidenceDep = {
   added_at: string;
 };
 
-export type Evidence = EvidenceTodo | EvidenceJsonl | EvidencePr | EvidenceDep;
+// v0.9 discover-docs: an actionable item mined from a project's own planning
+// docs (ROADMAP/TODO/BACKLOG/handoff "up next" lists and unchecked `- [ ]`
+// task items). `file` is project-relative with forward slashes; `line` is the
+// 1-based line of the item (volatile — stripped from the dedup hash, see
+// dedup.ts, so an edit above the item does not re-hash it).
+export type EvidenceDoc = {
+  kind: 'doc';
+  file: string;
+  heading: string;
+  item_text: string;
+  line: number;
+};
+
+export type Evidence = EvidenceTodo | EvidenceJsonl | EvidencePr | EvidenceDep | EvidenceDoc;
 
 export type CandidateStatus = 'pending' | 'running' | 'ok' | 'ok-fallback' | 'timeout' | 'failed' | 'rate-limit' | 'skipped';
 

@@ -85,6 +85,35 @@ describe('evidenceHash', () => {
     };
     expect(evidenceHash(before)).not.toBe(evidenceHash(shifted));
   });
+  // v0.9 discover-docs: a planning-doc item's `line` IS volatile (an edit above
+  // the item shifts it without changing the item) — unlike todo evidence, doc
+  // evidence is identified by file + heading + item_text, so `line` is stripped
+  // from the hash and an unchanged item stays deduped across runs.
+  it('doc evidence: a line shift keeps the SAME hash (line is volatile)', () => {
+    const before: Candidate = {
+      id: 'x', evidence_hash: 'ignored', type: 'research-dossier', project_path: 'C:\\Glean',
+      evidence: { kind: 'doc', file: 'ROADMAP.md', heading: 'Up next', item_text: 'Ship the governor', line: 12 },
+      est_value: 1, est_tokens: 1, status: 'pending',
+    };
+    const shifted: Candidate = {
+      ...before,
+      evidence: { kind: 'doc', file: 'ROADMAP.md', heading: 'Up next', item_text: 'Ship the governor', line: 19 },
+    };
+    expect(evidenceHash(before)).toBe(evidenceHash(shifted));
+  });
+
+  it('doc evidence: changed item text yields a NEW hash', () => {
+    const a: Candidate = {
+      id: 'x', evidence_hash: 'ignored', type: 'research-dossier', project_path: 'C:\\Glean',
+      evidence: { kind: 'doc', file: 'ROADMAP.md', heading: 'Up next', item_text: 'Ship the governor', line: 12 },
+      est_value: 1, est_tokens: 1, status: 'pending',
+    };
+    const b: Candidate = {
+      ...a,
+      evidence: { kind: 'doc', file: 'ROADMAP.md', heading: 'Up next', item_text: 'Ship the dashboard', line: 12 },
+    };
+    expect(evidenceHash(a)).not.toBe(evidenceHash(b));
+  });
 });
 
 describe('filterRecentlyProduced', () => {

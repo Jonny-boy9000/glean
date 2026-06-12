@@ -49,7 +49,7 @@ assumed, loudly, where the code is**. Rules:
 
 ## Architecture pointers (read `glean.md` for detail)
 
-- **§5.1 Discovery** — three parallel read-only passes: JSONL session signals, git scan (`git grep TODO/FIXME`, stale `claude/*` branches, `gh pr list`), and `find -mtime -7`. Emits `candidates.json`.
+- **§5.1 Discovery** — parallel read-only passes: JSONL session signals, git scan (`git grep TODO/FIXME`, stale `claude/*` branches, `gh pr list`), `find -mtime -7`, plus the v0.9 `discover-docs` pass mining the project's own planning docs (ROADMAP/TODO/handoff "up next" items) as candidates. Emits `candidates.json`.
 - **§5.2 Prioritizer** — ranks by `est_value / log(est_tokens + 1)` with type weights (`draft-impl` 1.0 → `fetch-docs` 0.2). Last 30 min of budget restricts to `fetch-docs` only.
 - **§5.3 Executor** — per-candidate: provision workspace (worktree for `draft-impl`, dossier dir otherwise), render template, spawn `claude -p` with `--output-format stream-json --include-partial-messages` + deny-list + 8 min timeout, capture output to `OUT.md` (or auto-commit for `draft-impl`).
 - **§5.4 Dossier layout** — `~/glean/{dossiers,work,logs,state,templates}/...`. `INDEX.md` per date sorts by realized value and includes Apply/Discard hints.
