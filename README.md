@@ -72,6 +72,7 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 | `glean run --project <path> [--budget 60m] [--dry-run]` | One discovery + execution pass (a "burst"). |
 | `glean run --drain --project <path>` | A drain *tick*: run a burst, and on a 5-hour rate-limit save state and exit so the scheduler can re-launch it. |
 | `glean schedule enable\|disable\|status` | Register/remove the weekly schedule that drives the drain (Windows Task Scheduler, or a Linux systemd user timer). |
+| `glean serve [--port 4317] [--open]` | Launch the local management dashboard (127.0.0.1 only): browse runs/dossiers, view per-task streams, and manage operation — Run now, Stop/Resume, retry failed tasks, discard/rate dossiers, toggle the schedule. See the [dashboard guide](docs/guides/dashboard.md). |
 | `glean morning [--md]` | The "while you slept" receipt for the latest run/drain window. `--md` prints shareable Markdown. |
 | `glean today` | Today's dossiers across all projects. |
 | `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |

@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-02 (v0.8.2 built + PR open; 402 tests + 2 documented skips on `feat/v0.8.2-drain-robustness`).
+> **Last updated:** 2026-06-02 (v0.8.2 built + PR open; 406 tests + 2 documented skips).
 
 ---
 
@@ -20,7 +20,7 @@ design history that drives every release lives partly *outside* the repo.
 | **2. gstack project store** | `%USERPROFILE%\.gstack\projects\Jonny-boy9000-glean\` | ❌ no (machine-local) | office-hours **design docs**, **eng-review test plans**, review/task logs, cross-session **learnings** | **lost on a fresh machine** |
 | **3. Runtime output** | `%USERPROFILE%\glean\` (`~/glean`) | ❌ no (generated) | `dossiers/`, `work/` worktrees, `logs/` (incl. real `claude -p` stream-json), `state/budget.json`, `memory.db`, `config.json` | regenerated per run |
 
-> ⚠️ **Fragility:** Handoff docs (e.g. `docs/handoff/v0.8.2-handoff.md`) reference Tree 2 by
+> ⚠️ **Fragility:** Handoff docs (e.g. `docs/archive/v0.8.2-handoff.md`) reference Tree 2 by
 > **absolute path**. A fresh clone on another machine cannot see the design docs / eng-review
 > test plans. See [Strategic review → R1](#strategic-review--find--recommendations).
 >
@@ -57,7 +57,7 @@ design history that drives every release lives partly *outside* the repo.
 
 ## 2. Source (`src/`) — module map
 
-`src/cli.ts` (357 LOC) — citty CLI: dispatches `run [--drain]`, `schedule`, `morning [--md]`,
+`src/cli.ts` — citty CLI: dispatches `run [--drain]`, `serve`, `schedule`, `morning [--md]`,
 `today`, `peek`, `rate`, `gc`, `stop`, `repair`, `version`. Everything else is `src/lib/*.ts`
 (one responsibility per file). Grouped by subsystem:
 
@@ -115,6 +115,13 @@ design history that drives every release lives partly *outside* the repo.
 | `render-morning.ts` | 223 | `glean morning` terminal receipt; exports `PLAIN`/`outcomeLine` (single honesty switch). |
 | `render-receipt.ts` | 95 | `RECEIPT.md` markdown (reuses `render-morning`'s data model). |
 
+### Dashboard (`glean serve` — local management surface)
+| File | Responsibility |
+|------|----------------|
+| `serve.ts` | Node `http` server (127.0.0.1 only): static page + JSON read API + guarded POST management API (stop/resume/run/retry-failed/discard/rate/schedule). CSRF + loopback + path-traversal guards. |
+| `dashboard-data.ts` | Pure-ish readers over `~/glean/`: `listRuns`, `getRunDetail` (orchestrator events + task table), `getTaskStream`, `listDossiers`, `readDossierBody`, `getOverview` (+health flags + `capacity`), `readCapacity` (last `rate_limit_event` from recent task streams), and the two mutators `retryFailed` (un-dedup failed tasks) + `discardDossier`. |
+| `templates/dashboard.html` | Self-contained SPA (vanilla JS, inline CSS, polls every 5s; render-on-change so the poll never clobbers in-progress interaction). Capacity gauge, relative timestamps, ok/failed ratio bars, guided empty states. Shipped via the `templates` files-glob; read by `serve.ts` at runtime. |
+
 ### Scheduling / config / types
 | File | LOC | Responsibility |
 |------|-----|----------------|
@@ -135,6 +142,7 @@ design history that drives every release lives partly *outside* the repo.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, draft-impl variants.
   - `sessions*/` — sample `.jsonl` session histories for discovery tests.
   - **`captured-rate-limit/real-five-hour-events.jsonl`** — ⭐ REAL `claude -p` `rate_limit_event` lines harvested from `~/glean/logs` (2026-06-02). Verified session-limit shape; see [§6](#6-runtime-output-tree-3--glean).
+  - **`captured-rate-limit/real-capacity-event.jsonl`** — REAL sanitized `rate_limit_event` line from the 2026-06-11 drain run (`allowed_warning`, `utilization: 0.95`, `surpassedThreshold`); drives the dashboard `readCapacity` tests.
 
 Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 skip**.
 
@@ -146,9 +154,9 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 |------|---------|
 | `docs/ROADMAP.md` | Planned-work source of truth. |
 | `docs/PROJECT-MAP.md` | This index. |
-| `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — what's next after v0.8.2/v0.8.3 shipped (ADR-0001 validation gate, launch, roadmap candidates). **Read this to pick up cold.** |
+| `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
-| `docs/handoff/v0.8.2-handoff.md` | Historical — the v0.8.2 bucket (shipped, marked ✅). |
+| `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
 | `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = the rate-limit signal source. See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
@@ -220,7 +228,7 @@ Real lines preserved as a fixture (see [§3](#3-tests-test--co-located-srclibtes
 |---|---------|----------------|--------|
 | **R1** | Design history (Tree 2) is **machine-local + referenced by absolute path** from in-repo handoffs. A fresh clone loses the canonical drain design + eng-review test plans. | Mirror the gstack design docs + eng-review test plans into the repo. | ✅ **resolved 2026-06-02** — mirrored into `docs/design/` (see its README). Re-mirror new docs each release. |
 | **R2** | `docs/launch/LAUNCH-PLAN.md` + `RUNBOOK-stages-1-3.md` were a real deliverable but **untracked**. | Commit them. | ✅ **resolved 2026-06-02** — committed with the index. |
-| **R3** | `.remember/` was leftover logs from the **disabled** `remember` plugin. | Delete the dir. | ✅ **resolved 2026-06-02** — removed. |
+| **R3** | `.remember/` was leftover logs from the **disabled** `remember` plugin. | Delete the dir. | ⚠️ **superseded 2026-06-12** — the dir is back and is now **hook-managed** (a SessionStart hook writes session-continuity notes there; gitignored). Role clarified: `.remember/` = machine-local *session* memory (ephemeral, hook-owned, never authoritative); `docs/handoff/` = the *project* handoff (repo-owned, authoritative). Do not delete `.remember/` (the hook recreates it) and never treat its contents as project state. |
 | **R4** | `classify.ts` is built on the **wrong premise** (stderr prose) — the real signal is the stream-json `rate_limit_event`, and was capturable from existing logs. | Reframe v0.8.2 item 5: parse `rate_limit_event.rate_limit_info` (session verified; weekly value still to capture); keep stderr regex as fallback. | ✅ captured in open-work/06 |
 | **R5** | CLAUDE.md says "executor reacts to **stderr** signals" / "budget is indirect" — but a structured per-message `utilization`/`resetsAt`/`status` readout exists. | Update the load-bearing-constraint wording once the stream-json classifier lands; note proactive `allowed_warning` (90%) enables real anti-spill (item 3). | ⏳ |
 

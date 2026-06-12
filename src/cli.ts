@@ -318,6 +318,43 @@ const scheduleCmd = defineCommand({
   },
 });
 
+const serveCmd = defineCommand({
+  meta: { name: 'serve', description: 'Launch the local management dashboard (view runs/dossiers, stop/resume, retry failed, discard, schedule)' },
+  args: {
+    port: { type: 'string', default: '4317', description: 'Port to bind on 127.0.0.1' },
+    open: { type: 'boolean', default: false, description: 'Open the dashboard in the default browser' },
+  },
+  async run({ args }) {
+    const { startServer } = await import('./lib/serve.js');
+    const nodePath = process.execPath;
+    const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
+    const port = Number(args.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      console.error(`error: invalid port '${args.port}'`);
+      process.exit(1);
+    }
+    try {
+      const { url } = await startServer({ root: gleanRoot(), templatesDir: BUNDLED_TEMPLATES, cliEntry, nodePath, port });
+      console.log(`glean dashboard: ${url}`);
+      console.log('  (127.0.0.1 only — full management surface. Ctrl+C to stop.)');
+      if (args.open) {
+        const { spawn } = await import('node:child_process');
+        const cmd = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+        const cmdArgs = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+        spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      }
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === 'EADDRINUSE') {
+        console.error(`error: port ${port} is already in use — pass --port <n>`);
+      } else {
+        console.error(`error: ${err.message}`);
+      }
+      process.exit(1);
+    }
+  },
+});
+
 const gcCmd = defineCommand({
   meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
   args: {
@@ -345,7 +382,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd },
 });
 
 export function main(argv: string[]): void {
