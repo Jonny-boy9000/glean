@@ -49,6 +49,32 @@ describe('spawnInJob.kill awaitability (F7)', () => {
   });
 });
 
+describe('spawnInJob on POSIX', () => {
+  // detached:true on POSIX puts the child in its OWN process group, so
+  // process.kill(-pid) can reap the whole tree (claude -p spawns grandchildren:
+  // git, test runners). Without detached the child shares glean's group and the
+  // negative-pid kill either fails or would nuke glean itself.
+  it.skipIf(process.platform === 'win32')('spawns the child as its own process-group leader', async () => {
+    const job = spawnInJob('sh', ['-c', 'sleep 30']);
+    await wait(200);
+    // Signal 0 = existence probe. The group -pid exists only if the child is a
+    // group leader (i.e. it was spawned detached).
+    expect(() => process.kill(-(job.pid as number), 0)).not.toThrow();
+    await job.kill();
+    expect(await job.exit).not.toBe(0);
+  });
+
+  it.skipIf(process.platform === 'win32')('group-kill also reaps grandchildren', async () => {
+    // sh spawns sleep as a grandchild; after kill() the group must be gone.
+    const job = spawnInJob('sh', ['-c', 'sleep 30 & sleep 30']);
+    await wait(300);
+    const pgid = -(job.pid as number);
+    await job.kill();
+    await wait(200);
+    expect(() => process.kill(pgid, 0)).toThrow(); // whole group gone
+  });
+});
+
 describe('spawnInJob.kill on Windows', () => {
   it.skipIf(process.platform !== 'win32')('calls taskkill /T /F with the child pid', async () => {
     vi.mocked(execFileMock).mockClear();

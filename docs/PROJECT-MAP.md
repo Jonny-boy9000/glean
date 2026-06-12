@@ -87,7 +87,7 @@ design history that drives every release lives partly *outside* the repo.
 | File | LOC | Responsibility |
 |------|-----|----------------|
 | `executor.ts` | 789 | Per-candidate: provision (worktree/dossier), render template, spawn `claude -p` (stream-json + deny-list + timeout), capture output, classify rate-limit, draft-impl commit + test-status. Biggest file. |
-| `jobobject.ts` | 52 | Windows Job Object child-tree kill on timeout/stop. |
+| `jobobject.ts` | 58 | Child-tree kill on timeout/stop: `taskkill /T /F` on Windows; detached process group + `kill(-pid)` on POSIX. |
 | `deny.ts` | 80 | The non-negotiable `--disallowedTools` deny-list applied to every spawn. |
 | `gc.ts` | 56 | 21-day `prep/glean-*` worktree expiry. |
 | `classify.ts` | 154 | **Rate-limit signal classifier** (session<6h / weekly≥6h / ambiguous). ⚠️ Built on *stderr prose* — but the real signal is a stream-json `rate_limit_event` (see [§6](#6-runtime-output-tree-3--glean)). **v0.8.2 lane E.** |
@@ -125,7 +125,7 @@ design history that drives every release lives partly *outside* the repo.
 ### Scheduling / config / types
 | File | LOC | Responsibility |
 |------|-----|----------------|
-| `schedule.ts` | 211 | Windows Task Scheduler register/disable/status (`buildRegisterScript` is pure); `defaultTriggerDay(tz)`. |
+| `schedule.ts` | 450 | Weekly drain schedule register/disable/status — Windows Task Scheduler + **Linux systemd user timer (crontab fallback)**; pure builders (`buildRegisterScript`, `buildSystemdUnit`/`buildTimerUnit`/`buildCrontabLine`); `defaultTriggerDay(tz)`. |
 | `config.ts` | 44 | Zod-validated `config.json` loader. **v0.8.2 lanes A/B add fields.** |
 | `types.ts` | 129 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`. |
 

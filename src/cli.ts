@@ -227,7 +227,7 @@ const morningCmd = defineCommand({
 });
 
 const scheduleCmd = defineCommand({
-  meta: { name: 'schedule', description: 'Manage the Glean\\Drain Windows Scheduled Task (enable | disable | status)' },
+  meta: { name: 'schedule', description: 'Manage the weekly drain schedule — Windows Task Scheduler or Linux systemd user timer (enable | disable | status)' },
   args: {
     action: { type: 'positional', required: true, description: 'enable | disable | status' },
     project: { type: 'string', required: false, description: 'Project path to target (required for enable)' },
@@ -249,10 +249,12 @@ const scheduleCmd = defineCommand({
 
     if (action === 'status') {
       const result = scheduleStatus();
+      // Platform-appropriate label; on Windows this stays the exact 'Glean\Drain'.
+      const label = process.platform === 'win32' ? 'Glean\\Drain' : 'glean-drain.timer';
       if (!result.found) {
-        console.log('Glean\\Drain: not registered');
+        console.log(`${label}: not registered`);
       } else {
-        console.log(`Glean\\Drain: ${result.state}`);
+        console.log(`${result.taskName}: ${result.state}`);
         console.log(`  last run: ${result.lastRun}`);
         console.log(`  next run: ${result.nextRun}`);
       }
