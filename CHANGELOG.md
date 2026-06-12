@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Per-task timeout enforcement survives system sleep and failed kills** (ADR-0004). Live run `2026-06-12-1711-41b981`: an 8-min task recorded 34.5 min because the machine entered S3 sleep mid-task — the single `setTimeout` deadline cannot fire while asleep (and firing promptly on resume is platform luck), so the kill landed 26 minutes late and the 15-min budget overran to 37 min. The deadline is now polled against the wall clock (`Date.now()`, every 250 ms), so after any sleep/resume or clock jump the kill fires within ~a quarter second of the process being runnable again. Separately, a kill that fails to take the child down no longer wedges the executor forever: every kill (timeout and rate-limit alike) now carries a bounded grace (default 5 s, `ExecCtx.killGraceMs`) after which the spawn force-resolves with its real status, detaches the wedged pipes, and honestly reports `descendantsDead: false` so worktree lock cleanup (F7) stays safe. Regression-tested with a new `wedged.yaml` fake-claude scenario (emits an `api_retry`-shaped line forever, like the live failure) plus injectable kill/clock seams.
+
 ## v0.8.4 — 2026-06-12 (PRs #15–#19)
 
 ### Added

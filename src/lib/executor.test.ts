@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { executeOne, __diffStat, __commitsBeyondBase, __clearStaleIndexLock } from './executor.js';
+import { executeOne, __diffStat, __commitsBeyondBase, __clearStaleIndexLock, __nowMs } from './executor.js';
 import * as jobobject from './jobobject.js';
+import { __terminateTree } from './jobobject.js';
+import type { ChildProcess } from 'node:child_process';
 import { researchAllowedTools } from './deny.js';
 import type { Candidate } from './types.js';
 
@@ -206,6 +208,69 @@ describe('executeOne', () => {
     expect(result.status).toBe('timeout');
   });
 
+  // ── ADR-0004: per-task timeout enforcement (2026-06-12 live bug) ───────────
+  // Live run 2026-06-12-1711-41b981: an 8-min task ran 34.5 min because the
+  // machine slept mid-task (single setTimeout can't fire while asleep, and its
+  // firing promptly on resume is platform luck), and because a kill that fails
+  // to take the child down left the executor awaiting job.exit forever. Two
+  // invariants below: (1) the deadline is enforced against the WALL CLOCK, so a
+  // sleep/resume jump still kills within seconds; (2) after a kill is issued the
+  // executor force-resolves within a bounded grace even if the child never dies.
+
+  it('ADR-0004: a kill that fails to terminate a wedged child still resolves within the bounded grace', async () => {
+    const origTerminate = __terminateTree.impl;
+    const leaked: ChildProcess[] = [];
+    // Simulate the kill failing outright (taskkill error / wrong pid / etc.):
+    // the terminate request "completes" but nothing dies. The wedged fake keeps
+    // the stdout pipe open and emitting, exactly like the live api_retry loop.
+    __terminateTree.impl = (child: ChildProcess) => { leaked.push(child); return Promise.resolve(); };
+    try {
+      const root = tmpRoot();
+      const taskTimeoutMs = 1_000;
+      const killGraceMs = 2_000;
+      const t0 = Date.now();
+      const result = await executeOne(candidate(), {
+        runId: 'r-adr4-wedged', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs, killGraceMs,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'wedged.yaml') },
+      });
+      const elapsed = Date.now() - t0;
+      expect(result.status).toBe('timeout');
+      // Bounded: ~timeout + grace (+ slack), NOT the wedged child's 30s lifetime.
+      expect(elapsed).toBeLessThan(2 * (taskTimeoutMs + killGraceMs));
+      expect(result.elapsed_ms).toBeLessThan(2 * (taskTimeoutMs + killGraceMs));
+    } finally {
+      __terminateTree.impl = origTerminate;
+      // Reap the deliberately-leaked children with the REAL terminate.
+      for (const c of leaked) await origTerminate(c);
+    }
+  }, 20_000);
+
+  it('ADR-0004: the deadline is wall-clock — a sleep/resume clock jump kills within seconds, not at timer due-time', async () => {
+    const origNow = __nowMs.impl;
+    const t0 = Date.now();
+    // Simulate the 2026-06-12 sleep: after 1s of real run the wall clock has
+    // jumped 30 minutes ahead (S3 sleep mid-task). A 5-minute setTimeout would
+    // not fire for minutes of awake time; the wall-clock deadline check must
+    // kill within ~a poll interval of the jump.
+    __nowMs.impl = () => Date.now() + (Date.now() - t0 > 1_000 ? 30 * 60_000 : 0);
+    try {
+      const root = tmpRoot();
+      const result = await executeOne(candidate(), {
+        runId: 'r-adr4-sleep', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 5 * 60_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'timeout.yaml') },
+      });
+      expect(result.status).toBe('timeout');
+      // The real (awake) elapsed time stays seconds, not minutes.
+      expect(Date.now() - t0).toBeLessThan(15_000);
+    } finally {
+      __nowMs.impl = origNow;
+    }
+  }, 20_000);
+
   it('produces distinct work dirs for TODOs at different lines in same file', async () => {
     const root = tmpRoot();
     const repo = tmpRepo();
@@ -310,8 +375,10 @@ describe('executeOne', () => {
     });
   });
 
-  it('clears the timeout handle on normal exit (no dangling timers)', async () => {
-    const clearSpy = vi.spyOn(global, 'clearTimeout');
+  it('clears the deadline checker on normal exit (no dangling timers)', async () => {
+    // ADR-0004: the per-task deadline is a polled setInterval (wall-clock check),
+    // so the no-dangling-handle guarantee is about clearInterval now.
+    const clearSpy = vi.spyOn(global, 'clearInterval');
     try {
       const root = tmpRoot();
       const result = await executeOne(candidate(), {

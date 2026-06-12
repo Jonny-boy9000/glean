@@ -35,6 +35,10 @@ const STREAM_SIGNAL_BYTES = 16384;
 // Cap for the stdout line-assembly buffer (a single stream-json event line is
 // normally far smaller; a truncated over-long line just fails the JSON parse).
 const STDOUT_LINE_BUF_MAX = 1024 * 1024;
+// ADR-0004: how often the per-task deadline is checked against the wall clock.
+const TIMEOUT_POLL_MS = 250;
+// ADR-0004: default bounded grace between issuing a kill and force-resolving.
+const KILL_GRACE_MS = 5_000;
 function classifySpawnSignal(spawn: SpawnOutcome): RateLimitClassification {
   // 1. Structured stream-json block (PRIMARY). Prefer the in-memory lines
   // captured during streaming (no flush race); fall back to reading the
@@ -125,12 +129,27 @@ function captureBlockSignal(taskId: string, logDir: string, spawn: SpawnOutcome)
   }
 }
 
+// Injectable wall-clock source for the per-task deadline check (fn.impl
+// pattern, like diffStat) so tests can simulate a sleep/resume clock jump
+// deterministically (ADR-0004).
+function nowMs(): number {
+  return nowMs.impl();
+}
+nowMs.impl = Date.now;
+// Test-only handle (prefixed __ to signal "do not use in production code").
+export const __nowMs = nowMs;
+
 export type ExecCtx = {
   runId: string;
   gleanRoot: string;
   claudeBin: string;
   templatesDir: string;
   taskTimeoutMs: number;
+  // ADR-0004: bounded grace after a kill is issued. If the child has not exited
+  // within this many ms of the kill, the executor force-resolves (status
+  // preserved, descendants treated as possibly alive) instead of waiting
+  // forever on a process the kill failed to terminate. Absent → 5s default.
+  killGraceMs?: number;
   env?: NodeJS.ProcessEnv;
   // Per-project base branch (from config.json projects[path].base_branch).
   // Required for draft-impl; if absent, draft-impl candidates are skipped.
@@ -192,7 +211,8 @@ type SpawnOutcome = {
   jsonlPath: string;
   // F7: true once runClaude has awaited job.exit AND any kill() — the entire
   // spawned process tree is confirmed dead, so the worktree's index.lock (if any)
-  // is provably orphaned and safe to clear.
+  // is provably orphaned and safe to clear. ADR-0004: false when the bounded
+  // kill grace force-resolved the spawn (the tree may still be alive).
   descendantsDead: boolean;
 };
 
@@ -784,6 +804,22 @@ async function runClaude(
   // post-spawn cleanup touches the worktree (F7).
   const kills: Promise<void>[] = [];
 
+  let timedOut = false;
+  let exited = false;
+  let killIssued = false;
+  let signalKillIssued!: () => void;
+  const killIssuedSignal = new Promise<void>((resolve) => { signalKillIssued = resolve; });
+  // Issue the (single) hard kill for this spawn — shared by the timeout
+  // deadline and the rate-limit block scan, so the ADR-0004 bounded grace below
+  // covers every kill source. Idempotent; a no-op once the child has exited
+  // (e.g. the final-line block scan after exit).
+  const issueKill = (): void => {
+    if (killIssued || exited) return;
+    killIssued = true;
+    signalKillIssued();
+    kills.push(job.kill());
+  };
+
   // ADR-0003: live scan of the stream-json stdout for the STRUCTURED block
   // (rate_limit_event status "rejected" / result is_error+429 / message
   // error:"rate_limit" — the verified session-block shape). Line-buffered via a
@@ -802,8 +838,8 @@ async function runClaude(
     streamSignalText = (streamSignalText + trimmed + '\n').slice(-STREAM_SIGNAL_BYTES);
     if (!rateLimited && isStreamBlockLine(trimmed)) {
       rateLimited = true;
-      // No kill needed once the child has already exited (the final-line scan).
-      if (!exited) kills.push(job.kill());
+      // issueKill no-ops once the child has already exited (the final-line scan).
+      issueKill();
     }
   };
 
@@ -824,27 +860,82 @@ async function runClaude(
     stderrText = (stderrText + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
     if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
       rateLimited = true;
-      kills.push(job.kill());
+      issueKill();
     }
   });
 
-  let timedOut = false;
-  let exited = false;
-  const timer = setTimeout(() => { timedOut = true; kills.push(job.kill()); }, ctx.taskTimeoutMs);
+  // INVARIANT[ADR-0004]: enforce the per-task timeout against the WALL CLOCK,
+  // never a single setTimeout. Verified live (run 2026-06-12-1711-41b981): the machine slept
+  // mid-task, no timer can fire during S3 sleep, and whether an overdue timer
+  // fires promptly on resume is platform luck — the 8-min timeout landed 34.5
+  // wall-clock minutes in. Polling Date.now() bounds the kill to ~one poll
+  // interval after any resume/clock jump.
+  const deadlineAt = nowMs() + ctx.taskTimeoutMs;
+  const deadlineTimer = setInterval(() => {
+    if (nowMs() >= deadlineAt) {
+      clearInterval(deadlineTimer);
+      timedOut = true;
+      issueKill();
+    }
+  }, TIMEOUT_POLL_MS);
+
+  // INVARIANT[ADR-0004]: once a kill is issued, the child gets a bounded grace to die. If
+  // it survives (kill failed / shim killed but an orphan holds on), we must NOT
+  // keep awaiting job.exit — that is exactly how a wedged `claude -p` could pin
+  // the executor indefinitely. After the grace we force-resolve with the status
+  // the kill was issued for and treat descendants as possibly alive.
+  const killGraceMs = ctx.killGraceMs ?? KILL_GRACE_MS;
+  const KILL_GRACE_EXPIRED = Symbol('kill-grace-expired');
+  let graceTimer: NodeJS.Timeout | undefined;
+  const graceExpired = killIssuedSignal.then(
+    () => new Promise<typeof KILL_GRACE_EXPIRED>((resolve) => {
+      if (exited) return; // child already reaped — never expire
+      graceTimer = setTimeout(() => resolve(KILL_GRACE_EXPIRED), killGraceMs);
+    }),
+  );
 
   let exitCode: number;
+  let forcedResolve = false;
   try {
-    exitCode = await job.exit;
+    const raced = await Promise.race([job.exit, graceExpired]);
+    if (raced === KILL_GRACE_EXPIRED) {
+      forcedResolve = true;
+      exitCode = -1;
+      // Stop consuming a pipe a wedged/orphaned descendant may hold open
+      // (detach listeners FIRST so a late chunk can't hit an ended write
+      // stream), and drop our handles so the child can't keep glean alive.
+      job.child.stdout?.removeAllListeners('data');
+      job.child.stderr?.removeAllListeners('data');
+      try { job.child.stdout?.destroy(); } catch { /* best effort */ }
+      try { job.child.stderr?.destroy(); } catch { /* best effort */ }
+      try { job.child.stdin?.destroy(); } catch { /* best effort */ }
+      try { job.child.unref(); } catch { /* best effort */ }
+    } else {
+      exitCode = raced;
+    }
   } finally {
     exited = true;
-    clearTimeout(timer);
+    clearInterval(deadlineTimer);
+    if (graceTimer !== undefined) clearTimeout(graceTimer);
   }
 
-  // F7: if we killed the job, wait for the tree-kill of all descendants to
-  // finish so no live grandchild git can still hold the worktree's index.lock
-  // when the caller proceeds to clear it.
-  if (kills.length > 0) {
-    try { await Promise.all(kills); } catch { /* best effort */ }
+  // F7: if we killed the job and the child DID exit, wait for the tree-kill of
+  // all descendants to finish so no live grandchild git can still hold the
+  // worktree's index.lock when the caller proceeds to clear it. Bounded by the
+  // same grace (ADR-0004): kill() resolves only after taskkill/exit complete,
+  // so an anomalous straggler must degrade descendantsDead, not hang the run.
+  let descendantsDead = !forcedResolve;
+  if (!forcedResolve && kills.length > 0) {
+    let settleTimer: NodeJS.Timeout | undefined;
+    try {
+      const settled = await Promise.race([
+        Promise.all(kills).then(() => true, () => true),
+        new Promise<boolean>((resolve) => { settleTimer = setTimeout(() => resolve(false), killGraceMs); }),
+      ]);
+      if (!settled) descendantsDead = false;
+    } finally {
+      if (settleTimer !== undefined) clearTimeout(settleTimer);
+    }
   }
 
   // Flush the decoder + scan any final line that arrived without a trailing
@@ -854,9 +945,10 @@ async function runClaude(
   stderrStream.end();
   jsonlStream.end();
 
-  // We reach here only after job.exit resolved and (above) all kills were
-  // awaited, so the spawned process tree is fully dead.
-  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, streamSignalText, jsonlPath, descendantsDead: true };
+  // descendantsDead is true only when job.exit resolved AND every kill was
+  // awaited to completion — a force-resolved (or straggling) tree is honestly
+  // reported as possibly alive so worktree cleanup won't touch its locks (F7).
+  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, streamSignalText, jsonlPath, descendantsDead };
 
   // ADR-0003 self-capturing tripwire: each spawn flagged rateLimited writes its
   // OWN capture file (keyed by task id `<id>.BLOCK-CAPTURE.txt`), so the
