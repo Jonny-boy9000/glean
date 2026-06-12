@@ -215,6 +215,53 @@ honest receipts always.
 - Success criterion 4 accordingly tests glean's *weighting + exclusion* layer
   against a hand-computed fixture, not ccusage's own sums.
 
+## Project portfolio: registry, priority dials, per-project memory (founder input, 2026-06-12)
+
+The founder's framing: glean shouldn't "blanket work on everything; it also helps
+where the user wants it most." Four pieces, composing with multi-project (v0.9.0):
+
+1. **Project registry (discovery).** Glean already walks `~/.claude/projects/*`
+   — every project the user has ever opened Claude Code in is visible there, with
+   session recency for free. The registry = that scan ∪ configured projects,
+   surfaced in a new dashboard **Projects** tab: last-activity, last-drain
+   outcome, candidate count, and the priority control.
+2. **Priority dials.** Per-project weight `off | low | normal | high` (0/1/2/3),
+   stored in `config.json` `projects.<path>.priority` (default `normal` for
+   configured, `off` for merely-discovered until the user opts in — discovery
+   alone must never authorize spending capacity on a repo). The dashboard renders
+   it as a segmented control per project; the CLI accepts
+   `glean projects set <path> <priority>`. Allocation: the multi-project
+   interleaver weights both candidate ranking (`est_value × weight`) and the
+   budget split across projects by the dial. `off` is absolute.
+3. **Per-project context ingestion.** Two layers, one of which is already true:
+   spawned sessions ALREADY read the target project's `CLAUDE.md` natively
+   (draft-impl runs in a worktree of the repo; dossiers get `--add-dir` read
+   scope per ADR-0002). The NEW layer is glean's *planner* reading project docs
+   — a fourth discovery pass (`discover-docs`) that mines each project's
+   `ROADMAP/TODO/docs/handoff/*` "up next" items as first-class candidates.
+   This is also another answer to the #1 supply bottleneck: roadmaps are
+   denser candidate sources than TODO comments. Read-only, like every pass.
+4. **Per-project memory + the allocation learning loop.** The founder asked:
+   keep an internal running state, or recompute every time? **Hybrid — durable
+   raw ledger internally, comparisons recomputed from ground truth each run.**
+   Concretely: memory.db already keys every run/candidate/outcome by
+   `project_path` (the raw ledger exists); add a derived per-project scorecard
+   (prepped → kept/discarded/actioned). The new signal is **post-hoc overlap**:
+   at each discovery, diff what glean prepped last window against what the user
+   actually did since (commits touching prepped files, prep branches merged or
+   cherry-picked, JSONL sessions on prepped topics). Overlap = realized value
+   glean never has to ask about; it feeds a per-project realized-value score
+   that nudges allocation *within* the user's dial (the dial is a prior the
+   learner adjusts around — it never overrides an explicit `off`, and never
+   moves a dial the user set). Comparisons are recomputed from git/JSONL each
+   run precisely so internal summaries can't drift from reality.
+   **Constraint preserved: glean never writes summaries into the user's repos**
+   — all portfolio state lives in `~/glean/` (memory.db + dashboard views).
+
+Staging: registry + dials + `discover-docs` → v0.9.x (needs multi-project,
+which is v0.9.0); post-hoc overlap learning → v0.10 (needs a window or two of
+portfolio data to compare against).
+
 ## New commands (gap analysis)
 
 | Command | Why |
