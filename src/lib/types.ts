@@ -134,7 +134,7 @@ export type ProjectPriority = 'off' | 'low' | 'normal' | 'high';
 export type ModelFamily = 'haiku' | 'sonnet' | 'opus' | 'unknown';
 
 // One LOCAL calendar day of RAW token totals per model family, summed from
-// `~/.claude/projects/**/*.jsonl` usage blocks (internal loader, ADR-0006).
+// `~/.claude/projects/**/*.jsonl` usage blocks (internal loader, ADR-0007).
 // Raw = input + output + cache_creation + cache_read; weighting is pacing.ts's
 // job so the accounting layer stays assumption-free.
 export type DailyUsage = {

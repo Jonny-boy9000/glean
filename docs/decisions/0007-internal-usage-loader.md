@@ -1,8 +1,8 @@
-# ADR-0006 — Internal JSONL usage loader (deviation from the design's `ccusage/data-loader` dependency)
+# ADR-0007 — Internal JSONL usage loader (deviation from the design's `ccusage/data-loader` dependency)
 
 - Status: **Accepted** (deviation verified against the live npm registry, 2026-06-13)
 - Date: 2026-06-13
-- Enforced at: `src/lib/usage.ts` (module header tagged `ASSUMPTION[ADR-0006]`) +
+- Enforced at: `src/lib/usage.ts` (module header tagged `ASSUMPTION[ADR-0007]`) +
   `usage.test.ts` (dedup / exclusion / local-day attribution suite)
 
 ## Context

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { loadDailyUsage, modelFamily, localDateKey } from './usage.js';
 
 // v0.9 capacity governor: JSONL usage accounting (internal loader — see
-// ADR-0006 for why this is NOT ccusage/data-loader). Output contract: daily
+// ADR-0007 for why this is NOT ccusage/data-loader). Output contract: daily
 // RAW token totals per model family; weighting happens in pacing.ts.
 
 function setup(): { home: string; projectsDir: string; gleanRoot: string } {

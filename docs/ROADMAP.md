@@ -31,7 +31,7 @@ New CLI verbs planned: `resume`, `retry <run-id>`, `doctor` (`projects` and `usa
 **`glean usage` + pacing engine — BUILT 2026-06-13** (branch `feat/usage-pacing`):
 the design's "Pacing definition" math, pinned and tested — `src/lib/usage.ts`
 (internal JSONL loader; **deviation from the ccusage/data-loader plan recorded in
-[ADR-0006](./decisions/0006-internal-usage-loader.md)**: ccusage v20 is binary-only,
+[ADR-0007](./decisions/0007-internal-usage-loader.md)**: ccusage v20 is binary-only,
 v19 dropped the export, and its daily aggregation can't apply glean's cwd-based
 own-session exclusion), `src/lib/pacing.ts` (pure, injectable clock: weighted
 tokens per family per [ADR-0005](./decisions/0005-model-weight-multipliers.md),

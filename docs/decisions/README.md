@@ -66,4 +66,4 @@ not a conclusion — verify the negative case before asserting (see `CLAUDE.md` 
 | [0003](./0003-structured-stream-json-block-signal.md) | Rate-limit block signal: structured stream-json 429 | **Accepted** (session shape verified; weekly still unobserved) |
 | [0004](./0004-wall-clock-task-deadline-and-bounded-kill-grace.md) | Per-task timeout: wall-clock deadline + bounded kill grace | **Accepted** (sleep/resume root cause verified) |
 | [0005](./0005-model-weight-multipliers.md) | Model-family weight multipliers for pacing (haiku 0.25 / sonnet 1 / opus 5) | **UNVERIFIED** (consistency over truth) |
-| [0006](./0006-internal-usage-loader.md) | Internal JSONL usage loader (ccusage/data-loader unavailable upstream) | **Accepted** |
+| [0006](./0007-internal-usage-loader.md) | Internal JSONL usage loader (ccusage/data-loader unavailable upstream) | **Accepted** |

@@ -6,14 +6,14 @@ import type { DailyUsage, ModelFamily } from './types.js';
 /**
  * v0.9 capacity governor — JSONL usage accounting.
  *
- * ASSUMPTION[ADR-0006]: this is glean's OWN minimal loader over
+ * ASSUMPTION[ADR-0007]: this is glean's OWN minimal loader over
  * `~/.claude/projects/<X>/*.jsonl` `message.usage` blocks, NOT the
  * `ccusage/data-loader` dependency the capacity-governor design named.
  * Verified 2026-06-13: ccusage v20 (current) ships platform binaries with NO
  * JS exports; v19 dropped the `./data-loader` subpath; the last version
  * exporting it (18.0.11) is an upstream-abandoned API surface — and its daily
  * loader aggregates BEFORE glean's cwd-based own-session exclusion can apply.
- * See docs/decisions/0006-internal-usage-loader.md for what would reverse this.
+ * See docs/decisions/0007-internal-usage-loader.md for what would reverse this.
  *
  * Output contract (glean's own, loader-independent): RAW daily token totals
  * per model family. Weighting/baselines/tiers live in pacing.ts (pure).

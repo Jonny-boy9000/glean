@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // v0.9 capacity governor: `glean usage` — self-relative weekly pacing from
-// local JSONL accounting (internal loader, ADR-0006; weights ADR-0005).
+// local JSONL accounting (internal loader, ADR-0007; weights ADR-0005).
 // The CLI's clock is the real now(), so fixtures are generated RELATIVE to
 // today: 35 days of constant usage makes every per-weekday baseline median
 // equal to the daily amount, pinning the pace ratio at exactly 1.00 → small.
