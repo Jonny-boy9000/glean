@@ -1,6 +1,6 @@
 # ADR-0002: Research-dossier sessions get read-scope to the project (not just the output dir)
 
-**Status:** Proposed (2026-06-06)
+**Status:** Accepted (2026-06-12) — validated empirically by the 2026-06-11 live drain: 9/16 dossiers were genuinely repo-grounded, vs 8/13 explicit filename-guesses in the pre-fix 2026-06-04 drain.
 **Supersedes:** none
 **Related:** ADR-0001 (rate-limit signal source), CLAUDE.md "Load-bearing constraints"
 

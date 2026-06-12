@@ -87,7 +87,7 @@ function classifySpawnSignal(spawn: SpawnOutcome): RateLimitClassification {
   return classification;
 }
 
-// ADR-0001/0002 self-capturing tripwire: whenever a spawn is flagged
+// ADR-0001/0003 self-capturing tripwire: whenever a spawn is flagged
 // rateLimited, dump the full raw stderr + the last ~50 lines of the captured
 // stream-json (.jsonl) to <logDir>/<taskId>.BLOCK-CAPTURE.txt. This is how the
 // session-block shape captured itself on 2026-06-11; it stays armed because the
