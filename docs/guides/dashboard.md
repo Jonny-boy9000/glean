@@ -107,6 +107,8 @@ and the dashboard origin has management power.
 
 ## Projects tab
 
+![Projects tab](../assets/dashboard-projects.png)
+
 The project portfolio: every project glean can see, in one table, with a
 per-project **priority dial** steering where capacity goes.
 
