@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (on `main`, 2026-06-12 — PRs #15–#19; version bump pending)
+
+### Added
+- **`glean serve` — local management dashboard** (PR #15): 127.0.0.1-only web UI to browse runs (orchestrator timeline + per-task streams), view/rate/discard dossiers, Run now / Stop / Resume, retry failed tasks, toggle the schedule, plus a live **capacity panel** (session-window utilization gauge + reset countdown from captured `rate_limit_event` telemetry). CSRF/loopback/path-traversal/XSS guards. See `docs/guides/dashboard.md`.
+- **Linux (beta)** (PR #16): `glean schedule` manages a systemd **user** timer (`Persistent=true`, fires missed ticks after laptop sleep) with a crontab fallback; POSIX process-group kill replaces the Windows-only Job Object path; fixed a Linux config-path bug. Unverified on real Linux hardware yet — flagged in README.
+- Research-dossier spawns get **read access to the project** they research (`--add-dir` + read-only allow-list; PR #19, ADR-0002 **Accepted** — validated live: 9/16 repo-grounded dossiers vs filename-guesses before). Includes the mutation-checked spawn-arg safety test.
+
+### Fixed
+- **Failed tasks are no longer recorded as completed** (PR #18): only `ok`/`ok-fallback` outcomes enter the drain dedup ledger, so rate-limited/failed tasks retry on the next tick (the 2026-06-11 drain permanently lost 7 tasks to this).
+- **A structured 429 now stops the burst within one task** (PR #18): live stream-scan recognizes the session-limit block (`rate_limit_event` status `rejected` / result `429`) and folds the exact `resetsAt` into `next_eligible_at` — instead of marching every remaining candidate into the wall. ADR-0003 records the now-VERIFIED session block shape (weekly still unobserved).
+
+### Docs
+- Single-source-of-truth consolidation (PR #17): one live handoff convention (`docs/handoff/` + `docs/archive/`), stale state claims fixed across CLAUDE.md/glean.md/launch docs, and the **v0.9 capacity-governor strategy** (`docs/design/2026-06-12-capacity-governor-strategy.md`).
+
 ## v0.8.3 — 2026-06-02
 
 ### Fixed
