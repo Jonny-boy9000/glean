@@ -142,3 +142,61 @@ $actionArgs = ($t.Actions | Select-Object -First 1).Arguments
 Write-Output "FOUND|$state|$lastRun|$actionArgs"
 `.trim();
 }
+
+export type ServeTaskStatus =
+  | { found: false }
+  | { found: true; state: string; lastRun: string; port: number | null };
+
+/**
+ * Pure — parse buildServeStatusScript()'s output line. The trailing field is
+ * the task action's raw arguments; the installed port is recovered from the
+ * `serve --port N` inside it (null when absent/unparseable).
+ */
+export function parseServeStatusOutput(raw: string): ServeTaskStatus {
+  const line = raw.trim();
+  if (!line.startsWith('FOUND|')) return { found: false };
+  const parts = line.split('|');
+  if (parts.length < 4) return { found: false };
+  const actionArgs = parts.slice(3).join('|');
+  const portMatch = actionArgs.match(/serve\s+--port\s+(\d+)/);
+  return {
+    found: true,
+    state: parts[1],
+    lastRun: parts[2],
+    port: portMatch ? Number(portMatch[1]) : null,
+  };
+}
+
+// ===========================================================================
+// Linux — systemd user SERVICE (not a timer: serve is a long-running process)
+// ===========================================================================
+
+/** The serve command shared by the unit builder (quoted for spaced paths). */
+function serveCommand(opts: ServeInstallOpts): string {
+  return `"${opts.nodePath}" "${opts.cliEntry}" serve --port ${opts.port ?? DEFAULT_SERVE_PORT}`;
+}
+
+/**
+ * Pure — glean-serve.service: a long-running user service for the dashboard.
+ * `Restart=on-failure` is the systemd analog of the Windows task's
+ * RestartCount/RestartInterval; WantedBy=default.target starts it at login.
+ */
+export function buildServeServiceUnit(opts: ServeInstallOpts): string {
+  return `[Unit]
+Description=Glean dashboard (glean serve — local management surface on 127.0.0.1)
+
+[Service]
+ExecStart=${serveCommand(opts)}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+/** Pure — recover the installed port from a glean-serve.service unit file. */
+export function parseServePortFromUnit(unitText: string): number | null {
+  const m = unitText.match(/serve\s+--port\s+(\d+)/);
+  return m ? Number(m[1]) : null;
+}

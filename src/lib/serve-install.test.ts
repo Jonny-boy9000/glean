@@ -4,8 +4,12 @@ import {
   buildServeStartCommand,
   buildServeUnregisterScript,
   buildServeStatusScript,
+  buildServeServiceUnit,
+  parseServeStatusOutput,
+  parseServePortFromUnit,
   DEFAULT_SERVE_PORT,
   SERVE_TASK_NAME,
+  SERVE_SYSTEMD_SERVICE,
 } from './serve-install.js';
 
 // ---------------------------------------------------------------------------
@@ -174,6 +178,110 @@ describe('buildServeStatusScript — queries by split path + leaf', () => {
 
   it("avoids PowerShell's automatic $args variable", () => {
     expect(script).not.toMatch(/\$args\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseServeStatusOutput — turns the status script's line into a typed result
+// ---------------------------------------------------------------------------
+
+describe('parseServeStatusOutput', () => {
+  it('parses a running task with its installed port from the action arguments', () => {
+    const raw =
+      'FOUND|Running|2026-06-13T08:00:01.0000000+03:00|' +
+      '--headless "C:\\Program Files\\nodejs\\node.exe" "C:\\glean\\bin\\glean.js" serve --port 4317';
+    const res = parseServeStatusOutput(raw);
+    expect(res).toEqual({
+      found: true,
+      state: 'Running',
+      lastRun: '2026-06-13T08:00:01.0000000+03:00',
+      port: 4317,
+    });
+  });
+
+  it('parses a Ready (registered but not running) task and a custom port', () => {
+    const res = parseServeStatusOutput('FOUND|Ready|never|--headless "n" "c" serve --port 8080');
+    expect(res).toEqual({ found: true, state: 'Ready', lastRun: 'never', port: 8080 });
+  });
+
+  it('returns port null when the action arguments are missing or unparseable', () => {
+    const res = parseServeStatusOutput('FOUND|Ready|never|');
+    expect(res).toEqual({ found: true, state: 'Ready', lastRun: 'never', port: null });
+  });
+
+  it('returns found:false for NOT_FOUND, empty, and garbage output', () => {
+    expect(parseServeStatusOutput('NOT_FOUND').found).toBe(false);
+    expect(parseServeStatusOutput('').found).toBe(false);
+    expect(parseServeStatusOutput('something went wrong').found).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Linux — glean-serve.service (systemd USER service, not a timer). Pure
+// builders run on every OS, mirroring the schedule.test.ts contract.
+// ===========================================================================
+
+function makeLinuxOpts(overrides: Partial<Parameters<typeof buildServeServiceUnit>[0]> = {}) {
+  return {
+    nodePath: '/usr/bin/node',
+    cliEntry: '/home/user/.npm-global/lib/node_modules/@jonny-boy9000/glean/bin/glean.js',
+    ...overrides,
+  };
+}
+
+describe('buildServeServiceUnit — glean-serve.service', () => {
+  it('runs node <cliEntry> serve --port <port>', () => {
+    const unit = buildServeServiceUnit(makeLinuxOpts());
+    expect(unit).toContain('[Service]');
+    expect(unit).toContain(
+      `ExecStart="/usr/bin/node" "/home/user/.npm-global/lib/node_modules/@jonny-boy9000/glean/bin/glean.js" serve --port ${DEFAULT_SERVE_PORT}`,
+    );
+  });
+
+  it('respects a custom port', () => {
+    expect(buildServeServiceUnit(makeLinuxOpts({ port: 8080 }))).toContain('serve --port 8080');
+  });
+
+  it('restarts on failure (the Task Scheduler RestartCount analog)', () => {
+    const unit = buildServeServiceUnit(makeLinuxOpts());
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('RestartSec=');
+  });
+
+  it('is a long-running service installed into default.target (starts at login, not a timer)', () => {
+    const unit = buildServeServiceUnit(makeLinuxOpts());
+    expect(unit).not.toContain('Type=oneshot');
+    expect(unit).toContain('[Install]');
+    expect(unit).toContain('WantedBy=default.target');
+  });
+
+  it('quotes paths so spaces survive systemd ExecStart parsing', () => {
+    const unit = buildServeServiceUnit(makeLinuxOpts({ cliEntry: '/home/user/my tools/glean.js' }));
+    expect(unit).toContain('"/home/user/my tools/glean.js"');
+  });
+
+  it('has a [Unit] description and is deterministic', () => {
+    const opts = makeLinuxOpts();
+    expect(buildServeServiceUnit(opts)).toContain('[Unit]');
+    expect(buildServeServiceUnit(opts)).toBe(buildServeServiceUnit(opts));
+  });
+});
+
+describe('parseServePortFromUnit — recover the installed port from the unit file', () => {
+  it('finds the port in a generated unit', () => {
+    expect(parseServePortFromUnit(buildServeServiceUnit(makeLinuxOpts({ port: 9999 })))).toBe(9999);
+    expect(parseServePortFromUnit(buildServeServiceUnit(makeLinuxOpts()))).toBe(DEFAULT_SERVE_PORT);
+  });
+
+  it('returns null when no serve --port is present', () => {
+    expect(parseServePortFromUnit('[Service]\nExecStart=/usr/bin/true\n')).toBe(null);
+    expect(parseServePortFromUnit('')).toBe(null);
+  });
+});
+
+describe(`unit name is stable (${SERVE_SYSTEMD_SERVICE})`, () => {
+  it('stays glean-serve.service (uninstall/status address it by name)', () => {
+    expect(SERVE_SYSTEMD_SERVICE).toBe('glean-serve.service');
   });
 });
 
