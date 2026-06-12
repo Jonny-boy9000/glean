@@ -4,8 +4,24 @@ import { z } from 'zod';
 import { atomicWriteFileSync } from './state.js';
 import type { GleanConfig, ProjectPriority } from './types.js';
 
+// v0.9 model routing (ADR-0006): maps are keyed STRICTLY by the known task
+// types — a typo'd / unknown type key is a schema error, not a silent no-op.
+const TASK_TYPES = ['fetch-docs', 'research-dossier', 'draft-impl'] as const;
+const TaskTypeKey = z.enum(TASK_TYPES);
+
 const Schema = z.object({
   claude_bin: z.string().optional(),
+  // v0.9 model routing: per-task-type model (alias like 'sonnet' or a full
+  // model id — accepted verbatim). Partial: unlisted types use the built-in
+  // defaults at resolution time (model-routing.ts).
+  // (z.record with an enum key validates each present key but does not require
+  // exhaustiveness at runtime — exactly the partial-map behavior we want.)
+  models: z.record(TaskTypeKey, z.string()).optional(),
+  // v0.9: per-task-type --max-turns runaway-loop guard. Whole positive turns.
+  max_turns: z.record(TaskTypeKey, z.number().int().positive()).optional(),
+  // v0.9: task types eligible for the 'large' pace-tier one-tier promotion.
+  // Absent → ['draft-impl'] at resolution time ("route up" is never blanket).
+  pacing_promote: z.array(TaskTypeKey).optional(),
   projects: z.record(z.string(), z.object({
     base_branch: z.string().optional(),
     test_command: z.string().optional(),

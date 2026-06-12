@@ -130,6 +130,13 @@ export type GleanConfig = {
   claude_bin?: string;
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
+  // v0.9 model routing (ADR-0006): per-task-type --model (alias or full id),
+  // per-task-type --max-turns guard, and the task types eligible for the
+  // 'large' pace-tier promotion. All optional — defaults live in
+  // model-routing.ts and apply at resolution time.
+  models?: Partial<Record<CandidateType, string>>;
+  max_turns?: Partial<Record<CandidateType, number>>;
+  pacing_promote?: CandidateType[];
 };
 
 // Discriminated output of a task (T7).
