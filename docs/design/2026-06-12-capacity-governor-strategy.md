@@ -82,16 +82,27 @@ Three observations from the founder, one from the field:
 
 `claude -p --model <alias>` is the lever. Two rules compose:
 
-- **Task-type default**: `fetch-docs → haiku`, `research-dossier → sonnet`,
-  `draft-impl → default/opus` (reviewed code deserves the strongest model).
-- **Pacing override — route UP when draining, DOWN when conserving.** Leftover
-  end-of-week capacity has zero marginal cost; the weekend drain should use the
-  most capable model available. A nightly run during an over-pace week drops to
-  haiku or skips. Config:
+- **Layered resolution (applied base-to-top: pool-aware default, then task-type
+  default, then pacing override — the override is the only layer that may
+  promote, and only as rule 3 allows).** Concretely:
+  1. **Pool-aware default: every drained task runs `--model sonnet`** (the
+     research finding below supersedes the earlier "route up when draining"
+     instinct — Sonnet taps a separate weekly pool on Max and burns the shared
+     cap several times slower; if Pro turns out to have no Sonnet pool the
+     default is still benign, just a slower shared-cap burn).
+  2. Task-type default within that: `fetch-docs → haiku`; `draft-impl → opus`
+     **only as the pacing override below allows** (reviewed code deserves the
+     strongest model, but only when capacity is demonstrably going spare).
+  3. Pacing override: an under-pace week may promote `draft-impl` to opus; an
+     over-pace week demotes everything one tier or skips the run. "Route up"
+     applies ONLY to draft-impl under under-pace — never blanket.
   ```json
-  "models": { "fetch-docs": "haiku", "research-dossier": "sonnet", "draft-impl": "opus" },
-  "pacing":  { "over": "haiku-or-skip", "under": "promote-one-tier" }
+  "models": { "fetch-docs": "haiku", "research-dossier": "sonnet", "draft-impl": "sonnet" },
+  "pacing":  { "under_promotes": ["draft-impl"], "over": "demote-or-skip" }
   ```
+  Aliases are accepted in config but the resolved concrete model id is logged
+  per task (aliases drift across model generations — goes in the model-routing
+  ADR alongside the pool-split assumption).
 - **Research findings (verified 2026-06-12):** `--model` is documented for `-p`
   with aliases `sonnet|opus|haiku|fable` + full ids; `--fallback-model` exists but
   explicitly does NOT trigger on rate-limit errors (can't dodge the cap with it).
@@ -128,20 +139,81 @@ rate_limit_event capture, est_tokens, memory.db schema, prioritize.ts.
 ### Approach C: Orchestrator-agent architecture (lateral — rejected)
 Summary: a resident `claude -p` orchestrator plans and spawns workers.
 Why rejected: burns governed capacity on coordination; duplicates ledger/dedup in
-prompts; unverifiable behavior vs. glean's 436-test deterministic core; the two
+prompts; unverifiable behavior vs. glean's deterministic core (436 tests on the dashboard
+branch; 406 on main); the two
 "yes" slices above capture its value at ~2% of its cost.
 
 ## Recommended Approach
 
-**B, staged.** v0.9.0 = Approach A (usage + pacing + nightly preset) plus the two
-in-flight bug fixes **plus two one-line executor wins from research: `--model
-sonnet` default on drained tasks (taps the separate Sonnet weekly pool) and
-`--max-turns` on every spawn (runaway-loop guard)**; v0.9.x adds admission
-control + calibration + full model routing; v0.10 adds triage + follow-on
-chaining. Positioning shift: glean stops being "a
+**B, staged.**
+
+- **Nightly preset shape**: a SECOND registered scheduled task (`Glean\Nightly`
+  on Windows; `glean-nightly.timer` on Linux) created by
+  `glean schedule enable --nightly [--time 02:00]`, never extra triggers on the
+  weekly drain task — independent enable/disable/status, and `schedule status`
+  reports both. Each nightly fire is one pace-gated burst of the same
+  exit-and-re-enter machine.
+- **v0.9.0**: Approach A (usage + pacing + nightly preset), the two in-flight bug
+  fixes, `--model sonnet` default on drained tasks, `--max-turns` per spawn
+  (defaults: fetch-docs 8, research-dossier 24, draft-impl 50 — config-overridable),
+  **and multi-project per run** (accept multiple configured projects, interleave
+  candidates, shared budget — pulled forward from the deferred backlog because
+  supply is the #1 verified bottleneck and single-`--project` means configuration
+  alone cannot fix it). New verbs shipping in v0.9.0: `usage`, `resume`,
+  `retry <run-id>`. `doctor` is opportunistic launch polish — v0.9.x if cheap,
+  not load-bearing for this design.
+- **v0.9.x**: utilization-aware admission control + estimate-vs-actual
+  calibration + full model routing config. Adaptive parallelism lands here and
+  ONLY fires when supply exceeds what serial execution can drain (sequencing
+  resolves the apparent tension with Premise 1: parallelism is wrong as the
+  *first* fix, right as the *last*). Admission under parallelism must SUM
+  in-flight estimates against headroom (utilization only updates on stream
+  events, so between-events the governor extrapolates conservatively).
+- **v0.10**: triage pass + dossier→draft-impl follow-on chaining. In-task
+  subagent fan-out stays OFF for calibrated task types until per-template-version
+  calibration data exists (fan-out makes per-task consumption bimodal and would
+  wreck the calibration loop it ships next to).
+
+ccusage is consumed as a **pinned direct dependency** (`ccusage/data-loader`,
+MIT) — not a shell-out, which would add a PATH requirement under the 2am Task
+Scheduler context; not a reimplementation, which would re-own its documented
+dedup bug surface (#888). Positioning shift: glean stops being "a
 weekend drainer" and becomes **the thing that guarantees a Claude subscription is
 never wasted** — nightly prep when you're under pace, full drain at week-end,
 honest receipts always.
+
+## Pacing definition (the math, pinned down)
+
+- **Unit**: weighted tokens per calendar day, summed from local JSONL `usage`
+  blocks via ccusage's loader. Cross-model mixes are apples-to-oranges (Anthropic
+  publishes no multiplier), so tokens are **weighted per model family** with
+  assumed multipliers recorded in a new ADR (initial guess: haiku 0.25, sonnet 1,
+  opus 5 — the point is consistency week-over-week, not absolute truth).
+- **Baseline**: trailing 28 days (4 weeks), per-weekday median of weighted daily
+  tokens. Calendar weeks, NOT the rolling reset anchor — the real weekly window's
+  anchor is unknowable (ADR-0001) and self-relative pacing only needs a
+  consistent yardstick.
+- **Pace ratio** = (this calendar week's cumulative weighted tokens through
+  today) / (baseline cumulative through the same weekday). Tiers:
+  `>1.15 → skip`, `0.85–1.15 → small (15m, fetch-docs/haiku only)`,
+  `0.5–0.85 → normal (60m)`, `<0.5 → large (120m, draft-impl promoted)`.
+  Defaults config-overridable.
+- **Exclusions — two designed-in from day one**:
+  1. **Glean's own spawned sessions are excluded from the baseline AND the
+     current-week sum** (glean knows its own run logs; without this, every drain
+     inflates "normal" and nightly mode self-suppresses within weeks).
+  2. **Cold start**: <14 days of history → pacing gate reports "insufficient
+     baseline" and defaults to `small`, never `large`.
+- **Known blind spots, stated honestly in `glean usage` output**: claude.ai
+  web/desktop chat and other machines share the weekly cap but write no local
+  JSONL — an under-pace reading may be wrong if usage shifted elsewhere. Config:
+  `pacing.haircut` (0–1 manual discount) and `pacing.enabled: false`.
+- **Morning protection (nightly anti-spill)**: nightly tiers are budget-capped
+  (above) AND a nightly burst ends no later than N hours before the user's
+  typical first-prompt time (derivable from the same JSONL history; default
+  N=2). A 2am run must not eat the 5-hour window the 9am human needs.
+- Success criterion 4 accordingly tests glean's *weighting + exclusion* layer
+  against a hand-computed fixture, not ccusage's own sums.
 
 ## New commands (gap analysis)
 
@@ -150,7 +222,7 @@ honest receipts always.
 | `glean usage` | Pace ratio, week-vs-baseline, last five_hour utilization, tier recommendation. The nightly gate reuses it. |
 | `glean resume` | `glean stop` exists with no CLI inverse (dashboard has one — parity + scriptability). |
 | `glean retry <run-id>` | CLI parity with the dashboard's retry-failed (same ledger edit). |
-| `glean doctor` | Pre-flight: claude bin auth, schedule state, config validity, stale lock/STOP, disk. Halves support burden at launch. |
+| `glean doctor` | Pre-flight: claude bin auth, schedule state, config validity, stale lock/STOP, disk. *Opportunistic launch polish — not load-bearing for this design; ships v0.9.x if cheap.* |
 
 ## Ecosystem / integrations (research verified 2026-06-12)
 
@@ -158,9 +230,10 @@ honest receipts always.
   walks, sums the per-message `usage` blocks, and exposes BOTH `--json` CLI output
   (incl. `blocks --json` modeling 5-hour windows) and a programmatic
   `ccusage/data-loader` API. Its issue tracker (#888, #866) documents real dedup
-  undercounting — local accounting is an estimate, not ground truth. Decision:
-  **consume ccusage as a dependency or shell-out for `glean usage`** rather than
-  re-owning the dedup bug surface; pin the version.
+  undercounting — local accounting is an estimate, not ground truth. Decision
+  (final, see Recommended Approach): **pinned direct dependency on
+  `ccusage/data-loader`** — never re-owning the dedup bug surface, never a
+  shell-out (no PATH requirement under the 2am scheduler context).
 - **Two stronger-but-unofficial weekly signals exist**, both known-not-adopted:
   the undocumented OAuth `api.anthropic.com/api/oauth/usage` endpoint
   (authoritative weekly %, fragile, User-Agent-gated) and the statusline stdin
@@ -214,9 +287,15 @@ Linux support noted as beta in README. No CI change required (prepublishOnly tsc
 
 ## The Assignment
 
-Add a second real repo to `config.json` and let the next scheduled drain run
-against both. Candidate supply is the #1 verified bottleneck and no code fixes it —
-only configuration. (Then review the PRs this session produced.)
+Point the drain at your most TODO-rich REAL repo instead of glean itself:
+`glean schedule enable --project <that-repo>`. Candidate supply is the #1
+verified bottleneck, and until multi-project lands in v0.9.0 the drain takes
+exactly one project — so make it the richest one you have. (Then review the PRs
+this session produced.)
+
+*Correction from adversarial review: an earlier draft said "add a second repo to
+config.json — no code needed." Wrong — the drain is single-`--project` today;
+multi-project was deferred backlog and is now pulled into v0.9.0 scope.*
 
 ## What I noticed about how you think
 
