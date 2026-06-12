@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, defaultConfigPath } from './config.js';
+import { readFileSync } from 'node:fs';
+import { loadConfig, defaultConfigPath, setProjectPriority, effectivePriority } from './config.js';
 
 function tmpFile(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'glean-config-'));
@@ -83,6 +84,101 @@ describe('loadConfig', () => {
   it('rejects a fractional anti_spill_margin_minutes', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 14.9 } }));
     expect(() => loadConfig(p)).toThrow(/anti_spill_margin_minutes/);
+  });
+});
+
+// v0.9 project portfolio: per-project priority dial (off|low|normal|high).
+describe('loadConfig projects.priority', () => {
+  it('parses a per-project priority', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { base_branch: 'main', priority: 'high' } },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']?.priority).toBe('high');
+  });
+
+  it('leaves priority undefined when absent (backward compatible)', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { base_branch: 'main' } },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']?.priority).toBeUndefined();
+  });
+
+  it('rejects an unknown priority value', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { priority: 'urgent' } },
+    }));
+    expect(() => loadConfig(p)).toThrow(/priority/);
+  });
+});
+
+describe('setProjectPriority', () => {
+  it('round-trips a priority change on an existing project, preserving other fields', () => {
+    const p = tmpFile(JSON.stringify({
+      claude_bin: 'claude',
+      projects: { 'C:\\Glean': { base_branch: 'main', test_command: 'npm test' } },
+    }));
+    const r = setProjectPriority(p, 'C:\\Glean', 'high');
+    expect(r).toEqual({ ok: true, created: false });
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']).toEqual({ base_branch: 'main', test_command: 'npm test', priority: 'high' });
+    expect(cfg.claude_bin).toBe('claude');
+  });
+
+  it('opt-in: adds the project entry when missing', () => {
+    const p = tmpFile(JSON.stringify({ projects: { 'C:\\Other': { base_branch: 'main' } } }));
+    const r = setProjectPriority(p, 'C:\\New', 'normal');
+    expect(r).toEqual({ ok: true, created: true });
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\New']?.priority).toBe('normal');
+    expect(cfg.projects?.['C:\\Other']?.base_branch).toBe('main'); // untouched
+  });
+
+  it("'off' KEEPS the config entry (base_branch survives)", () => {
+    const p = tmpFile(JSON.stringify({ projects: { 'C:\\Glean': { base_branch: 'main' } } }));
+    const r = setProjectPriority(p, 'C:\\Glean', 'off');
+    expect(r.ok).toBe(true);
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']).toEqual({ base_branch: 'main', priority: 'off' });
+  });
+
+  it('rejects an unknown priority value without touching the file', () => {
+    const p = tmpFile(JSON.stringify({ projects: {} }));
+    const before = readFileSync(p, 'utf8');
+    const r = setProjectPriority(p, 'C:\\Glean', 'urgent');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/priority/);
+    expect(readFileSync(p, 'utf8')).toBe(before);
+  });
+
+  it('creates the config file when it does not exist yet', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'glean-config-'));
+    const p = join(dir, 'config.json');
+    const r = setProjectPriority(p, 'C:\\Glean', 'low');
+    expect(r).toEqual({ ok: true, created: true });
+    expect(loadConfig(p).projects?.['C:\\Glean']?.priority).toBe('low');
+  });
+
+  it('refuses to overwrite a corrupt config file', () => {
+    const p = tmpFile('{not json');
+    const r = setProjectPriority(p, 'C:\\Glean', 'high');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/JSON/i);
+    expect(readFileSync(p, 'utf8')).toBe('{not json');
+  });
+});
+
+describe('effectivePriority', () => {
+  it("returns the configured priority when set", () => {
+    expect(effectivePriority({ projects: { 'C:\\A': { priority: 'high' } } }, 'C:\\A')).toBe('high');
+  });
+  it("defaults a configured project without priority to 'normal'", () => {
+    expect(effectivePriority({ projects: { 'C:\\A': { base_branch: 'main' } } }, 'C:\\A')).toBe('normal');
+  });
+  it("treats an unconfigured project as 'off' (discovery never authorizes spending)", () => {
+    expect(effectivePriority({ projects: {} }, 'C:\\Nope')).toBe('off');
+    expect(effectivePriority({}, 'C:\\Nope')).toBe('off');
   });
 });
 

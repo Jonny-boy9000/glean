@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 import {
   getOverview,
   listRuns,
@@ -12,9 +12,13 @@ import {
   discardDossier,
   retryFailed,
   configuredProjects,
+  scanProjectRegistry,
+  defaultClaudeProjectsDir,
 } from './dashboard-data.js';
 import { writeStop, clearStop } from './state.js';
 import { Memory } from './memory.js';
+import { loadConfig, defaultConfigPath, setProjectPriority, isProjectPriority, effectivePriority } from './config.js';
+import type { GleanConfig } from './types.js';
 import { enableSchedule, disableSchedule, defaultTriggerDay, DEFAULT_TIME, DEFAULT_REPEAT_MINUTES, DEFAULT_DURATION_HOURS } from './schedule.js';
 
 export type ServeOpts = {
@@ -24,6 +28,11 @@ export type ServeOpts = {
   nodePath: string;
   port?: number;
   host?: string;
+  // v0.9 project portfolio: injectable for tests; defaults are the real
+  // ~/glean/config.json and ~/.claude/projects locations.
+  configPath?: string;
+  claudeProjectsDir?: string;
+  registryTempDirs?: string[];
 };
 
 const DEFAULT_PORT = 4317;
@@ -93,7 +102,11 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 export function createHandler(opts: ServeOpts) {
   const { root, templatesDir, cliEntry, nodePath } = opts;
+  const configPath = opts.configPath ?? defaultConfigPath();
+  const claudeProjectsDir = opts.claudeProjectsDir ?? defaultClaudeProjectsDir();
   const htmlPath = join(templatesDir, 'dashboard.html');
+  const scanRegistry = () =>
+    scanProjectRegistry(root, claudeProjectsDir, configPath, opts.registryTempDirs ? { tempDirs: opts.registryTempDirs } : undefined);
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -123,6 +136,7 @@ export function createHandler(opts: ServeOpts) {
       if (method === 'GET' && path === '/api/overview') return sendJson(res, 200, getOverview(root));
       if (method === 'GET' && path === '/api/runs') return sendJson(res, 200, { runs: listRuns(root, 200) });
       if (method === 'GET' && path === '/api/dossiers') return sendJson(res, 200, { dossiers: listDossiers(root, 500) });
+      if (method === 'GET' && path === '/api/projects') return sendJson(res, 200, { projects: scanRegistry() });
 
       if (method === 'GET' && path === '/api/dossier') {
         const id = url.searchParams.get('id') ?? '';
@@ -159,7 +173,15 @@ export function createHandler(opts: ServeOpts) {
           return sendJson(res, 200, { ok: true, message: 'STOP cleared — drain ticks resume' });
         }
         if (path === '/api/run') {
-          return sendJson(res, 200, triggerRun(root, nodePath, cliEntry, String(body.project ?? '')));
+          return sendJson(res, 200, triggerRun(nodePath, cliEntry, String(body.project ?? ''), configPath));
+        }
+        if (path === '/api/projects/add') {
+          const r = addProject(configPath, String(body.path ?? ''));
+          return sendJson(res, r.ok ? 200 : 400, r);
+        }
+        if (path === '/api/projects/priority') {
+          const r = changePriority(configPath, String(body.path ?? ''), String(body.priority ?? ''), scanRegistry);
+          return sendJson(res, r.ok ? 200 : 400, r);
         }
         const retry = path.match(/^\/api\/runs\/([^/]+)\/retry-failed$/);
         if (retry) {
@@ -193,12 +215,24 @@ export function createHandler(opts: ServeOpts) {
   };
 }
 
-function triggerRun(root: string, nodePath: string, cliEntry: string, project: string): Json {
+function loadConfigSafe(configPath: string): GleanConfig {
+  try {
+    return loadConfig(configPath);
+  } catch {
+    return {};
+  }
+}
+
+function triggerRun(nodePath: string, cliEntry: string, project: string, configPath: string): Json {
   // Only allow runs against configured projects (the spawned process has full
   // drain powers; never let an arbitrary path through the web surface).
-  const projects = configuredProjects();
-  if (!project || !projects.includes(project)) {
+  const cfg = loadConfigSafe(configPath);
+  if (!project || !cfg.projects?.[project]) {
     return { ok: false, reason: 'project not configured: ' + project };
+  }
+  // The 'off' dial is absolute: a parked project is never drained, even by hand.
+  if (effectivePriority(cfg, project) === 'off') {
+    return { ok: false, reason: `project priority is 'off' for ${project} — set a priority (low/normal/high) to allow runs` };
   }
   const child = spawn(nodePath, [cliEntry, 'run', '--drain', '--project', project], {
     detached: true,
@@ -207,6 +241,49 @@ function triggerRun(root: string, nodePath: string, cliEntry: string, project: s
   });
   child.unref();
   return { ok: true, message: 'drain run started for ' + project, pid: child.pid ?? null };
+}
+
+/** Opt a project into glean's portfolio: absolute, existing, not yet configured. */
+function addProject(configPath: string, path: string): { ok: boolean; reason?: string; message?: string } {
+  if (!path || !isAbsolute(path)) return { ok: false, reason: 'path must be absolute: ' + (path || '(empty)') };
+  if (!isDirectory(path)) return { ok: false, reason: 'path does not exist (or is not a directory): ' + path };
+  const cfg = loadConfigSafe(configPath);
+  if (cfg.projects?.[path]) return { ok: false, reason: 'already configured: ' + path };
+  const r = setProjectPriority(configPath, path, 'normal');
+  if (!r.ok) return { ok: false, reason: r.reason };
+  return { ok: true, message: 'added ' + path + " at priority 'normal'" };
+}
+
+/**
+ * Change a project's priority dial. The path must be KNOWN — configured or
+ * present in the session-history registry (dialing a discovered project is
+ * the opt-in gesture; it becomes configured).
+ */
+function changePriority(
+  configPath: string,
+  path: string,
+  priority: string,
+  scanRegistry: () => Array<{ path: string }>,
+): { ok: boolean; reason?: string; message?: string } {
+  if (!isProjectPriority(priority)) {
+    return { ok: false, reason: `invalid priority '${priority}' — use one of: off, low, normal, high` };
+  }
+  const cfg = loadConfigSafe(configPath);
+  const known = Boolean(cfg.projects?.[path]) || scanRegistry().some((e) => e.path === path);
+  if (!known) {
+    return { ok: false, reason: 'unknown project: ' + path + ' — not configured and not in session history (use Add project)' };
+  }
+  const r = setProjectPriority(configPath, path, priority);
+  if (!r.ok) return { ok: false, reason: r.reason };
+  return { ok: true, message: `priority for ${path} set to '${priority}'` };
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function rateDossier(root: string, id: string, verdict: string): Json {

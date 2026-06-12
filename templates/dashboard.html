@@ -93,6 +93,13 @@
   .ratio .r-ok { background: var(--ok); }
   .ratio .r-bad { background: var(--bad); }
   tr.noop { opacity: .55; }
+  /* segmented priority control (projects tab) */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; padding: 4px 9px; font-size: 12px; background: var(--panel2); }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.active { background: var(--accent); color: #06223f; font-weight: 600; }
+  .proj-input { flex: 1; min-width: 280px; font: inherit; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 7px; color: var(--text); padding: 6px 10px; }
 </style>
 </head>
 <body>
@@ -110,11 +117,13 @@
     <div class="tab active" data-tab="overview">Overview</div>
     <div class="tab" data-tab="runs">Runs</div>
     <div class="tab" data-tab="dossiers">Dossiers</div>
+    <div class="tab" data-tab="projects">Projects</div>
   </div>
   <div class="wrap">
     <div id="view-overview"></div>
     <div id="view-runs" style="display:none"></div>
     <div id="view-dossiers" style="display:none"></div>
+    <div id="view-projects" style="display:none"></div>
   </div>
 
   <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
@@ -123,7 +132,7 @@
 <script>
 const $ = (s, r=document) => r.querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let STATE = { tab: 'overview', overview: null, runs: [], dossiers: [], openRun: null };
+let STATE = { tab: 'overview', overview: null, runs: [], dossiers: [], projects: [], openRun: null };
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -466,6 +475,64 @@ function mdToHtml(md) {
   return html;
 }
 
+// ---------- Projects ----------
+const PRIORITIES = ['off', 'low', 'normal', 'high'];
+function baseName(p) { const parts = String(p).split(/[\\/]/).filter(Boolean); return parts[parts.length - 1] || p; }
+function renderProjects() {
+  const el = $('#view-projects');
+  let h = '<div class="panel-section"><h2>Add project</h2>' +
+    '<div class="row-actions"><input id="addProjPath" class="proj-input" type="text" spellcheck="false" placeholder="Absolute path, e.g. C:\\repos\\my-app" />' +
+    '<button id="addProjBtn" class="primary">Add project</button></div>' +
+    '<div class="sub" style="margin-top:6px">Adds the path to <span class="mono">~/glean/config.json</span> at priority <b>Normal</b>. ' +
+    'Discovered-only projects below start <b>Off</b> — discovery never authorizes spending capacity.</div></div>';
+  if (!STATE.projects.length) {
+    h += '<div class="empty">No projects discovered yet — Claude Code session history under <span class="mono">~/.claude/projects</span> shows up here.</div>';
+  } else {
+    h += '<table><thead><tr><th>Project</th><th></th><th>Sessions</th><th>Last active</th><th>Priority</th><th></th></tr></thead><tbody>';
+    for (const p of STATE.projects) {
+      const badges = (p.is_git ? '<span class="badge ok">git</span> ' : '') +
+        (!p.exists ? '<span class="badge bad">missing</span>' : '');
+      const hint = !p.configured ? '<div class="sub">not configured — set a priority to opt in</div>' : '';
+      h += '<tr><td><span title="' + esc(p.path) + '">' + esc(baseName(p.path)) + '</span>' + hint + '</td>' +
+        '<td>' + badges + '</td>' +
+        '<td>' + esc(p.sessions) + '</td>' +
+        '<td>' + (p.last_activity ? relTime(p.last_activity) : '—') + '</td>' +
+        '<td>' + segControl(p) + '</td>' +
+        '<td><button data-runproj="' + esc(p.path) + '"' + (p.priority === 'off' || !p.exists ? ' disabled' : '') + '>Run now</button></td></tr>';
+    }
+    h += '</tbody></table>';
+  }
+  el.innerHTML = h;
+  $('#addProjBtn').onclick = addProjectFromInput;
+  $('#addProjPath').addEventListener('keydown', (e) => { if (e.key === 'Enter') addProjectFromInput(); });
+  el.querySelectorAll('[data-priority]').forEach(b =>
+    b.onclick = () => setPriority(b.closest('[data-path]').dataset.path, b.dataset.priority));
+  el.querySelectorAll('[data-runproj]').forEach(b => b.onclick = () => runProject(b.dataset.runproj));
+}
+function segControl(p) {
+  let h = '<span class="seg" data-path="' + esc(p.path) + '">';
+  for (const pr of PRIORITIES) {
+    h += '<button data-priority="' + pr + '" class="' + (p.priority === pr ? 'active' : '') + '">' +
+      (pr === 'off' ? 'Off' : pr[0].toUpperCase() + pr.slice(1)) + '</button>';
+  }
+  return h + '</span>';
+}
+async function setPriority(path, priority) {
+  try { const j = await post('/api/projects/priority', { path, priority }); toast(j.message || 'priority set'); await refreshAll(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+async function addProjectFromInput() {
+  const path = $('#addProjPath').value.trim();
+  if (!path) return toast('Enter an absolute project path');
+  try { const j = await post('/api/projects/add', { path }); toast(j.message || 'added'); await refreshAll(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+async function runProject(path) {
+  if (!confirm('Start a drain run for ' + path + ' now?')) return;
+  try { await post('/api/run', { project: path }); toast('Run started'); setTimeout(refreshAll, 1500); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+
 // ---------- modal / tabs / triggers ----------
 function openModal(h) {
   $('#modal').innerHTML = h; $('#modalBg').classList.add('open');
@@ -481,10 +548,11 @@ document.addEventListener('keydown', (e) => {
 function switchTab(tab) {
   STATE.tab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  for (const v of ['overview','runs','dossiers']) $('#view-' + v).style.display = v === tab ? '' : 'none';
+  for (const v of ['overview','runs','dossiers','projects']) $('#view-' + v).style.display = v === tab ? '' : 'none';
   if (tab === 'overview') renderOverview();
   if (tab === 'runs') renderRuns();
   if (tab === 'dossiers') renderDossiers();
+  if (tab === 'projects') renderProjects();
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
 
@@ -516,20 +584,23 @@ function renderBar() {
 // the modal lives outside the views, and run detail is guarded by openRun).
 // Relative times and the capacity countdown stay fresh via tickClocks(),
 // which mutates text in place. RENDERED tracks what each view last drew.
-const RENDERED = { overview: null, runs: null, dossiers: null };
+const RENDERED = { overview: null, runs: null, dossiers: null, projects: null };
 async function refreshAll() {
   try {
-    const [overview, runs, dossiers] = await Promise.all([api('/api/overview'), api('/api/runs'), api('/api/dossiers')]);
-    STATE.overview = overview; STATE.runs = runs.runs; STATE.dossiers = dossiers.dossiers;
+    const [overview, runs, dossiers, projects] = await Promise.all([
+      api('/api/overview'), api('/api/runs'), api('/api/dossiers'), api('/api/projects')]);
+    STATE.overview = overview; STATE.runs = runs.runs; STATE.dossiers = dossiers.dossiers; STATE.projects = projects.projects;
     renderBar();
     // generated_at changes every poll — exclude it or overview would always re-render.
     const oKey = JSON.stringify({ ...overview, generated_at: null });
     const rKey = JSON.stringify(STATE.runs);
     const dKey = JSON.stringify(STATE.dossiers);
+    const pKey = JSON.stringify(STATE.projects);
     if (STATE.tab === 'overview' && oKey !== RENDERED.overview) renderOverview();
     if (STATE.tab === 'runs' && !STATE.openRun && rKey !== RENDERED.runs) renderRuns();
     if (STATE.tab === 'dossiers' && dKey !== RENDERED.dossiers) renderDossiers();
-    RENDERED.overview = oKey; RENDERED.runs = rKey; RENDERED.dossiers = dKey;
+    if (STATE.tab === 'projects' && pKey !== RENDERED.projects) renderProjects();
+    RENDERED.overview = oKey; RENDERED.runs = rKey; RENDERED.dossiers = dKey; RENDERED.projects = pKey;
   } catch (e) { toast('Refresh failed: ' + e.message); }
 }
 

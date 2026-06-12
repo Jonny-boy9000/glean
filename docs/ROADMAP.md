@@ -26,7 +26,19 @@ per-project priority dials steering allocation; a `discover-docs` pass mining ea
 project's roadmap/handoff docs as candidates; post-hoc overlap learning — compare
 what glean prepped vs what the user actually advanced, recomputed from git/JSONL
 each run, nudging allocation within the user's dial).
-New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `projects set`, `doctor`.
+New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `doctor` (`projects` shipped — below).
+
+**Project portfolio — registry + dials slice BUILT 2026-06-12** (branch
+`feat/project-portfolio`): `scanProjectRegistry` (real paths from session-jsonl
+`cwd`, slug never decoded; glean-spawn/worktree/temp noise filtered; deduped;
+unioned with config), per-project `priority` dial in `config.json`
+(`setProjectPriority` — opt-in add, atomic, `off` keeps the entry; unconfigured
+= implicitly `off`), dashboard **Projects** tab (segmented dials, add-project,
+per-row Run now), `GET /api/projects` + guarded `POST /api/projects/{add,priority}`,
+`/api/run` refuses `off`, and `glean projects [set <path> <priority>]` CLI parity.
+**Remaining from the portfolio design:** the multi-project drain allocator that
+weights ranking/budget by dial (needs v0.9.0 multi-project), the `discover-docs`
+pass, and post-hoc overlap learning (v0.10).
 
 In-flight branches (2026-06-12 session):
 - `fix/drain-rate-limit-resilience` — bug 1 (failed≠completed ledger) + bug 2 (429 short-circuit)
