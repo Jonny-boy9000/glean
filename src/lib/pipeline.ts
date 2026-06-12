@@ -11,6 +11,7 @@ import { discoverDeps } from './discover-deps.js';
 import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
 import { executeOne } from './executor.js';
+import { resolveModel, type ModelRoutingConfig, type PaceTier } from './model-routing.js';
 import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir, projectSlug } from './state.js';
 import { repairRecent } from './repair.js';
 import { Memory } from './memory.js';
@@ -45,6 +46,14 @@ export type PipelineOpts = {
   // drain window. Any candidate whose id is in this set is skipped (not re-run).
   // Inert for the bare `glean run` path (undefined ⇒ nothing skipped).
   completedTaskIds?: readonly string[];
+  // v0.9 model routing (ADR-0006): config slice (models / max_turns /
+  // pacing_promote) for resolveModel/resolveMaxTurns. The loaded GleanConfig is
+  // assignable verbatim. Absent → built-in defaults.
+  routing?: ModelRoutingConfig;
+  // v0.9 pacing hook (wave-2 ready): optional pace tier. Absent → 'normal'.
+  // The REAL tier is wired by the pacing engine (feat/usage-pacing) — nothing
+  // here imports from it.
+  paceTier?: PaceTier;
 };
 
 export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
@@ -226,7 +235,12 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       const remaining = opts.budgetMs - (Date.now() - start);
       if (remaining < 5 * 60_000 && c.type !== 'fetch-docs') continue;
 
-      appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.start', task_id: c.id, type: c.type });
+      // v0.9 (ADR-0006): log the RESOLVED model on task.start — aliases drift
+      // across model generations, so the receipt of WHAT actually ran must be
+      // in the orchestrator log, not reconstructed from config later. Same pure
+      // resolution (same inputs) the executor applies to the spawn argv.
+      const model = resolveModel(c.type, opts.routing ?? {}, opts.paceTier ?? 'normal');
+      appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.start', task_id: c.id, type: c.type, model });
       const result = await executeOne(c, {
         runId,
         gleanRoot: opts.gleanRoot,
@@ -238,6 +252,8 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         baseBranchFor: opts.baseBranchFor,
         testCommandAllow: opts.testCommandAllow,
         testCommandFor: opts.testCommandFor,
+        routing: opts.routing,
+        paceTier: opts.paceTier,
         // C1: thread the run's REMAINING wall-clock budget + a live STOP probe so
         // the post-draft test run is bounded by `--budget` and short-circuited by
         // `glean stop`, rather than running uninterruptibly for up to the 5-min cap.

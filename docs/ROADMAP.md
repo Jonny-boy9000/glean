@@ -28,6 +28,18 @@ what glean prepped vs what the user actually advanced, recomputed from git/JSONL
 each run, nudging allocation within the user's dial).
 New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `doctor` (`projects` shipped — below).
 
+**Model routing + `--max-turns` guards BUILT 2026-06-13** (branch
+`feat/model-routing`, [ADR-0006](./decisions/0006-model-routing-pool-assumption.md)):
+every `claude -p` spawn now carries an explicit `--model` (layered resolution:
+pool-aware `sonnet` base → task-type default `fetch-docs→haiku` /
+`research-dossier→sonnet` / `draft-impl→sonnet` → config `models` map →
+pace-tier override, where 'large' may promote only `pacing_promote` types —
+default `["draft-impl"]` — one ladder tier, and 'small'/'skip' demote all to
+haiku) plus a per-type `--max-turns` runaway-loop guard (8/24/50,
+config `max_turns`). The resolved model is logged on each `task.start` event
+(alias-drift receipt). The `paceTier` param is a wave-2 hook — the real tier is
+wired by the pacing engine (`feat/usage-pacing`).
+
 **Project portfolio — registry + dials slice BUILT 2026-06-12** (branch
 `feat/project-portfolio`): `scanProjectRegistry` (real paths from session-jsonl
 `cwd`, slug never decoded; glean-spawn/worktree/temp noise filtered; deduped;
