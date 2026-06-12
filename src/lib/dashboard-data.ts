@@ -549,6 +549,12 @@ export function budgetPath(root: string): string {
 
 // ---- v0.9 project portfolio: registry scanner ------------------------------
 
+/** Where Claude Code keeps per-project session history (~/.claude/projects). */
+export function defaultClaudeProjectsDir(): string {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+  return join(home, '.claude', 'projects');
+}
+
 export type ProjectRegistryEntry = {
   path: string;
   exists: boolean;
