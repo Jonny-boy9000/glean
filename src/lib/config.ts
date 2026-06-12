@@ -8,6 +8,10 @@ const Schema = z.object({
   projects: z.record(z.string(), z.object({
     base_branch: z.string().optional(),
     test_command: z.string().optional(),
+    // v0.9 project portfolio: per-project priority dial. Absent = 'normal' for
+    // a configured project (backward compatible); merely-discovered projects
+    // are implicitly 'off' (discovery must never authorize spending capacity).
+    priority: z.enum(['off', 'low', 'normal', 'high']).optional(),
   })).optional(),
   drain_trigger: z.object({
     day: z.string().optional(),

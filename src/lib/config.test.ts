@@ -86,6 +86,32 @@ describe('loadConfig', () => {
   });
 });
 
+// v0.9 project portfolio: per-project priority dial (off|low|normal|high).
+describe('loadConfig projects.priority', () => {
+  it('parses a per-project priority', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { base_branch: 'main', priority: 'high' } },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']?.priority).toBe('high');
+  });
+
+  it('leaves priority undefined when absent (backward compatible)', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { base_branch: 'main' } },
+    }));
+    const cfg = loadConfig(p);
+    expect(cfg.projects?.['C:\\Glean']?.priority).toBeUndefined();
+  });
+
+  it('rejects an unknown priority value', () => {
+    const p = tmpFile(JSON.stringify({
+      projects: { 'C:\\Glean': { priority: 'urgent' } },
+    }));
+    expect(() => loadConfig(p)).toThrow(/priority/);
+  });
+});
+
 describe('defaultConfigPath', () => {
   // Linux regression: this used a hard-coded `\` join, yielding
   // `/home/user\glean\config.json` on POSIX. Pin the platform-native join.

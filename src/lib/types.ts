@@ -122,9 +122,13 @@ export type DrainTrigger = {
   anti_spill_margin_minutes?: number;
 };
 
+// v0.9 project portfolio: per-project priority dial. 'off' is absolute (the
+// project is never drained); absent on a CONFIGURED project means 'normal'.
+export type ProjectPriority = 'off' | 'low' | 'normal' | 'high';
+
 export type GleanConfig = {
   claude_bin?: string;
-  projects?: Record<string, { base_branch?: string; test_command?: string }>;
+  projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
 };
 
