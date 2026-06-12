@@ -29,7 +29,7 @@ Shorter variants (use per venue character budget):
 > Your Pro/Max weekly window resets every Saturday and the capacity you didn't spend is just gone. glean is a Windows CLI that, in that idle tail, spawns its own headless `claude -p` sessions to do speculative prep on your own repos — drafting code into throwaway `git worktree` branches (never touching `main`), writing research dossiers, pre-fetching docs — and you point Windows Task Scheduler at it so it drains the whole weekend's leftover unattended, pausing at each 5-hour wall and resuming until the weekly cap fires. Monday you run `glean morning` and get a receipt: each draft branch with a verified `tests: pass`, the exact command to review it, and an honest capacity line. It's your own subscription driving your own `claude` CLI on a schedule — no API key, no proxying, nothing pushed.
 
 ### Honesty boilerplate (paste near the top of every post)
-> Heads up: **glean is early and Windows-first today.** The scheduler is Windows Task Scheduler only (macOS/Linux is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (352 tests); the unattended multi-day weekend *drain* is built but hasn't had its first real overnight validation run in the wild yet. I'm posting partly to find people who'll run it and tell me what breaks.
+> Heads up: **glean is early and Windows-first today.** The scheduler is Windows Task Scheduler only (macOS/Linux is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (406 tests), and it now runs for real against live `claude -p` (a real run produced dossiers + pre-fetched docs, zero failures; a `--drain` tick works and the unattended weekend drain is armed). The one thing not yet observed in the wild is a real **hard weekly-cap hit** on a full multi-day drain (ADR-0001). I'm posting partly to find people who'll run it and tell me what breaks.
 
 ### What makes it land with this crowd (use as talking points in comments)
 - **"Is this allowed?" is pre-answered.** It drives your own logged-in CLI, same `claude -p` calls you could type by hand. No key, no resale. (The rejected resale design is documented as dropped.)
@@ -190,7 +190,7 @@ Point Windows Task Scheduler at it (`glean schedule enable`) and it drains the w
 
 On "is this allowed": it drives my own logged-in `claude` CLI — the same `claude -p` calls I could type by hand. No API key, no proxying. Every spawned session runs under a deny-list blocking `git push`/`checkout`/`reset`/`gh pr` mutations.
 
-Honest caveats: it's early and Windows-first (macOS/Linux is the top tracked issue). The single-run + draft path is dogfooded and tested (352 tests). The unattended multi-day drain is built but hasn't had its first real overnight validation run yet — so genuinely looking for people to try it and report back.
+Honest caveats: it's early and Windows-first (macOS/Linux is the top tracked issue). The single-run + draft path is dogfooded and tested (406 tests). The unattended weekend drain has run live (first real run: 2026-06-11) — so genuinely looking for people to try it and report back.
 
 Repo + install: https://github.com/Jonny-boy9000/glean  (`npm i -g @jonny-boy9000/glean`)
 
@@ -224,7 +224,7 @@ Design constraints I cared about:
 - Read-only against your real checkouts; all speculative output is in worktrees or under ~/glean.
 - Every spawned session runs with a `--disallowedTools` deny-list (no `git push`/`checkout`/`reset`, no `gh pr` mutations).
 
-Honest status: it's early and Windows-first (macOS/Linux scheduling is the top tracked issue). 352 tests; the single-run + draft path is dogfooded. The unattended multi-day weekend drain is built but hasn't had its first real overnight run in the wild yet — I'd love for someone to try it and tell me where it breaks. The usefulness metric is built in: `glean rate <id> kept|discarded` so I can see what's actually worth keeping.
+Honest status: it's early and Windows-first (macOS/Linux scheduling is the top tracked issue). 406 tests; the single-run + draft path is dogfooded and the unattended weekend drain has run live (2026-06-11) — I'd love for someone to try it and tell me where it breaks. The usefulness metric is built in: `glean rate <id> kept|discarded` so I can see what's actually worth keeping.
 
 Repo: https://github.com/Jonny-boy9000/glean  ·  npm: @jonny-boy9000/glean
 

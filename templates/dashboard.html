@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>glean</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #14171c; --panel2: #1b1f26; --border: #262b33;
+    --text: #e6e9ee; --muted: #8b94a3; --accent: #4f9cf9; --accent2: #6ee7b7;
+    --ok: #3fb950; --warn: #d29922; --bad: #f85149; --chip: #232932;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .brand { font-weight: 700; letter-spacing: .5px; font-size: 16px; }
+  .brand .dot { color: var(--accent2); }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--chip); border: 1px solid var(--border); }
+  .pill.running { color: #0b0d10; background: var(--accent2); border-color: var(--accent2); }
+  .pill.stopped { color: #fff; background: var(--bad); border-color: var(--bad); }
+  .pill.idle { color: var(--muted); }
+  .spacer { flex: 1; }
+  button { font: inherit; cursor: pointer; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); padding: 6px 12px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06223f; font-weight: 600; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .tabs { display: flex; gap: 4px; padding: 10px 20px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .tab { padding: 8px 16px; border-radius: 7px 7px 0 0; color: var(--muted); cursor: pointer; border: 1px solid transparent; border-bottom: none; }
+  .tab.active { color: var(--text); background: var(--bg); border-color: var(--border); }
+  .wrap { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .card .v.small { font-size: 15px; font-weight: 600; }
+  .banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 10px; margin-bottom: 10px;
+    border: 1px solid; }
+  .banner.warn { background: #2a210c; border-color: #5c4708; }
+  .banner.info { background: #0e2233; border-color: #1d456b; }
+  .banner .msg { flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  tr.clickable:hover { background: var(--panel2); cursor: pointer; }
+  .badge { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; display: inline-block; }
+  .badge.ok { background: rgba(63,185,80,.15); color: var(--ok); }
+  .badge.bad { background: rgba(248,81,73,.15); color: var(--bad); }
+  .badge.warn { background: rgba(210,153,34,.15); color: var(--warn); }
+  .badge.muted { background: var(--chip); color: var(--muted); }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  h3 { font-size: 14px; color: var(--muted); margin: 18px 0 8px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .panel-section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .events { max-height: 320px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+  .events .ev { font-size: 12px; padding: 2px 4px; white-space: pre-wrap; }
+  .events .ev .evt { color: var(--accent2); }
+  .back { color: var(--muted); cursor: pointer; }
+  .back:hover { color: var(--text); }
+  .md { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; line-height: 1.6; }
+  .md h1, .md h2, .md h3 { color: var(--text); }
+  .md pre { background: var(--bg); padding: 10px; border-radius: 6px; overflow: auto; }
+  .md code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 20; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: min(860px, 92vw); max-height: 86vh; overflow: auto; padding: 18px; }
+  .modal pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; font-size: 12px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent2); padding: 10px 14px; border-radius: 8px; z-index: 30; opacity: 0; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+  .empty pre { display: inline-block; text-align: left; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; margin: 10px 0 0; font-size: 12px; }
+  body.modal-open { overflow: hidden; }
+  /* capacity gauge (overview) */
+  .gauge { height: 10px; border-radius: 5px; background: var(--chip); overflow: hidden; margin-top: 10px; }
+  .gauge > i { display: block; height: 100%; border-radius: 5px; background: var(--ok); transition: width .3s; }
+  .gauge > i.warn { background: var(--warn); }
+  .gauge > i.bad { background: var(--bad); }
+  /* per-row ok/failed ratio bar (runs table) */
+  .ratio { display: inline-flex; width: 40px; height: 8px; border-radius: 4px; overflow: hidden;
+    background: var(--chip); vertical-align: middle; }
+  .ratio i { display: block; height: 100%; }
+  .ratio .r-ok { background: var(--ok); }
+  .ratio .r-bad { background: var(--bad); }
+  tr.noop { opacity: .55; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="brand">glean<span class="dot">.</span></span>
+    <span id="statePill" class="pill idle">…</span>
+    <span id="stateDetail" class="sub"></span>
+    <span class="spacer"></span>
+    <button id="runBtn" class="primary">Run now</button>
+    <button id="stopBtn">Stop</button>
+    <button id="resumeBtn" style="display:none">Resume</button>
+    <button id="refreshBtn" title="Refresh">⟳</button>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="runs">Runs</div>
+    <div class="tab" data-tab="dossiers">Dossiers</div>
+  </div>
+  <div class="wrap">
+    <div id="view-overview"></div>
+    <div id="view-runs" style="display:none"></div>
+    <div id="view-dossiers" style="display:none"></div>
+  </div>
+
+  <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let STATE = { tab: 'overview', overview: null, runs: [], dossiers: [], openRun: null };
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+async function api(path) { const r = await fetch(path); if (!r.ok) throw new Error(path + ' ' + r.status); return r.json(); }
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Glean-Dashboard': '1' }, body: body ? JSON.stringify(body) : '{}' });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) throw new Error(j.reason || ('HTTP ' + r.status));
+  return j;
+}
+function fmtDur(ms) {
+  if (ms == null) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
+}
+function fmtTime(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleString(); }
+function relTimeText(iso) {
+  const d = new Date(iso); if (!iso || isNaN(d)) return '—';
+  const diff = Date.now() - d.getTime(); const abs = Math.abs(diff);
+  const suffix = diff >= 0 ? ' ago' : ' from now';
+  const mins = Math.round(abs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm' + suffix;
+  if (mins < 48 * 60) return Math.round(mins / 60) + 'h' + suffix;
+  return Math.round(mins / 1440) + 'd' + suffix;
+}
+// "2h ago" with the absolute timestamp in a title tooltip; kept fresh by tickClocks().
+function relTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso); if (isNaN(d)) return '—';
+  return '<span data-rel="' + esc(iso) + '" title="' + esc(d.toLocaleString()) + '">' + esc(relTimeText(iso)) + '</span>';
+}
+function countdownText(iso) {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 0) return 'window has reset';
+  const m = Math.ceil(ms / 60000); const h = Math.floor(m / 60);
+  return 'resets in ' + (h > 0 ? h + 'h ' : '') + (m % 60) + 'm';
+}
+// Refresh every relative time + countdown in place — no re-render, so it can
+// never clobber something the user is about to click.
+function tickClocks() {
+  document.querySelectorAll('[data-rel]').forEach(el => { el.textContent = relTimeText(el.dataset.rel); });
+  document.querySelectorAll('[data-resets-at]').forEach(el => { el.textContent = countdownText(el.dataset.resetsAt); });
+}
+setInterval(tickClocks, 30000);
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast('Copied'); }
+  catch { toast('Copy failed'); }
+}
+function fmtBytes(b) { if (b == null) return '—'; if (b < 1024) return b + ' B'; return (b/1024).toFixed(1) + ' KB'; }
+function statusBadge(s) {
+  if (!s) return '<span class="badge muted">—</span>';
+  const ok = s === 'ok' || s === 'ok-fallback' || s === 'completed';
+  const bad = ['failed','timeout','rate-limit','crashed'].includes(s);
+  const cls = ok ? 'ok' : bad ? 'bad' : 'warn';
+  return '<span class="badge ' + cls + '">' + esc(s) + '</span>';
+}
+
+// ---------- Overview ----------
+function renderOverview() {
+  const o = STATE.overview; const el = $('#view-overview');
+  if (!o) { el.innerHTML = '<div class="empty">Loading…</div>'; return; }
+  let h = '';
+  for (const f of o.health) {
+    h += '<div class="banner ' + f.level + '"><div class="msg">' + esc(f.message) + '</div>' +
+      (f.action ? '<button data-action="' + esc(f.action) + '">Fix</button>' : '') + '</div>';
+  }
+  const d = o.drain;
+  h += '<div class="grid">' +
+    card('State', o.state.toUpperCase(), 'small') +
+    card('Runs', o.totals.runs) +
+    card('Dossiers', o.totals.dossiers) +
+    card('Drain window age', d.window_age_hours != null ? d.window_age_hours + ' h' : '—', 'small') +
+    card('Unproductive re-entries', d.unproductive_reentries) +
+    card('Completed (deduped)', d.completed_count) +
+    card('Week exhausted', d.week_exhausted ? 'YES' : 'no', 'small') +
+    card('Schedule', o.schedule.found ? esc(o.schedule.state) : 'not registered', 'small') +
+    '</div>';
+
+  h += renderCapacity(o.capacity);
+
+  if (!(o.projects || []).length) {
+    const snippet = '{\n  "projects": {\n    "C:\\\\path\\\\to\\\\your\\\\repo": { "base_branch": "main" }\n  }\n}';
+    h += '<div class="panel-section" style="margin-top:14px"><h2>No project configured</h2>' +
+      '<div class="sub">"Run now" and "Enable schedule" need a project in <span class="mono">~/glean/config.json</span>. Add one:</div>' +
+      '<pre class="mono" style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">' + esc(snippet) + '</pre>' +
+      '<button data-copy-snippet>Copy snippet</button></div>';
+  }
+
+  h += '<div class="panel-section" style="margin-top:14px"><h2>Schedule</h2>';
+  if (o.schedule.found) {
+    h += '<div class="sub">Task <span class="mono">Glean\\\\Drain</span> — ' + esc(o.schedule.state) + '</div>' +
+      '<div class="sub">last run: ' + esc(o.schedule.lastRun) + ' · next run: ' + esc(o.schedule.nextRun) + '</div>';
+    h += '<div class="row-actions" style="margin-top:10px"><button class="danger" data-sched="disable">Disable schedule</button></div>';
+  } else {
+    h += '<div class="sub">Not registered.</div>';
+    h += '<div class="row-actions" style="margin-top:10px"><button data-sched="enable">Enable schedule</button></div>';
+  }
+  h += '</div>';
+
+  if (o.latest_run) {
+    const r = o.latest_run;
+    h += '<div class="panel-section"><h2>Latest run</h2>' +
+      '<div class="sub mono">' + esc(r.run_id) + '</div>' +
+      '<div style="margin-top:8px">' + statusBadge(r.reason) +
+      ' &nbsp; started ' + relTime(r.started_at) +
+      ' · ran ' + (r.ran ?? '—') + ' · failed ' + (r.failed ?? '—') + ' · ' + fmtDur(r.elapsed_ms) +
+      ' &nbsp; <a data-openrun="' + esc(r.run_id) + '">open →</a></div></div>';
+  }
+  el.innerHTML = h;
+  el.querySelectorAll('[data-action]').forEach(b => b.onclick = () => doAction(b.dataset.action));
+  el.querySelectorAll('[data-openrun]').forEach(a => a.onclick = () => { switchTab('runs'); openRun(a.dataset.openrun); });
+  el.querySelectorAll('[data-sched]').forEach(b => b.onclick = () => doSchedule(b.dataset.sched));
+  const cs = el.querySelector('[data-copy-snippet]');
+  if (cs) cs.onclick = () => copyText('{\n  "projects": {\n    "C:\\\\path\\\\to\\\\your\\\\repo": { "base_branch": "main" }\n  }\n}');
+}
+function card(k, v, cls) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v ' + (cls||'') + '">' + esc(v) + '</div></div>'; }
+
+// Session-window utilization from the last captured rate_limit_event.
+// utilization is a FRACTION (0.95 = 95%); resetsAt countdown is computed
+// client-side and kept fresh by tickClocks().
+function renderCapacity(cap) {
+  let h = '<div class="panel-section" style="margin-top:14px"><h2>Capacity</h2>';
+  if (!cap || !cap.found) {
+    h += '<div class="sub">No capacity signal captured yet — telemetry appears here after a run\'s claude session emits a rate_limit_event into its stream log.</div></div>';
+    return h;
+  }
+  const pct = cap.utilization != null ? Math.round(Math.min(Math.max(cap.utilization, 0), 1) * 100) : null;
+  const gcls = pct == null ? '' : pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+  const windowName = cap.rate_limit_type ? cap.rate_limit_type.replace(/_/g, ' ') + ' window' : 'unknown window';
+  h += '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
+    '<span style="font-size:22px;font-weight:700">' + (pct != null ? pct + '% used' : 'utilization unknown') + '</span>' +
+    '<span class="sub">' + esc(windowName) + '</span>' + capBadge(cap.status) +
+    (cap.is_using_overage ? ' <span class="badge warn">overage</span>' : '') + '</div>';
+  if (pct != null) h += '<div class="gauge"><i class="' + gcls + '" style="width:' + pct + '%"></i></div>';
+  h += '<div class="sub" style="margin-top:8px">' +
+    (cap.resets_at ? '<span data-resets-at="' + esc(cap.resets_at) + '" title="' + esc(fmtTime(cap.resets_at)) + '">' + esc(countdownText(cap.resets_at)) + '</span> · ' : '') +
+    'captured ' + relTime(cap.captured_at) + ' in run <span class="mono">' + esc(cap.run_id || '—') + '</span></div>';
+  return h + '</div>';
+}
+function capBadge(s) {
+  if (!s) return '';
+  const cls = s === 'allowed' ? 'ok' : s === 'allowed_warning' ? 'warn' : 'bad';
+  return '<span class="badge ' + cls + '">' + esc(s) + '</span>';
+}
+
+async function doAction(path) {
+  try { const j = await post(path); toast(j.message || 'done'); await refreshAll(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+async function doSchedule(which) {
+  if (which === 'enable') {
+    const proj = (STATE.overview.projects || [])[0];
+    if (!proj) return toast('No configured project to schedule.');
+    if (!confirm('Enable scheduled drain for ' + proj + '?')) return;
+    try { await post('/api/schedule/enable', { project: proj }); toast('Schedule enabled'); await refreshAll(); }
+    catch (e) { toast('Error: ' + e.message); }
+  } else {
+    if (!confirm('Disable the scheduled drain?')) return;
+    try { await post('/api/schedule/disable'); toast('Schedule disabled'); await refreshAll(); }
+    catch (e) { toast('Error: ' + e.message); }
+  }
+}
+
+// ---------- Runs ----------
+function drainCmd() {
+  const proj = ((STATE.overview && STATE.overview.projects) || [])[0];
+  return 'glean run --drain --project ' + (proj || '<path-to-repo>');
+}
+function ratioBar(r) {
+  const ok = Math.max(0, r.ran ?? 0), bad = Math.max(0, r.failed ?? 0), total = ok + bad;
+  if (!total) return '<span class="ratio" title="no tasks ran"></span>';
+  const okPct = Math.round((ok / total) * 100);
+  return '<span class="ratio" title="' + ok + ' ok / ' + bad + ' failed">' +
+    '<i class="r-ok" style="width:' + okPct + '%"></i>' +
+    '<i class="r-bad" style="width:' + (100 - okPct) + '%"></i></span>';
+}
+function renderRuns() {
+  const el = $('#view-runs');
+  if (STATE.openRun) return renderRunDetail();
+  if (!STATE.runs.length) {
+    el.innerHTML = '<div class="empty">No runs yet. Start one from a terminal:' +
+      '<br><pre class="mono">' + esc(drainCmd()) + '</pre><br>' +
+      '<button data-copy-cmd>Copy command</button>' +
+      '<div class="sub" style="margin-top:8px">…or use <b>Run now</b> in the top bar (needs a configured project).</div></div>';
+    const c = el.querySelector('[data-copy-cmd]'); if (c) c.onclick = () => copyText(drainCmd());
+    return;
+  }
+  let h = '<table><thead><tr><th>Run</th><th>Started</th><th>Outcome</th><th>Ok / failed</th><th>Ran</th><th>Failed</th><th>Duration</th><th></th></tr></thead><tbody>';
+  for (const r of STATE.runs) {
+    const noop = r.productive === false && (r.ran ?? 0) === 0 && (r.failed ?? 0) === 0;
+    h += '<tr class="clickable' + (noop ? ' noop' : '') + '" data-run="' + esc(r.run_id) + '">' +
+      '<td class="mono">' + esc(r.run_id) + '</td>' +
+      '<td>' + relTime(r.started_at) + '</td>' +
+      '<td>' + (r.in_progress ? '<span class="badge warn">in progress</span>' : statusBadge(r.reason)) + (r.productive === false ? ' <span class="badge muted">no-op</span>' : '') + '</td>' +
+      '<td>' + ratioBar(r) + '</td>' +
+      '<td>' + (r.ran ?? '—') + '</td>' +
+      '<td>' + ((r.failed ?? 0) > 0 ? '<span class="badge bad">' + r.failed + '</span>' : '0') + '</td>' +
+      '<td>' + fmtDur(r.elapsed_ms) + '</td>' +
+      '<td>→</td></tr>';
+  }
+  h += '</tbody></table>';
+  el.innerHTML = h;
+  el.querySelectorAll('[data-run]').forEach(tr => tr.onclick = () => openRun(tr.dataset.run));
+}
+async function openRun(runId) {
+  try { STATE.openRun = await api('/api/runs/' + runId); renderRuns(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+function renderRunDetail() {
+  const el = $('#view-runs'); const r = STATE.openRun; const s = r.summary || {};
+  let h = '<div class="back" id="backRuns">← all runs</div>';
+  h += '<div class="panel-section"><h2 class="mono">' + esc(r.run_id) + '</h2>' +
+    '<div>' + statusBadge(s.reason) + ' &nbsp; ' +
+    'candidates ' + (s.candidates_total ?? '—') + ' · ran ' + (s.ran ?? '—') +
+    ' · failed ' + (s.failed ?? '—') + ' · timed out ' + (s.timed_out ?? '—') + ' · ' + fmtDur(s.elapsed_ms) + '</div>';
+  if (r.failed_task_ids.length) {
+    h += '<div class="row-actions" style="margin-top:10px"><button class="primary" id="retryBtn">Retry ' + r.failed_task_ids.length + ' failed task(s)</button>' +
+      '<span class="sub">removes their dedup hashes so the next tick re-attempts them</span></div>';
+  }
+  h += '</div>';
+
+  h += '<div class="panel-section"><h2>Tasks</h2><table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Elapsed</th><th></th></tr></thead><tbody>';
+  for (const t of r.tasks) {
+    h += '<tr><td>' + esc(t.title || t.task_id) + '</td><td class="sub">' + esc(t.type || '—') + '</td>' +
+      '<td>' + statusBadge(t.status) + '</td><td>' + fmtDur(t.elapsed_ms) + '</td>' +
+      '<td>' + (t.has_stream ? '<a data-stream="' + esc(t.task_id) + '">stream</a>' : '') + '</td></tr>';
+  }
+  h += '</tbody></table></div>';
+
+  h += '<div class="panel-section"><h2>Orchestrator timeline</h2><div class="events">';
+  for (const e of r.events) {
+    const t = (e.t || '').slice(11, 19);
+    h += '<div class="ev"><span class="sub">' + esc(t) + '</span> <span class="evt">' + esc(e.evt || '') + '</span> ' + esc(briefEvent(e)) + '</div>';
+  }
+  h += '</div></div>';
+  el.innerHTML = h;
+  $('#backRuns').onclick = () => { STATE.openRun = null; renderRuns(); };
+  const rb = $('#retryBtn'); if (rb) rb.onclick = () => retryFailed(r.run_id);
+  el.querySelectorAll('[data-stream]').forEach(a => a.onclick = () => openStream(r.run_id, a.dataset.stream));
+}
+function briefEvent(e) {
+  const skip = new Set(['t','evt']);
+  return Object.keys(e).filter(k => !skip.has(k)).map(k => k + '=' + JSON.stringify(e[k])).join(' ');
+}
+async function retryFailed(runId) {
+  if (!confirm('Re-queue this run\'s failed tasks for the next drain tick?')) return;
+  try { const j = await post('/api/runs/' + runId + '/retry-failed'); toast('Re-queued ' + j.removed + ' task(s)'); await refreshAll(); await openRun(runId); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+async function openStream(runId, taskId) {
+  try {
+    const j = await api('/api/runs/' + runId + '/tasks/' + taskId);
+    let h = '<div class="back" id="closeModal">✕ close</div><h2 class="mono">' + esc(taskId) + '</h2>';
+    if (j.result_text) h += '<div class="md">' + esc(j.result_text) + '</div>';
+    h += '<h3>Last ' + j.lines.length + ' stream events</h3><pre>' + esc(j.lines.map(l => JSON.stringify(l)).join('\n')) + '</pre>';
+    openModal(h);
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+// ---------- Dossiers ----------
+function renderDossiers() {
+  const el = $('#view-dossiers');
+  if (!STATE.dossiers.length) {
+    el.innerHTML = '<div class="empty">No dossiers yet — they land in <span class="mono">~/glean/dossiers/</span> when a run produces output.' +
+      '<br><pre class="mono">' + esc(drainCmd()) + '</pre><br>' +
+      '<button data-copy-cmd>Copy command</button></div>';
+    const c = el.querySelector('[data-copy-cmd]'); if (c) c.onclick = () => copyText(drainCmd());
+    return;
+  }
+  let h = '<table><thead><tr><th>Title</th><th>Date</th><th>Project</th><th>Status</th><th>Output</th><th></th></tr></thead><tbody>';
+  for (const d of STATE.dossiers) {
+    h += '<tr><td>' + esc(d.title) + '</td><td class="sub">' + esc(d.date) + '</td>' +
+      '<td class="sub">' + esc(d.project_slug) + '</td><td>' + statusBadge(d.status) + '</td>' +
+      '<td>' + (d.has_output ? fmtBytes(d.bytes) : '<span class="badge muted">empty</span>') + '</td>' +
+      '<td class="row-actions">' +
+        (d.has_output ? '<button data-view="' + esc(d.id) + '">View</button>' : '') +
+        '<button data-rate="' + esc(d.id) + '">Rate</button>' +
+        '<button class="danger" data-discard="' + esc(d.id) + '">Discard</button>' +
+      '</td></tr>';
+  }
+  h += '</tbody></table>';
+  el.innerHTML = h;
+  el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewDossier(b.dataset.view));
+  el.querySelectorAll('[data-discard]').forEach(b => b.onclick = () => discardDossier(b.dataset.discard));
+  el.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => rateDossier(b.dataset.rate));
+}
+async function viewDossier(id) {
+  try {
+    const j = await api('/api/dossier?id=' + encodeURIComponent(id));
+    openModal('<div class="back" id="closeModal">✕ close</div><h2>' + esc(j.title) + '</h2><div class="md">' + mdToHtml(j.markdown) + '</div>');
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function discardDossier(id) {
+  if (!confirm('Delete dossier ' + id + ' ? This removes the directory under ~/glean/dossiers.')) return;
+  try { await post('/api/dossier/discard', { id }); toast('Discarded'); await refreshAll(); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+async function rateDossier(id) {
+  const v = prompt('Rate this dossier: kept / discarded / actioned', 'kept');
+  if (!v) return;
+  if (!['kept','discarded','actioned'].includes(v)) return toast('Invalid verdict');
+  try { const j = await post('/api/rate', { id, verdict: v }); toast(j.message || 'rated'); }
+  catch (e) { toast('Error: ' + e.message); }
+}
+
+// minimal markdown -> html (headings, bold, code, lists, links, paragraphs)
+function mdToHtml(md) {
+  const lines = String(md).split('\n'); let html = ''; let inCode = false; let inList = false;
+  // Only emit anchors for safe schemes — dossier markdown is AI-generated over
+  // repo/session content, and this page holds full management power, so a
+  // javascript: link would be a real privilege-escalation XSS. esc() already
+  // ran (so a literal " is &quot; — no attribute breakout), but the scheme
+  // must still be whitelisted.
+  const safeHref = (href) => {
+    const h = href.trim();
+    return /^(https?:|mailto:|#|\/)/i.test(h) && !h.includes('"') ? h : '#';
+  };
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, txt, href) =>
+      '<a href="' + safeHref(href) + '" target="_blank" rel="noopener noreferrer">' + txt + '</a>');
+  for (let raw of lines) {
+    if (raw.trim().startsWith('```')) { if (inCode) { html += '</pre>'; inCode = false; } else { html += '<pre>'; inCode = true; } continue; }
+    if (inCode) { html += esc(raw) + '\n'; continue; }
+    const h = raw.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { if (inList) { html += '</ul>'; inList = false; } html += '<h' + h[1].length + '>' + inline(h[2]) + '</h' + h[1].length + '>'; continue; }
+    const li = raw.match(/^\s*[-*]\s+(.*)$/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(li[1]) + '</li>'; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (raw.trim() === '') { html += ''; continue; }
+    html += '<p>' + inline(raw) + '</p>';
+  }
+  if (inList) html += '</ul>'; if (inCode) html += '</pre>';
+  return html;
+}
+
+// ---------- modal / tabs / triggers ----------
+function openModal(h) {
+  $('#modal').innerHTML = h; $('#modalBg').classList.add('open');
+  document.body.classList.add('modal-open'); // lock body scroll while open
+  const c = $('#closeModal'); if (c) c.onclick = closeModal;
+}
+function closeModal() { $('#modalBg').classList.remove('open'); document.body.classList.remove('modal-open'); }
+$('#modalBg').onclick = (e) => { if (e.target === $('#modalBg')) closeModal(); };
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#modalBg').classList.contains('open')) closeModal();
+});
+
+function switchTab(tab) {
+  STATE.tab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  for (const v of ['overview','runs','dossiers']) $('#view-' + v).style.display = v === tab ? '' : 'none';
+  if (tab === 'overview') renderOverview();
+  if (tab === 'runs') renderRuns();
+  if (tab === 'dossiers') renderDossiers();
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+$('#runBtn').onclick = async () => {
+  const projects = (STATE.overview && STATE.overview.projects) || [];
+  if (!projects.length) return toast('No configured project. Add one under projects in config.json.');
+  const proj = projects.length === 1 ? projects[0] : prompt('Project path to run:', projects[0]);
+  if (!proj) return;
+  if (!confirm('Start a drain run for ' + proj + ' now?')) return;
+  try { await post('/api/run', { project: proj }); toast('Run started'); setTimeout(refreshAll, 1500); }
+  catch (e) { toast('Error: ' + e.message); }
+};
+$('#stopBtn').onclick = async () => { try { await post('/api/stop'); toast('STOP set'); await refreshAll(); } catch (e) { toast('Error: ' + e.message); } };
+$('#resumeBtn').onclick = async () => { try { await post('/api/resume'); toast('Resumed'); await refreshAll(); } catch (e) { toast('Error: ' + e.message); } };
+$('#refreshBtn').onclick = refreshAll;
+
+function renderBar() {
+  const o = STATE.overview; if (!o) return;
+  const pill = $('#statePill'); pill.className = 'pill ' + o.state; pill.textContent = o.state.toUpperCase();
+  $('#stateDetail').textContent = o.running_run_id ? ('running ' + o.running_run_id) :
+    o.stop_set ? 'STOP sentinel set' : (o.schedule.found ? ('next: ' + o.schedule.nextRun) : 'schedule off');
+  $('#stopBtn').style.display = o.stop_set ? 'none' : '';
+  $('#resumeBtn').style.display = o.stop_set ? '' : 'none';
+}
+
+// Poll hygiene: the 5s poll never re-renders a view whose data is unchanged,
+// so it cannot yank buttons/rows out from under a click on ANY tab (the modal
+// and the open run-detail view are additionally never poll-rendered at all —
+// the modal lives outside the views, and run detail is guarded by openRun).
+// Relative times and the capacity countdown stay fresh via tickClocks(),
+// which mutates text in place. RENDERED tracks what each view last drew.
+const RENDERED = { overview: null, runs: null, dossiers: null };
+async function refreshAll() {
+  try {
+    const [overview, runs, dossiers] = await Promise.all([api('/api/overview'), api('/api/runs'), api('/api/dossiers')]);
+    STATE.overview = overview; STATE.runs = runs.runs; STATE.dossiers = dossiers.dossiers;
+    renderBar();
+    // generated_at changes every poll — exclude it or overview would always re-render.
+    const oKey = JSON.stringify({ ...overview, generated_at: null });
+    const rKey = JSON.stringify(STATE.runs);
+    const dKey = JSON.stringify(STATE.dossiers);
+    if (STATE.tab === 'overview' && oKey !== RENDERED.overview) renderOverview();
+    if (STATE.tab === 'runs' && !STATE.openRun && rKey !== RENDERED.runs) renderRuns();
+    if (STATE.tab === 'dossiers' && dKey !== RENDERED.dossiers) renderDossiers();
+    RENDERED.overview = oKey; RENDERED.runs = rKey; RENDERED.dossiers = dKey;
+  } catch (e) { toast('Refresh failed: ' + e.message); }
+}
+
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>
