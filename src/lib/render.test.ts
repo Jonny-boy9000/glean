@@ -55,7 +55,7 @@ describe('research-dossier template renders doc evidence', () => {
     const tplPath = join(__dirname, '..', '..', 'templates', 'research-dossier.md');
     const tpl = readFileSync(tplPath, 'utf8');
     const cand: Candidate & { title?: string } = {
-      id: 'x', evidence_hash: 'h', type: 'research-dossier', project_path: 'C:\proj',
+      id: 'x', evidence_hash: 'h', type: 'research-dossier', project_path: 'C:\\proj',
       evidence: { kind: 'doc', file: 'docs/ROADMAP.md', heading: 'Up next', item_text: 'Ship the capacity governor', line: 12 },
       est_value: 28, est_tokens: 5000, status: 'pending',
     };
