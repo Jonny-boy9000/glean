@@ -226,7 +226,9 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
   const start = Date.now();
   const slug = slugify(c);
   const dossierDir = join(ctx.gleanRoot, 'dossiers', projectSlug(c.project_path), today());
-  const workDir = c.type === 'research-dossier' ? join(dossierDir, `research-${slug}`) : join(dossierDir, 'docs');
+  const workDir = c.type === 'research-dossier'
+    ? uniqueResearchDir(dossierDir, slug, c.id)
+    : join(dossierDir, 'docs');
   mkdirSync(workDir, { recursive: true });
 
   const hydrated = hydrateEvidence(c, ctx);
@@ -988,6 +990,21 @@ function hydrateEvidence(c: Candidate, _ctx: ExecCtx): Candidate {
     cloned.evidence.recent_turns = [];
   }
   return cloned;
+}
+
+// 2026-06-12 data-loss fix (run 2026-06-12-2109-f8628b): three same-day
+// research-dossier tasks whose titles slugified identically (all blank) resolved
+// to the SAME `research-` dir, and each task silently overwrote the previous
+// task's OUT.md. The dossier dir must be unique PER TASK: keep the readable slug,
+// but append the first 8 chars of the task id when the slug is empty OR the dir
+// already exists (same-run collision or a leftover from an earlier run today).
+// An existing OUT.md from a different task is therefore never overwritten.
+function uniqueResearchDir(dossierDir: string, slug: string, taskId: string): string {
+  const idSuffix = taskId.slice(0, 8);
+  if (!slug) return join(dossierDir, `research-${idSuffix}`);
+  const preferred = join(dossierDir, `research-${slug}`);
+  if (!existsSync(preferred)) return preferred;
+  return join(dossierDir, `research-${slug}-${idSuffix}`);
 }
 
 function slugify(c: Candidate): string {

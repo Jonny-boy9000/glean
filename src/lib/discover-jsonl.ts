@@ -111,14 +111,44 @@ export function resolveSessionDirs(projectPath: string, projectsRoot: string): s
 
 type SessionScan = {
   ai_title: string | null;
+  last_prompt: string | null;
+  first_user_text: string | null;
   last_assistant_turn_at: number | null;
   assistant_turn_count: number;
   unfinished_tool_use: boolean;
 };
 
+// Collapse a raw title-ish string into one readable, bounded line. Returns null
+// for blank input so callers can fall through to the next title source.
+const TITLE_MAX_CHARS = 80;
+function sanitizeTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX_CHARS).trim();
+  return t.length > 0 ? t : null;
+}
+
+// First text payload of a user message. Real Claude Code sessions nest it as
+// message.content (string, or an array of blocks where tool_result blocks must
+// be skipped); legacy fixture sessions carry a top-level content string.
+function userMessageText(obj: { content?: unknown; message?: { content?: unknown } }): string | null {
+  const content = obj.message?.content ?? obj.content;
+  if (typeof content === 'string') return sanitizeTitle(content);
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === 'object' && (block as { type?: string }).type === 'text') {
+        const t = sanitizeTitle((block as { text?: unknown }).text);
+        if (t !== null) return t;
+      }
+    }
+  }
+  return null;
+}
+
 function scanSession(filePath: string): SessionScan {
   const scan: SessionScan = {
     ai_title: null,
+    last_prompt: null,
+    first_user_text: null,
     last_assistant_turn_at: null,
     assistant_turn_count: 0,
     unfinished_tool_use: false,
@@ -126,14 +156,25 @@ function scanSession(filePath: string): SessionScan {
   const lines = readFileSync(filePath, 'utf8').split(/\r?\n/).filter((l) => l.trim().length > 0);
   let pendingToolUse = false;
   for (const ln of lines) {
-    let obj: { type?: string; aiTitle?: string; timestamp?: string; tool_use?: unknown; tool_result?: unknown };
+    let obj: { type?: string; aiTitle?: string; lastPrompt?: string; content?: unknown; message?: { content?: unknown }; timestamp?: string; tool_use?: unknown; tool_result?: unknown };
     try {
       obj = JSON.parse(ln);
     } catch {
       continue;
     }
-    if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string') {
-      scan.ai_title = obj.aiTitle;
+    // 2026-06-12 empty-title fix: a BLANK aiTitle must not register (it would
+    // shadow the fallbacks below and produce an empty candidate title).
+    if (obj.type === 'ai-title') {
+      scan.ai_title = sanitizeTitle(obj.aiTitle) ?? scan.ai_title;
+    }
+    // Real sessions (verified 2026-06-12, C--ClaudeCode-Work) carry NO ai-title;
+    // their title-ish field is {"type":"last-prompt","lastPrompt":"..."}. Keep the
+    // most recent one — it describes where the session left off.
+    if (obj.type === 'last-prompt') {
+      scan.last_prompt = sanitizeTitle(obj.lastPrompt) ?? scan.last_prompt;
+    }
+    if (obj.type === 'user' && scan.first_user_text === null) {
+      scan.first_user_text = userMessageText(obj);
     }
     if (obj.type === 'assistant') {
       scan.assistant_turn_count++;
@@ -172,6 +213,14 @@ export async function discoverJsonl(
 
   for (const filePath of files) {
     const scan = scanSession(filePath);
+    const sessionId = basename(filePath, '.jsonl');
+
+    // 2026-06-12 empty-title fix (run 2026-06-12-2109-f8628b): real sessions carry
+    // no ai-title at all, so '' titles collapsed every dossier into the same
+    // `research-` dir and each task overwrote the previous one's OUT.md. Resolve a
+    // NEVER-EMPTY title: explicit ai-title → most recent last-prompt → first user
+    // message → deterministic "session <first-8-of-session-id>".
+    const title = scan.ai_title ?? scan.last_prompt ?? scan.first_user_text ?? `session ${sessionId.slice(0, 8)}`;
 
     const sourceTime = scan.last_assistant_turn_at ?? statSync(filePath).mtime.getTime();
     const idleHours = Math.max(0, Math.round((Date.now() - sourceTime) / 3600_000));
@@ -184,8 +233,8 @@ export async function discoverJsonl(
 
     const evidence: EvidenceJsonl = {
       kind: 'jsonl',
-      session_id: basename(filePath, '.jsonl'),
-      ai_title: scan.ai_title ?? '',
+      session_id: sessionId,
+      ai_title: title,
       idle_hours: idleHours,
       signal: reasons.join(','),
     };

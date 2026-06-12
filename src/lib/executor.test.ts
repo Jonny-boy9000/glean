@@ -302,6 +302,79 @@ describe('executeOne', () => {
     expect(p2).toMatch(/-L99/);
   });
 
+  // ── 2026-06-12 data-loss bug (run 2026-06-12-2109-f8628b): dossier dir collision ──
+  // Two candidates whose titles slugify identically (or are blank) resolved to the
+  // SAME dossier dir, so each task silently overwrote the previous task's OUT.md.
+  // The dir must be unique per task: keep the readable slug, append the first 8
+  // chars of the task id when the slug is empty OR the dir already exists. An
+  // existing OUT.md from a different task must never be overwritten.
+  describe('dossier dir collision (silent overwrite)', () => {
+    const jsonlCandidate = (id: string, title: string, repo: string): Candidate => ({
+      id, evidence_hash: `h-${id}`, type: 'research-dossier',
+      project_path: repo,
+      evidence: { kind: 'jsonl', session_id: `sess-${id}`, ai_title: title, idle_hours: 100, signal: 'idle-with-content' },
+      est_value: 50, est_tokens: 4000, status: 'pending',
+    });
+
+    function ctxFor(root: string) {
+      return {
+        runId: 'r1', gleanRoot: root, claudeBin: FAKE_CLAUDE,
+        templatesDir: join(__dirname, '..', '..', 'templates'),
+        taskTimeoutMs: 30_000,
+        env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      };
+    }
+
+    it('two SAME-TITLED candidates in one burst both keep their OUT.md in distinct dirs', async () => {
+      const root = tmpRoot();
+      const repo = tmpRepo();
+      const ctx = ctxFor(root);
+      const r1 = await executeOne(jsonlCandidate('aaaa1111-0000-4000-8000-000000000001', 'Continue the refactor', repo), ctx);
+      const r2 = await executeOne(jsonlCandidate('bbbb2222-0000-4000-8000-000000000002', 'Continue the refactor', repo), ctx);
+      const p1 = r1.output?.kind === 'file' ? r1.output.path : '';
+      const p2 = r2.output?.kind === 'file' ? r2.output.path : '';
+      expect(p1).not.toEqual(p2);
+      // BOTH outputs survive — the second task never overwrote the first.
+      expect(existsSync(p1)).toBe(true);
+      expect(existsSync(p2)).toBe(true);
+      // The first keeps the readable slug; the colliding second gets -<first-8-of-task-id>.
+      expect(p1).toMatch(/research-continue-the-refactor[\\/]OUT\.md$/);
+      expect(p2).toMatch(/research-continue-the-refactor-bbbb2222[\\/]OUT\.md$/);
+    });
+
+    it('two BLANK-titled candidates get distinct research-<first-8-of-task-id> dirs (live 2026-06-12 shape)', async () => {
+      const root = tmpRoot();
+      const repo = tmpRepo();
+      const ctx = ctxFor(root);
+      const r1 = await executeOne(jsonlCandidate('aaaa1111-0000-4000-8000-000000000001', '', repo), ctx);
+      const r2 = await executeOne(jsonlCandidate('bbbb2222-0000-4000-8000-000000000002', '', repo), ctx);
+      const p1 = r1.output?.kind === 'file' ? r1.output.path : '';
+      const p2 = r2.output?.kind === 'file' ? r2.output.path : '';
+      expect(p1).not.toEqual(p2);
+      expect(existsSync(p1)).toBe(true);
+      expect(existsSync(p2)).toBe(true);
+      // A blank slug must never produce a bare 'research-' dir.
+      expect(p1).toMatch(/research-aaaa1111[\\/]OUT\.md$/);
+      expect(p2).toMatch(/research-bbbb2222[\\/]OUT\.md$/);
+    });
+
+    it('a dossier dir surviving from an earlier run is not overwritten either', async () => {
+      const root = tmpRoot();
+      const repo = tmpRepo();
+      // Simulate yesterday's-run-today leftovers: the preferred dir already exists
+      // with a different task's OUT.md in it.
+      const { projectSlug } = await import('./state.js');
+      const dateDir = new Date().toISOString().slice(0, 10);
+      const preexisting = join(root, 'dossiers', projectSlug(repo), dateDir, 'research-continue-the-refactor');
+      mkdirSync(preexisting, { recursive: true });
+      writeFileSync(join(preexisting, 'OUT.md'), 'earlier task output — must survive');
+      const r = await executeOne(jsonlCandidate('cccc3333-0000-4000-8000-000000000003', 'Continue the refactor', repo), ctxFor(root));
+      const p = r.output?.kind === 'file' ? r.output.path : '';
+      expect(p).toMatch(/research-continue-the-refactor-cccc3333[\\/]OUT\.md$/);
+      expect(readFileSync(join(preexisting, 'OUT.md'), 'utf8')).toBe('earlier task output — must survive');
+    });
+  });
+
   it('clears the deadline checker on normal exit (no dangling timers)', async () => {
     // ADR-0004: the per-task deadline is a polled setInterval (wall-clock check),
     // so the no-dangling-handle guarantee is about clearInterval now.

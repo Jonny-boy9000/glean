@@ -226,6 +226,58 @@ describe('runPipeline', () => {
     expect(summary.completed_evidence_hashes ?? []).toEqual([]);
   });
 
+  // ── 2026-06-12 data-loss bug (run 2026-06-12-2109-f8628b) ────────────────────
+  // Two same-titled candidates in one burst used to resolve to the SAME dossier
+  // dir; each task overwrote the previous task's OUT.md, and the INDEX pointed
+  // both entries at the single surviving file. BOTH outputs must survive in
+  // distinct dirs, and each INDEX entry's `output` must point at its own task's
+  // actual dir.
+  it('two same-titled candidates in one burst BOTH survive, with distinct INDEX output paths', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    // Two real-project sessions (resolved via the cwd field) carrying the SAME title.
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'glean-proj-'));
+    const histDir = join(projectsRoot, 'some-history-dir');
+    mkdirSync(histDir, { recursive: true });
+    const session = (id: string): string =>
+      [
+        { type: 'user', timestamp: '2026-05-20T10:00:00Z', cwd: repo, content: 'start' },
+        { type: 'ai-title', sessionId: id, aiTitle: 'TODO: continue the migration' },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n';
+    writeFileSync(join(histDir, 'sess-one.jsonl'), session('sess-one'));
+    writeFileSync(join(histDir, 'sess-two.jsonl'), session('sess-two'));
+
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      budgetMs: 60 * 60_000,
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot,
+    });
+    expect(summary.ran).toBeGreaterThanOrEqual(2);
+
+    const { projectSlug } = await import('./state.js');
+    const dateDir = new Date().toISOString().slice(0, 10);
+    const indexPath = join(root, 'dossiers', projectSlug(repo), dateDir, 'INDEX.md');
+    expect(existsSync(indexPath)).toBe(true);
+    const fm = readFileSync(indexPath, 'utf8').match(/^---\n([\s\S]+?)\n---/);
+    const { parse: parseYaml } = await import('yaml');
+    const entries = (parseYaml(fm![1]) as { entries: Array<{ title: string; output?: string; status: string }> }).entries;
+    const sameTitled = entries.filter((e) => e.title === 'TODO: continue the migration');
+    expect(sameTitled.length).toBe(2);
+    const [a, b] = sameTitled;
+    // Distinct per-task dirs — and both OUT.md files actually exist on disk.
+    expect(a.output).toBeTruthy();
+    expect(b.output).toBeTruthy();
+    expect(a.output).not.toEqual(b.output);
+    expect(existsSync(a.output!)).toBe(true);
+    expect(existsSync(b.output!)).toBe(true);
+  });
+
   // v0.8.2 item 2: mid-window re-discovery. A candidate whose evidence_hash is NOT
   // in the completed set is still picked up and run on a later burst — the window
   // never works off a stale day-1 snapshot. We seed the skip-set with a bogus hash
