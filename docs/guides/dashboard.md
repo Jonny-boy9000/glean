@@ -105,16 +105,54 @@ The viewer renders the dossier markdown. Links are scheme-whitelisted
 (`http(s)`/`mailto` only) because dossier content is AI-generated over your repo
 and the dashboard origin has management power.
 
+## Projects tab
+
+![Projects tab](../assets/dashboard-projects.png)
+
+The project portfolio: every project glean can see, in one table, with a
+per-project **priority dial** steering where capacity goes.
+
+- **Where the rows come from:** the registry is the union of (a) every project
+  found in your Claude Code session history (`~/.claude/projects/*` — the real
+  path is extracted from the `cwd` field inside the session `.jsonl` files, the
+  encoded directory name is never trusted) and (b) the projects configured in
+  `~/glean/config.json`. Noise is filtered out: glean's own spawned sessions
+  (cwd under `~/glean/`), agent worktrees (`.claude\worktrees\`), and temp-dir
+  scratch sessions.
+- **Per row:** the project basename (full path in the hover tooltip), `git` /
+  `missing` badges, session count, "last active Xd ago", the segmented
+  **[Off | Low | Normal | High]** priority control, and a **Run now** button
+  (disabled while the dial is Off or the directory is missing).
+- **Priority dials** persist to `config.json` (`projects.<path>.priority`).
+  A configured project without a dial is `normal`. A merely-discovered project
+  is always **Off** — discovery alone never authorizes spending capacity; the
+  row shows "not configured — set a priority to opt in", and clicking a dial
+  *is* the opt-in (it adds the config entry). Setting **Off** keeps the entry
+  (your `base_branch`/`test_command` survive). `Off` is absolute: **Run now**
+  refuses an Off project, from the dashboard and the API alike.
+- **Add project:** paste an absolute path at the top and click **Add project**
+  to opt in a repo that has no session history yet (added at priority
+  `normal`). Relative, nonexistent, and already-configured paths are rejected
+  with the reason.
+
+CLI parity: `glean projects` prints the same registry table;
+`glean projects set <path> <off|low|normal|high>` turns the same dial.
+
+> The dials currently gate the *manual/API* run surface; the multi-project
+> drain allocator that weights ranking and budget by dial lands with v0.9's
+> multi-project engine work (see the capacity-governor design doc).
+
 ## Configure a project for "Run now"
 
 `Run now` and `Enable schedule` only act on projects listed in
-`~/glean/config.json`. Add one:
+`~/glean/config.json` — the Projects tab's **Add project** box or a priority
+dial click is the quickest way to get one there. By hand:
 
 ```json
 {
   "claude_bin": "claude",
   "projects": {
-    "C:\\path\\to\\your\\repo": { "base_branch": "main" }
+    "C:\\path\\to\\your\\repo": { "base_branch": "main", "priority": "normal" }
   }
 }
 ```
