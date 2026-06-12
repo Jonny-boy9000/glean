@@ -226,6 +226,83 @@ const morningCmd = defineCommand({
   },
 });
 
+const projectsCmd = defineCommand({
+  meta: {
+    name: 'projects',
+    description: 'List the project registry (session history ∪ config), or set a per-project priority dial',
+  },
+  args: {
+    action:   { type: 'positional', required: false, description: "Optional action: 'set'" },
+    path:     { type: 'positional', required: false, description: 'Project path (for set)' },
+    priority: { type: 'positional', required: false, description: 'off | low | normal | high (for set)' },
+  },
+  async run({ args }) {
+    const { scanProjectRegistry, defaultClaudeProjectsDir } = await import('./lib/dashboard-data.js');
+    const { setProjectPriority, isProjectPriority } = await import('./lib/config.js');
+    const action = args.action as string | undefined;
+
+    if (action === 'set') {
+      const rawPath = args.path as string | undefined;
+      const priority = args.priority as string | undefined;
+      if (!rawPath || !priority) {
+        process.stderr.write('usage: glean projects set <path> <off|low|normal|high>\n');
+        process.exit(1);
+      }
+      if (!isProjectPriority(priority)) {
+        process.stderr.write(`error: invalid priority '${priority}' — use one of: off, low, normal, high\n`);
+        process.exit(1);
+      }
+      const projectPath = resolve(rawPath);
+      // Setting a dial on an unknown path is the opt-in gesture — but only for
+      // a path that actually exists (a configured-but-deleted project may
+      // still be dialed, e.g. to 'off').
+      const cfg = loadConfig(defaultConfigPath());
+      if (!cfg.projects?.[projectPath] && !existsSync(projectPath)) {
+        process.stderr.write(`error: project path does not exist and is not configured: ${projectPath}\n`);
+        process.exit(1);
+      }
+      const r = setProjectPriority(defaultConfigPath(), projectPath, priority);
+      if (!r.ok) {
+        process.stderr.write(`error: ${r.reason}\n`);
+        process.exit(1);
+      }
+      console.log(`priority for ${projectPath} set to '${priority}'${r.created ? ' (added to config — opted in)' : ''}`);
+      return;
+    }
+
+    if (action !== undefined) {
+      process.stderr.write(`error: unknown action '${action}' — usage: glean projects [set <path> <off|low|normal|high>]\n`);
+      process.exit(1);
+    }
+
+    const entries = scanProjectRegistry(gleanRoot(), defaultClaudeProjectsDir(), defaultConfigPath());
+    if (entries.length === 0) {
+      console.log('no projects discovered or configured yet (open Claude Code in a repo, or: glean projects set <path> normal)');
+      return;
+    }
+    const ago = (iso: string | null): string => {
+      if (!iso) return '—';
+      const ms = Date.now() - Date.parse(iso);
+      if (!Number.isFinite(ms)) return '—';
+      const days = Math.floor(ms / 86_400_000);
+      return days < 1 ? 'today' : `${days}d ago`;
+    };
+    const rows = entries.map((e) => ({
+      priority: e.priority,
+      sessions: String(e.sessions),
+      active: ago(e.last_activity),
+      flags: [e.is_git ? 'git' : '', e.exists ? '' : 'missing', e.configured ? '' : 'not configured'].filter(Boolean).join(','),
+      path: e.path,
+    }));
+    const w = (k: 'priority' | 'sessions' | 'active' | 'flags') => Math.max(...rows.map((r) => r[k].length), k.length);
+    const pad = (s: string, n: number) => s.padEnd(n);
+    console.log(`${pad('PRIORITY', w('priority'))}  ${pad('SESSIONS', w('sessions'))}  ${pad('ACTIVE', w('active'))}  ${pad('FLAGS', w('flags'))}  PATH`);
+    for (const r of rows) {
+      console.log(`${pad(r.priority, w('priority'))}  ${pad(r.sessions, w('sessions'))}  ${pad(r.active, w('active'))}  ${pad(r.flags, w('flags'))}  ${r.path}`);
+    }
+  },
+});
+
 const scheduleCmd = defineCommand({
   meta: { name: 'schedule', description: 'Manage the weekly drain schedule — Windows Task Scheduler or Linux systemd user timer (enable | disable | status)' },
   args: {
@@ -382,7 +459,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd },
 });
 
 export function main(argv: string[]): void {
