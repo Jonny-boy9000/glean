@@ -139,10 +139,35 @@ export type DrainTrigger = {
 // project is never drained); absent on a CONFIGURED project means 'normal'.
 export type ProjectPriority = 'off' | 'low' | 'normal' | 'high';
 
+// ---- v0.9 capacity governor: usage accounting + pacing ---------------------
+
+// Model family buckets for weighted-token pacing. 'unknown' catches model ids
+// that match none of the three families (weighted 1.0 — sonnet-equivalent —
+// per ASSUMPTION[ADR-0005]).
+export type ModelFamily = 'haiku' | 'sonnet' | 'opus' | 'unknown';
+
+// One LOCAL calendar day of RAW token totals per model family, summed from
+// `~/.claude/projects/**/*.jsonl` usage blocks (internal loader, ADR-0007).
+// Raw = input + output + cache_creation + cache_read; weighting is pacing.ts's
+// job so the accounting layer stays assumption-free.
+export type DailyUsage = {
+  date: string; // local YYYY-MM-DD
+  tokens: Record<ModelFamily, number>;
+};
+
+// v0.9 capacity governor: pacing gate config. All optional — absent keys fall
+// back to pacing.ts defaults (enabled, haircut 0, DEFAULT_THRESHOLDS).
+export type PacingConfig = {
+  enabled?: boolean;
+  haircut?: number; // 0..1 manual blind-spot discount
+  thresholds?: { skip_above?: number; small_above?: number; normal_above?: number };
+};
+
 export type GleanConfig = {
   claude_bin?: string;
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
+  pacing?: PacingConfig;
   // v0.9 model routing (ADR-0006): per-task-type --model (alias or full id),
   // per-task-type --max-turns guard, and the task types eligible for the
   // 'large' pace-tier promotion. All optional — defaults live in

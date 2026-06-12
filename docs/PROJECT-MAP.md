@@ -116,6 +116,13 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `render-today.ts` | 117 | `glean today` terminal output. |
 | `render-morning.ts` | 223 | `glean morning` terminal receipt; exports `PLAIN`/`outcomeLine` (single honesty switch). |
 | `render-receipt.ts` | 95 | `RECEIPT.md` markdown (reuses `render-morning`'s data model). |
+| `render-usage.ts` | ~120 | `glean usage` terminal output: week-vs-baseline mini table, pace ratio, tier, last captured utilization, blind-spot note. Exports the `UsageReport` shape `--json` emits verbatim. |
+
+### Capacity governor (v0.9 — usage accounting + pacing)
+| File | LOC | Responsibility |
+|------|-----|----------------|
+| `usage.ts` | ~180 | **Internal** JSONL usage loader (`ASSUMPTION[ADR-0007]` — NOT `ccusage/data-loader`; upstream dropped the programmatic API in v19/v20): walks `~/.claude/projects/**/*.jsonl` `message.usage` blocks → daily RAW token totals per model family. Dedup `message.id+requestId` first-entry-wins (both required); glean's own spawned sessions excluded via `isNoiseCwd`; LOCAL calendar-day attribution; `localDateKey`/`modelFamily` helpers. |
+| `pacing.ts` | ~250 | PURE pacing engine (injectable `now`): `MODEL_WEIGHTS` (`ASSUMPTION[ADR-0005]`: haiku .25 / sonnet 1 / opus 5), per-weekday median baseline over the trailing 4 complete calendar weeks (absent days = 0), pace ratio = week-cum / baseline-cum through the same weekday, tiers >1.15 skip / ≥0.85 small / ≥0.5 normal / else large (config-overridable). **`recommendTier()` is the wave-2 public API** (nightly preset) → `{tier, ratio, effective_ratio, reason, budget_minutes, model_policy, week, insufficient_baseline}`. Cold start <14d and zero-baseline pinned conservative (small/skip, never large); `haircut` adds to the measured ratio; `BLIND_SPOT_NOTE`. |
 
 ### Dashboard (`glean serve` — local management surface)
 | File | Responsibility |
@@ -128,17 +135,17 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | File | LOC | Responsibility |
 |------|-----|----------------|
 | `schedule.ts` | 450 | Weekly drain schedule register/disable/status — Windows Task Scheduler + **Linux systemd user timer (crontab fallback)**; pure builders (`buildRegisterScript`, `buildSystemdUnit`/`buildTimerUnit`/`buildCrontabLine`); `defaultTriggerDay(tz)`. |
-| `config.ts` | ~130 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`). |
-| `types.ts` | ~135 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`. |
+| `config.ts` | ~150 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`); **`pacing` keys** (`enabled`, `haircut` 0–1, `thresholds.{skip,small,normal}_above`). |
+| `types.ts` | ~175 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`, **`ModelFamily`/`DailyUsage`/`PacingConfig`** (v0.9 pacing). |
 
-> Each impl file has a co-located `*.test.ts` (vitest). 49 test files total.
+> Each impl file has a co-located `*.test.ts` (vitest). 59 test files total.
 
 ---
 
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v25-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**).
+- **Integration specs:** `test/integration/v01…v26-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI)).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, `wedged` (child stuck emitting past the timeout, ADR-0004), draft-impl variants.
@@ -160,7 +167,7 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 | `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
 | `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
-| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open). See its README. |
+| `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0005` = pacing model-weight multipliers (UNVERIFIED, consistency-over-truth); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open); `0007` = internal JSONL usage loader (ccusage's programmatic API gone upstream). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |

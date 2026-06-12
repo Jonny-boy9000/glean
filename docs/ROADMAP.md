@@ -26,7 +26,24 @@ per-project priority dials steering allocation; a `discover-docs` pass mining ea
 project's roadmap/handoff docs as candidates; post-hoc overlap learning — compare
 what glean prepped vs what the user actually advanced, recomputed from git/JSONL
 each run, nudging allocation within the user's dial).
-New CLI verbs planned: `usage`, `resume`, `retry <run-id>`, `doctor` (`projects` shipped — below).
+New CLI verbs planned: `resume`, `retry <run-id>`, `doctor` (`projects` and `usage` shipped — below).
+
+**`glean usage` + pacing engine — BUILT 2026-06-13** (branch `feat/usage-pacing`):
+the design's "Pacing definition" math, pinned and tested — `src/lib/usage.ts`
+(internal JSONL loader; **deviation from the ccusage/data-loader plan recorded in
+[ADR-0007](./decisions/0007-internal-usage-loader.md)**: ccusage v20 is binary-only,
+v19 dropped the export, and its daily aggregation can't apply glean's cwd-based
+own-session exclusion), `src/lib/pacing.ts` (pure, injectable clock: weighted
+tokens per family per [ADR-0005](./decisions/0005-model-weight-multipliers.md),
+4-complete-calendar-week per-weekday median baseline, pace ratio, tiers
+skip/small/normal/large with config-overridable thresholds, cold-start +
+zero-baseline pinned conservative, `pacing.haircut` + `pacing.enabled` config),
+`glean usage [--json]` (week-vs-baseline table, tier + reasoning, blind-spot note,
+last five_hour utilization). **`recommendTier()` is the wave-2 public API** the
+nightly preset will consume. **Remaining for wave 2:** the nightly schedule preset
+itself (second scheduled task gated by `glean usage --json`), morning anti-spill
+(end N hours before typical first prompt), `--model sonnet` drain default +
+`--max-turns`, dashboard pace panel.
 
 **Model routing + `--max-turns` guards BUILT 2026-06-13** (branch
 `feat/model-routing`, [ADR-0006](./decisions/0006-model-routing-pool-assumption.md)):
