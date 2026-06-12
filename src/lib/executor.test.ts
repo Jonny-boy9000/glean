@@ -149,6 +149,49 @@ describe('executeOne', () => {
     expect(result.classification!.reset_at).toBe('2026-05-24T10:40:00.000Z');
   });
 
+  // ── ADR-0003: structured stream-json 429 block (captured 2026-06-11) ───────
+  // The real session-limit block arrives on STDOUT (rate_limit_event status
+  // "rejected" + assistant message error:"rate_limit" + result is_error:true,
+  // api_error_status:429) with EMPTY stderr and exit code 1. Before the fix the
+  // executor classified this 'failed', so the pipeline kept spawning doomed tasks.
+  it('flags a structured stream-json 429 block (empty stderr) as rate-limit', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'r429',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'structured-429.yaml') },
+    });
+    expect(result.status).toBe('rate-limit');
+    expect(result.classification).toBeDefined();
+    // resetsAt 1781197200 → 2026-06-11T17:00:00.000Z, in the past relative to any
+    // test run after that date → < 6h away → session. The exact reset moment comes
+    // from the rejected rate_limit_event, not the unparseable "resets 8pm" prose.
+    expect(result.classification!.kind).toBe('session');
+    expect(result.classification!.reset_at).toBe('2026-06-11T17:00:00.000Z');
+    // the block-capture tripwire fires for the structured path too
+    const capturePath = join(root, 'logs', 'r429', 'task-1.BLOCK-CAPTURE.txt');
+    expect(existsSync(capturePath)).toBe(true);
+  });
+
+  // Warning telemetry (status allowed/allowed_warning) during a HEALTHY run must
+  // NOT trip the structured detector — that was ADR-0001's near-miss.
+  it('does NOT flag warning-only rate_limit_event telemetry: clean run stays ok', async () => {
+    const root = tmpRoot();
+    const result = await executeOne(candidate(), {
+      runId: 'rwarn',
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      taskTimeoutMs: 30_000,
+      env: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit-with-warning-event.yaml') },
+    });
+    expect(result.status).toBe('ok');
+    expect(result.classification).toBeUndefined();
+  });
+
   it('kills on task timeout', async () => {
     const root = tmpRoot();
     const result = await executeOne(candidate(), {

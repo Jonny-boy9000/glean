@@ -61,4 +61,5 @@ not a conclusion — verify the negative case before asserting (see `CLAUDE.md` 
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](./0001-rate-limit-signal-source.md) | Rate-limit signal source (stderr vs. stream-json `rate_limit_event`) | **UNVERIFIED** (block shape never captured) |
+| [0001](./0001-rate-limit-signal-source.md) | Rate-limit signal source (stderr vs. stream-json `rate_limit_event`) | Superseded by 0002 |
+| [0002](./0003-structured-stream-json-block-signal.md) | Rate-limit block signal: structured stream-json 429 | **Accepted** (session shape verified; weekly still unobserved) |

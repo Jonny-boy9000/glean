@@ -1,17 +1,22 @@
 // classify.ts — pure rate-limit signal classifier.
 //
-// ASSUMPTION[ADR-0001] — UNVERIFIED. This classifier reads the text of a rate-limit
-// signal to derive session-vs-weekly + a reset moment. The exact wording of a REAL
-// `claude -p` hard BLOCK has NEVER been captured: every rate_limit_event we have
-// observed is status=allowed/allowed_warning from runs that COMPLETED (see
-// docs/decisions/0001-rate-limit-signal-source.md + docs/open-work/06-...). So the
-// strings below are a GUESS, not verified. Do NOT treat this module as authoritative
-// for the block until ADR-0001 is closed by a real capture. resetsAt/utilization from
-// the stream-json rate_limit_event ARE verified, but that is a WARNING, not the block.
+// ADR-0003 (supersedes ADR-0001): the REAL `claude -p` SESSION-limit block was
+// captured 2026-06-11 (run 2026-06-11-1800-d705f9) and is a STRUCTURED stdout
+// signal, not stderr prose: a `rate_limit_event` with status "rejected" (+ a
+// numeric resetsAt), an assistant message with top-level error:"rate_limit",
+// and a result with is_error:true + api_error_status:429. `classifyStreamJson`
+// below parses that VERIFIED shape and is the PRIMARY block classifier.
+//
+// ASSUMPTION[ADR-0003] — the WEEKLY block shape is still UNVERIFIED (never
+// observed). Until it is captured, a weekly block is inferred from the same
+// structured signals via the 6-hour resetsAt cut, and the stderr text path
+// below (`classifyRateLimit`, the old ADR-0001 guess) remains as a FALLBACK
+// for streams that carry no structured signal. Fixture:
+// test/fixtures/captured-rate-limit/real-session-429-block.jsonl.
 //
 // This module is intentionally defensive and easy to extend:
 //
-//   FORMAT TABLE (update here when ADR-0001 lands a real block sample)
+//   FORMAT TABLE (update here when ADR-0003 lands a real WEEKLY block sample)
 //   ──────────────────────────────────────────────────────────────────────────
 //   Shape        Example                                    Parser used
 //   ──────────────────────────────────────────────────────────────────────────
@@ -30,7 +35,9 @@ export type RateLimitClassification = {
 };
 
 // Matches the same pattern used in executor.ts so they stay in sync.
-const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
+// 'session limit' added 2026-06-11: the observed block prose is "You've hit
+// your session limit · resets 8pm (<tz>)" (ADR-0003).
+const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit|session limit)/i;
 
 // The 6-hour cut: resets within this window are classified as a session reset
 // (<=~5h), resets beyond it are weekly resets. Sits just past the 5-hour
@@ -46,37 +53,143 @@ export function classifyRateLimit(
     return { kind: 'ambiguous', reset_at: null, reset_horizon: 'unknown' };
   }
 
-  // Step 2: try each parser in priority order until one succeeds.
-  const nowMs = now();
+  // Steps 2+3: parse a reset moment from the text and derive horizon + kind.
+  return deriveFromText(stderrText, now());
+}
+
+// Shared steps 2+3: run the parser table over free text and derive kind/horizon
+// from the parsed reset moment via the 6-hour cut. Used by classifyRateLimit
+// (after its keyword guard) and by classifyStreamJson's prose fallback (where
+// the block is already structurally established, so no keyword guard applies).
+function deriveFromText(text: string, nowMs: number): RateLimitClassification {
   let resetDate: Date | null = null;
   for (const parser of PARSERS) {
-    resetDate = parser(stderrText, nowMs);
+    resetDate = parser(text, nowMs);
     if (resetDate !== null) break;
   }
-
-  // Step 3: derive horizon + kind from the reset moment (or fall through to ambiguous).
   if (resetDate === null) {
     return { kind: 'ambiguous', reset_at: null, reset_horizon: 'unknown' };
   }
+  return deriveFromResetMoment(resetDate.getTime(), nowMs);
+}
 
-  const diffMs = resetDate.getTime() - nowMs;
-  const reset_at = resetDate.toISOString();
-
-  if (diffMs < SIX_HOURS_MS) {
+// The 6-hour cut applied to a known reset moment. A reset already in the past
+// (diff <= 0) classifies as session: the pause logic floors a past reset to
+// "retry soon", which is the right reaction to a stale-but-real signal.
+function deriveFromResetMoment(resetMs: number, nowMs: number): RateLimitClassification {
+  const reset_at = new Date(resetMs).toISOString();
+  if (resetMs - nowMs < SIX_HOURS_MS) {
     return { kind: 'session', reset_at, reset_horizon: 'hours' };
   }
   return { kind: 'weekly', reset_at, reset_horizon: 'days' };
 }
 
-// ── rate_limit_event resetsAt enrichment (ADR-0001) ──────────────────────────
+// ── classifyStreamJson — structured BLOCK detector (ADR-0003, PRIMARY) ────────
 //
-// VERIFIED (unlike the stderr block guess above): the `claude -p` stream-json
-// output emits discrete `{"type":"rate_limit_event","rate_limit_info":{…}}`
-// messages, captured by the executor to ~/glean/logs/<run>/<task>.jsonl. The
-// `resetsAt` field (epoch SECONDS) is a real reset moment. NOTE: every event we
-// have observed is a WARNING (status=allowed/allowed_warning), NOT a block — so
-// this is ENRICHMENT only (feeds reset_at / the anti-spill margin). It is NOT the
-// block detector: classifyRateLimit (stderr) stays the load-bearing block path.
+// VERIFIED (captured 2026-06-11, run d705f9 — the real session-limit block;
+// fixture test/fixtures/captured-rate-limit/real-session-429-block.jsonl): when
+// a `claude -p` burst is blocked by the 5h session cap, the stream-json stdout
+// carries — with EMPTY stderr —
+//   1. {"type":"rate_limit_event","rate_limit_info":{"status":"rejected",
+//      "resetsAt":<epoch-s>,"rateLimitType":"five_hour",…}}
+//   2. an assistant message with top-level  "error":"rate_limit"
+//   3. {"type":"result",…,"is_error":true,"api_error_status":429,
+//      "result":"You've hit your session limit · resets 8pm (<tz>)"}
+//
+// Any of those three shapes is a BLOCK. Warning telemetry (status allowed /
+// allowed_warning) is NOT — flagging it would kill healthy runs (the ADR-0001
+// near-miss). Horizon: prefer the LAST rate_limit_event resetsAt (exact, epoch
+// seconds) via the 6-hour cut; else parse the block prose; else ambiguous.
+// Returns null when the stream carries no block at all.
+export function classifyStreamJson(
+  jsonlText: string,
+  now: () => number = () => Date.now(),
+): RateLimitClassification | null {
+  if (!jsonlText) return null;
+  let blockFound = false;
+  let resetsAtMs: number | null = null;
+  let prose = '';
+  for (const line of jsonlText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Cheap pre-filter: only JSON.parse lines that could carry a signal.
+    if (!trimmed.includes('rate_limit') && !trimmed.includes('"is_error":true')) continue;
+    let obj: StreamLine;
+    try {
+      obj = JSON.parse(trimmed) as StreamLine;
+    } catch {
+      continue; // malformed / truncated line — skip
+    }
+    if (obj?.type === 'rate_limit_event') {
+      const secs = obj.rate_limit_info?.resetsAt;
+      if (typeof secs === 'number' && Number.isFinite(secs)) {
+        const ms = secs * 1000;
+        if (Number.isFinite(new Date(ms).getTime())) resetsAtMs = ms; // last wins
+      }
+    }
+    if (isStreamBlockSignal(obj)) {
+      blockFound = true;
+      // Collect block prose as the resetsAt-less fallback horizon source.
+      if (typeof obj.result === 'string') prose += obj.result + '\n';
+      const content = obj.message?.content;
+      if (Array.isArray(content)) {
+        for (const item of content) {
+          if (item?.type === 'text' && typeof item.text === 'string') prose += item.text + '\n';
+        }
+      }
+    }
+  }
+  if (!blockFound) return null;
+  const nowMs = now();
+  if (resetsAtMs !== null) return deriveFromResetMoment(resetsAtMs, nowMs);
+  return deriveFromText(prose, nowMs);
+}
+
+// Minimal shape of a stream-json line, for the block predicates only.
+type StreamLine = {
+  type?: unknown;
+  is_error?: unknown;
+  api_error_status?: unknown;
+  error?: unknown;
+  result?: unknown;
+  rate_limit_info?: { status?: unknown; resetsAt?: unknown };
+  message?: { content?: Array<{ type?: unknown; text?: unknown }> };
+};
+
+// The three observed/anticipated structured block shapes (ADR-0003).
+function isStreamBlockSignal(obj: StreamLine): boolean {
+  if (obj?.type === 'rate_limit_event') {
+    // Observed block status: "rejected". Anything non-allowed* is treated as a
+    // block (exactly the evidence ADR-0001 said would flip it).
+    const status = obj.rate_limit_info?.status;
+    return typeof status === 'string' && !status.startsWith('allowed');
+  }
+  if (obj?.type === 'result' && obj.is_error === true && obj.api_error_status === 429) {
+    return true;
+  }
+  // The assistant message that accompanies the block carries a top-level
+  // error:"rate_limit" marker.
+  return obj?.error === 'rate_limit';
+}
+
+// Line-level predicate for the executor's live stdout scan: true iff this single
+// stream-json line is one of the structured block shapes. Parse-tolerant.
+export function isStreamBlockLine(line: string): boolean {
+  try {
+    return isStreamBlockSignal(JSON.parse(line) as StreamLine);
+  } catch {
+    return false;
+  }
+}
+
+// ── rate_limit_event resetsAt enrichment (ADR-0001 → ADR-0003) ───────────────
+//
+// VERIFIED: the `claude -p` stream-json output emits discrete
+// `{"type":"rate_limit_event","rate_limit_info":{…}}` messages, captured by the
+// executor to ~/glean/logs/<run>/<task>.jsonl. The `resetsAt` field (epoch
+// SECONDS) is a real reset moment. Used as ENRICHMENT (reset_at back-fill /
+// anti-spill margin) for the stderr-detected fallback path; the structured
+// block path above (classifyStreamJson) reads resetsAt itself.
 //
 // Scans stream-json lines for the LAST rate_limit_event carrying a numeric
 // `resetsAt` and returns it as an ISO UTC string, else null. Tolerant of
