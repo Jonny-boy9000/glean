@@ -4,9 +4,9 @@
 
 > *gleaning* (n.) — the practice of gathering leftover crops from the field after the main harvest. Glean does the same with unused capacity at the tail of your weekly rate-limit window.
 
-Status: design complete, MVP not yet built
+Status: **shipped** — v0.8.3 on npm (`@jonny-boy9000/glean`), Windows-first, drain validated live. This document is the *vision/design rationale*, not the status page: current state lives in [CLAUDE.md](./CLAUDE.md) §Project state; what's next lives in [docs/ROADMAP.md](./docs/ROADMAP.md).
 Author: yonijhw@gmail.com
-Last updated: 2026-05-23
+Last updated: 2026-06-12 (status header only; design body is the 2026-05-23 original)
 CLI: `glean`
 
 ---

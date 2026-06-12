@@ -1,0 +1,13 @@
+# A HEALTHY run that emitted a proactive rate_limit_event WARNING (status
+# allowed_warning — the verified non-block telemetry, ADR-0001/0002) and then
+# completed normally. The stream-json block detector must NOT flag this as a
+# rate-limit: only a non-allowed status / 429 result is a block.
+write_out_md: |
+  # Research dossier OUT
+  This is a fake dossier produced by the test stub.
+  Findings: nothing real.
+stdout_lines:
+  - '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1779619200,"rateLimitType":"five_hour","utilization":0.94}}'
+  - '{"type":"message_start","message":{"id":"m1","role":"assistant"}}'
+  - '{"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"num_turns":1,"result":"done"}'
+exit_code: 0

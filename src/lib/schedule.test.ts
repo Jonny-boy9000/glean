@@ -3,11 +3,20 @@ import {
   buildRegisterScript,
   buildStatusScript,
   buildUnregisterCommand,
+  buildSystemdUnit,
+  buildTimerUnit,
+  buildCrontabLine,
+  mergeCrontabLines,
+  stripCrontabLines,
+  parseListTimers,
   defaultTriggerDay,
   DEFAULT_TIME,
   DEFAULT_REPEAT_MINUTES,
   DEFAULT_DURATION_HOURS,
   TASK_NAME,
+  SYSTEMD_SERVICE,
+  SYSTEMD_TIMER,
+  CRON_MARKER,
 } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -286,5 +295,187 @@ describe('buildUnregisterCommand — deletes by split path + leaf', () => {
     expect(cmd).toContain("Unregister-ScheduledTask -TaskPath '\\Glean\\' -TaskName 'Drain'");
     expect(cmd).not.toContain("-TaskName 'Glean\\Drain'");
     expect(cmd).toContain('-Confirm:$false');
+  });
+});
+
+// ===========================================================================
+// Linux scheduling — pure builders. These run on every OS (including Windows
+// CI): they only generate strings, mirroring the buildRegisterScript contract.
+// ===========================================================================
+
+function makeLinuxOpts(overrides: Partial<Parameters<typeof buildSystemdUnit>[0]> = {}) {
+  return {
+    nodePath:    '/usr/bin/node',
+    cliEntry:    '/home/user/.npm-global/lib/node_modules/@jonny-boy9000/glean/bin/glean.js',
+    projectPath: '/home/user/code/myproject',
+    day:         'Thursday',
+    ...overrides,
+  };
+}
+
+describe('buildSystemdUnit — glean-drain.service', () => {
+  it('is a oneshot service running node <cliEntry> run --drain --project <path>', () => {
+    const unit = buildSystemdUnit(makeLinuxOpts());
+    expect(unit).toContain('[Service]');
+    expect(unit).toContain('Type=oneshot');
+    expect(unit).toContain(
+      'ExecStart="/usr/bin/node" "/home/user/.npm-global/lib/node_modules/@jonny-boy9000/glean/bin/glean.js" run --drain --project "/home/user/code/myproject"',
+    );
+  });
+
+  it('quotes paths so spaces survive systemd ExecStart parsing', () => {
+    const unit = buildSystemdUnit(makeLinuxOpts({ projectPath: '/home/user/my projects/app' }));
+    expect(unit).toContain('"/home/user/my projects/app"');
+  });
+
+  it('has a [Unit] description and is deterministic', () => {
+    const opts = makeLinuxOpts();
+    expect(buildSystemdUnit(opts)).toContain('[Unit]');
+    expect(buildSystemdUnit(opts)).toBe(buildSystemdUnit(opts));
+  });
+});
+
+describe('buildTimerUnit — glean-drain.timer', () => {
+  it('fires weekly at <Day> <time> with Persistent=true (missed-run catch-up after sleep)', () => {
+    const timer = buildTimerUnit(makeLinuxOpts());
+    expect(timer).toContain('OnCalendar=Thu 18:00');
+    expect(timer).toContain('Persistent=true');
+  });
+
+  it('maps full day names to systemd short days', () => {
+    expect(buildTimerUnit(makeLinuxOpts({ day: 'Friday' }))).toContain('OnCalendar=Fri 18:00');
+    expect(buildTimerUnit(makeLinuxOpts({ day: 'Wednesday' }))).toContain('OnCalendar=Wed 18:00');
+  });
+
+  it('respects a custom time', () => {
+    expect(buildTimerUnit(makeLinuxOpts({ time: '22:30' }))).toContain('OnCalendar=Thu 22:30');
+  });
+
+  it('activates the service unit and installs into timers.target', () => {
+    const timer = buildTimerUnit(makeLinuxOpts());
+    expect(timer).toContain(`Unit=${SYSTEMD_SERVICE}`);
+    expect(timer).toContain('WantedBy=timers.target');
+  });
+});
+
+describe('buildCrontabLine — systemd-unavailable fallback', () => {
+  it('repeats hourly through the drain window: 0 18-23,0-6 * * 4,5,6 for Thursday 18:00', () => {
+    const line = buildCrontabLine(makeLinuxOpts());
+    expect(line.startsWith('0 18-23,0-6 * * 4,5,6 ')).toBe(true);
+  });
+
+  it('shifts the day-of-week triple for a Friday start (5,6,0)', () => {
+    const line = buildCrontabLine(makeLinuxOpts({ day: 'Friday' }));
+    expect(line).toContain('* * 5,6,0 ');
+  });
+
+  it('derives minute + start hour from the time (22:30 → 30 22-23,0-6)', () => {
+    const line = buildCrontabLine(makeLinuxOpts({ time: '22:30' }));
+    expect(line.startsWith('30 22-23,0-6 ')).toBe(true);
+  });
+
+  it('runs the same node+cli drain command, quoted, and carries the idempotency marker', () => {
+    const line = buildCrontabLine(makeLinuxOpts({ projectPath: '/home/user/my projects/app' }));
+    expect(line).toContain('"/usr/bin/node"');
+    expect(line).toContain('run --drain --project "/home/user/my projects/app"');
+    expect(line.trimEnd().endsWith(CRON_MARKER)).toBe(true);
+  });
+
+  it('is a single line', () => {
+    expect(buildCrontabLine(makeLinuxOpts()).trim()).not.toContain('\n');
+  });
+});
+
+describe('mergeCrontabLines / stripCrontabLines — idempotent crontab editing', () => {
+  const line = buildCrontabLine(makeLinuxOpts());
+
+  it('appends to an empty crontab with a trailing newline (crontab(1) requires it)', () => {
+    const merged = mergeCrontabLines('', line);
+    expect(merged).toBe(line + '\n');
+  });
+
+  it('preserves unrelated lines and appends ours', () => {
+    const existing = '0 5 * * * /usr/bin/backup.sh\n';
+    const merged = mergeCrontabLines(existing, line);
+    expect(merged).toContain('/usr/bin/backup.sh');
+    expect(merged).toContain(line);
+  });
+
+  it('replaces a previous glean-drain line instead of duplicating (idempotent enable)', () => {
+    const old = buildCrontabLine(makeLinuxOpts({ time: '20:00' }));
+    const merged = mergeCrontabLines(old + '\n', line);
+    expect(merged).not.toContain('20-23');
+    const occurrences = merged.split(CRON_MARKER).length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it('stripCrontabLines removes only the marked line', () => {
+    const existing = `0 5 * * * /usr/bin/backup.sh\n${line}\n`;
+    const stripped = stripCrontabLines(existing);
+    expect(stripped).toContain('/usr/bin/backup.sh');
+    expect(stripped).not.toContain(CRON_MARKER);
+  });
+
+  it('stripCrontabLines returns empty string when only our line was present', () => {
+    expect(stripCrontabLines(line + '\n')).toBe('');
+  });
+});
+
+describe('parseListTimers — systemctl --user list-timers output', () => {
+  it('parses NEXT and LAST timestamps from a live timer row', () => {
+    const raw =
+      'NEXT                          LEFT       LAST                          PASSED  UNIT               ACTIVATES\n' +
+      'Thu 2026-06-18 18:00:00 IDT   6 days     Thu 2026-06-11 18:00:00 IDT   23h ago glean-drain.timer  glean-drain.service\n' +
+      '\n1 timers listed.\n';
+    const res = parseListTimers(raw);
+    expect(res.found).toBe(true);
+    if (res.found) {
+      expect(res.next).toBe('Thu 2026-06-18 18:00:00 IDT');
+      expect(res.last).toBe('Thu 2026-06-11 18:00:00 IDT');
+    }
+  });
+
+  it('handles a never-run timer (n/a LAST)', () => {
+    const raw =
+      'NEXT                          LEFT     LAST  PASSED  UNIT               ACTIVATES\n' +
+      'Thu 2026-06-18 18:00:00 UTC   6 days   n/a   n/a     glean-drain.timer  glean-drain.service\n';
+    const res = parseListTimers(raw);
+    expect(res.found).toBe(true);
+    if (res.found) {
+      expect(res.next).toBe('Thu 2026-06-18 18:00:00 UTC');
+      expect(res.last).toBe('never');
+    }
+  });
+
+  it('returns found:false when the timer is absent (empty / no-match output)', () => {
+    expect(parseListTimers('').found).toBe(false);
+    expect(parseListTimers('0 timers listed.\n').found).toBe(false);
+    expect(
+      parseListTimers('NEXT LEFT LAST PASSED UNIT ACTIVATES\nMon 2026-06-15 00:00:00 UTC 3d n/a n/a other.timer other.service\n').found,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Linux exec wrappers — only meaningful on a real Linux box (mirror of the
+// winOnly live-PowerShell block above). Skipped on win32/darwin.
+// ---------------------------------------------------------------------------
+
+describe('linux exec wrappers (live)', () => {
+  const linuxOnly = process.platform === 'linux' ? it : it.skip;
+
+  linuxOnly('systemdUserAvailable() returns a boolean without throwing', async () => {
+    const { systemdUserAvailable } = await import('./schedule.js');
+    expect(typeof systemdUserAvailable()).toBe('boolean');
+  });
+
+  linuxOnly('scheduleStatus() runs without throwing when nothing is registered', async () => {
+    const { scheduleStatus } = await import('./schedule.js');
+    expect(() => scheduleStatus()).not.toThrow();
+  });
+
+  it(`unit names are stable (${SYSTEMD_TIMER})`, () => {
+    expect(SYSTEMD_TIMER).toBe('glean-drain.timer');
+    expect(SYSTEMD_SERVICE).toBe('glean-drain.service');
   });
 });

@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { GleanConfig } from './types.js';
 
@@ -47,6 +48,8 @@ export function loadConfig(path: string): GleanConfig {
 }
 
 export function defaultConfigPath(): string {
+  // join (not a hard-coded `\`) — this must resolve to ~/glean/config.json on
+  // POSIX too; same output as before on Windows.
   const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return `${home}\\glean\\config.json`;
+  return join(home, 'glean', 'config.json');
 }

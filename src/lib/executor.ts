@@ -9,24 +9,44 @@ import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
-import { classifyRateLimit, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
+import { StringDecoder } from 'node:string_decoder';
+import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
 
-// ASSUMPTION[ADR-0001] — UNVERIFIED. This regex is glean's primary detector for a
-// real `claude -p` rate-limit BLOCK, matched against the spawn's stderr. We have
-// never observed an actual block, so these words are a guess (the only signal we
-// have). Keep this load-bearing + unchanged until a real block is captured; see
-// docs/decisions/0001-rate-limit-signal-source.md. (The verified stream-json
-// rate_limit_event is a WARNING, not a block — do not swap this for it.)
-const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit)/i;
+// ADR-0003: the REAL `claude -p` block (session limit, captured 2026-06-11) is a
+// STRUCTURED stream-json signal on stdout — see classify.ts:isStreamBlockLine —
+// and that is now the PRIMARY detector (scanned live in runClaude below). This
+// stderr regex is the FALLBACK for any block that arrives as stderr prose
+// instead. ASSUMPTION[ADR-0003]: the weekly block shape is still unobserved;
+// keep this fallback until it is captured. Kept in sync with classify.ts.
+// 'session limit' added 2026-06-11 (the observed block wording).
+const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit|session limit)/i;
 
-// Classify the rate-limit signal (session vs weekly vs ambiguous) from the
-// spawn's in-memory stderr tail, falling back to the captured file only if empty.
-// Tolerant of missing stderr — an unreadable signal degrades to 'ambiguous'
-// rather than crashing the run. Only called when spawn.rateLimited is true.
+// Classify the rate-limit signal (session vs weekly vs ambiguous). Only called
+// when spawn.rateLimited is true. Hierarchy (ADR-0003):
+//   1. structured stream-json block (VERIFIED session shape) — the in-memory
+//      signal lines captured during streaming, else the .jsonl on disk;
+//   2. stderr prose fallback (the old ADR-0001 path), enriched with any
+//      rate_limit_event resetsAt from the stream.
+// Tolerant of missing streams — an unreadable signal degrades to 'ambiguous'
+// rather than crashing the run.
 const STDERR_TAIL_BYTES = 4096;
-function classifySpawnStderr(spawn: SpawnOutcome): RateLimitClassification {
-  // Prefer the in-memory tail captured during streaming (no flush race). Only
-  // fall back to re-reading the file if it's somehow empty.
+// Bounded in-memory capture of signal-bearing stream-json lines (ADR-0003).
+const STREAM_SIGNAL_BYTES = 16384;
+// Cap for the stdout line-assembly buffer (a single stream-json event line is
+// normally far smaller; a truncated over-long line just fails the JSON parse).
+const STDOUT_LINE_BUF_MAX = 1024 * 1024;
+function classifySpawnSignal(spawn: SpawnOutcome): RateLimitClassification {
+  // 1. Structured stream-json block (PRIMARY). Prefer the in-memory lines
+  // captured during streaming (no flush race); fall back to reading the
+  // captured .jsonl only if empty.
+  let streamText = spawn.streamSignalText ?? '';
+  if (!streamText) {
+    try { streamText = readFileSync(spawn.jsonlPath, 'utf8'); } catch { streamText = ''; }
+  }
+  const fromStream = classifyStreamJson(streamText);
+  if (fromStream !== null) return fromStream;
+
+  // 2. stderr fallback. Prefer the in-memory tail captured during streaming.
   let text = spawn.stderrText ?? '';
   if (!text) {
     try {
@@ -47,12 +67,12 @@ function classifySpawnStderr(spawn: SpawnOutcome): RateLimitClassification {
     }
   }
   const classification = classifyRateLimit(text);
-  // ADR-0001 enrichment: the stderr block is the load-bearing signal and stays
-  // PRIMARY, but it often carries no parseable reset moment. When it doesn't,
-  // back-fill reset_at from the VERIFIED rate_limit_event.resetsAt in the
-  // captured stream-json (.jsonl). This only fills a missing timestamp — `kind`
-  // (the stderr classifier's decision) is never changed. Best-effort: swallow
-  // any read/parse error so an unreadable jsonl degrades to the stderr result.
+  // Enrichment for the stderr fallback: it often carries no parseable reset
+  // moment. When it doesn't, back-fill reset_at from the VERIFIED
+  // rate_limit_event.resetsAt in the captured stream-json (.jsonl). This only
+  // fills a missing timestamp — `kind` (the stderr classifier's decision) is
+  // never changed. Best-effort: swallow any read/parse error so an unreadable
+  // jsonl degrades to the stderr result.
   if (classification.reset_at === null) {
     try {
       const jsonl = readFileSync(spawn.jsonlPath, 'utf8');
@@ -67,12 +87,12 @@ function classifySpawnStderr(spawn: SpawnOutcome): RateLimitClassification {
   return classification;
 }
 
-// ADR-0001 self-capturing tripwire: the real `claude -p` hard-BLOCK shape has
-// never been captured. The FIRST time a spawn is flagged rateLimited, dump the
-// full raw stderr + the last ~50 lines of the captured stream-json (.jsonl) to
-// <logDir>/<taskId>.BLOCK-CAPTURE.txt so the missing block shape captures itself
-// instead of waiting on a human to remember. LOCAL file write only — no spawn,
-// no network. Best-effort: NEVER throws out of the capture path.
+// ADR-0001/0002 self-capturing tripwire: whenever a spawn is flagged
+// rateLimited, dump the full raw stderr + the last ~50 lines of the captured
+// stream-json (.jsonl) to <logDir>/<taskId>.BLOCK-CAPTURE.txt. This is how the
+// session-block shape captured itself on 2026-06-11; it stays armed because the
+// WEEKLY block shape is still unobserved (ADR-0003). LOCAL file write only — no
+// spawn, no network. Best-effort: NEVER throws out of the capture path.
 const BLOCK_CAPTURE_JSONL_TAIL_LINES = 50;
 function captureBlockSignal(taskId: string, logDir: string, spawn: SpawnOutcome): void {
   try {
@@ -90,12 +110,13 @@ function captureBlockSignal(taskId: string, logDir: string, spawn: SpawnOutcome)
       jsonlTail = lines.slice(-BLOCK_CAPTURE_JSONL_TAIL_LINES).join('\n');
     } catch { /* jsonl missing — capture stderr alone */ }
     const body =
-      `# glean BLOCK-CAPTURE (ADR-0001 self-capturing tripwire)\n` +
+      `# glean BLOCK-CAPTURE (ADR-0003 self-capturing tripwire)\n` +
       `# Task: ${taskId}\n` +
       `# Captured: ${new Date().toISOString()}\n` +
-      `# This is the first observed rate-limit flag for this task. If a status\n` +
-      `# below is NOT allowed/allowed_warning, the real BLOCK shape has finally\n` +
-      `# been captured — drop it into a fixture and close ADR-0001.\n` +
+      `# A rate-limit flag fired for this task. The SESSION block shape is already\n` +
+      `# verified (ADR-0003); if the signal below looks WEEKLY-shaped (a reset days\n` +
+      `# away / a non-five_hour rateLimitType), the missing WEEKLY block has finally\n` +
+      `# been captured — drop it into a fixture and supersede/close ADR-0003.\n` +
       `\n## raw stderr\n${stderrRaw}\n` +
       `\n## stream-json tail (last ${BLOCK_CAPTURE_JSONL_TAIL_LINES} lines)\n${jsonlTail}\n`;
     writeFileSync(join(logDir, `${taskId}.BLOCK-CAPTURE.txt`), body);
@@ -164,6 +185,10 @@ type SpawnOutcome = {
   // flush race: stderrStream.end() is async, so re-reading the file immediately
   // could miss the final chunk and spuriously degrade session/weekly to ambiguous.
   stderrText: string;
+  // ADR-0003: in-memory capture of the rate-limit-relevant stream-json stdout
+  // lines (rate_limit_event / error results) collected DURING streaming, so the
+  // structured classification never depends on the async .jsonl flush.
+  streamSignalText: string;
   jsonlPath: string;
   // F7: true once runClaude has awaited job.exit AND any kill() — the entire
   // spawned process tree is confirmed dead, so the worktree's index.lock (if any)
@@ -230,7 +255,7 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
     if (stderr_tail) result.stderr_tail = stderr_tail;
     // v0.8: surface the classified rate-limit signal so the drain wrapper can
     // decide session-paused vs weekly-drained vs ambiguous.
-    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn);
+    if (status === 'rate-limit') result.classification = classifySpawnSignal(spawn);
     return result;
   };
 
@@ -408,7 +433,7 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     if (output) result.output = output;
     if (stderr_tail) result.stderr_tail = stderr_tail;
     // v0.8: surface the classified rate-limit signal (drain wrapper consumes it).
-    if (status === 'rate-limit') result.classification = classifySpawnStderr(spawn);
+    if (status === 'rate-limit') result.classification = classifySpawnSignal(spawn);
     return result;
   };
 
@@ -757,7 +782,41 @@ async function runClaude(
   // post-spawn cleanup touches the worktree (F7).
   const kills: Promise<void>[] = [];
 
-  job.child.stdout?.on('data', (chunk: Buffer) => jsonlStream.write(chunk));
+  // ADR-0003: live scan of the stream-json stdout for the STRUCTURED block
+  // (rate_limit_event status "rejected" / result is_error+429 / message
+  // error:"rate_limit" — the verified session-block shape). Line-buffered via a
+  // StringDecoder so multi-byte UTF-8 split across chunks can't mangle a line;
+  // signal-bearing lines are kept in memory (bounded) for classification so it
+  // never depends on the async .jsonl flush.
+  const stdoutDecoder = new StringDecoder('utf8');
+  let stdoutBuf = '';
+  let streamSignalText = '';
+  const scanStdoutLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    // Cheap pre-filter mirroring classifyStreamJson: only consider lines that
+    // could carry a rate-limit signal.
+    if (!trimmed.includes('rate_limit') && !trimmed.includes('"is_error":true')) return;
+    streamSignalText = (streamSignalText + trimmed + '\n').slice(-STREAM_SIGNAL_BYTES);
+    if (!rateLimited && isStreamBlockLine(trimmed)) {
+      rateLimited = true;
+      // No kill needed once the child has already exited (the final-line scan).
+      if (!exited) kills.push(job.kill());
+    }
+  };
+
+  job.child.stdout?.on('data', (chunk: Buffer) => {
+    jsonlStream.write(chunk);
+    stdoutBuf += stdoutDecoder.write(chunk);
+    let nl: number;
+    while ((nl = stdoutBuf.indexOf('\n')) !== -1) {
+      scanStdoutLine(stdoutBuf.slice(0, nl));
+      stdoutBuf = stdoutBuf.slice(nl + 1);
+    }
+    // Bound a pathological no-newline stream; a truncated line later fails the
+    // JSON parse harmlessly (the full stream is on disk regardless).
+    if (stdoutBuf.length > STDOUT_LINE_BUF_MAX) stdoutBuf = stdoutBuf.slice(-STDOUT_LINE_BUF_MAX);
+  });
   job.child.stderr?.on('data', (chunk: Buffer) => {
     stderrStream.write(chunk);
     stderrText = (stderrText + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
@@ -768,12 +827,14 @@ async function runClaude(
   });
 
   let timedOut = false;
+  let exited = false;
   const timer = setTimeout(() => { timedOut = true; kills.push(job.kill()); }, ctx.taskTimeoutMs);
 
   let exitCode: number;
   try {
     exitCode = await job.exit;
   } finally {
+    exited = true;
     clearTimeout(timer);
   }
 
@@ -784,14 +845,18 @@ async function runClaude(
     try { await Promise.all(kills); } catch { /* best effort */ }
   }
 
+  // Flush the decoder + scan any final line that arrived without a trailing
+  // newline, so a block signal on the very last stream line is never missed.
+  scanStdoutLine(stdoutBuf + stdoutDecoder.end());
+
   stderrStream.end();
   jsonlStream.end();
 
   // We reach here only after job.exit resolved and (above) all kills were
   // awaited, so the spawned process tree is fully dead.
-  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, jsonlPath, descendantsDead: true };
+  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, streamSignalText, jsonlPath, descendantsDead: true };
 
-  // ADR-0001 self-capturing tripwire: each spawn flagged rateLimited writes its
+  // ADR-0003 self-capturing tripwire: each spawn flagged rateLimited writes its
   // OWN capture file (keyed by task id `<id>.BLOCK-CAPTURE.txt`), so the
   // never-yet-observed real block shape captures itself the first time it ever
   // happens. Per-task (not once-global) — distinct task ids never collide.

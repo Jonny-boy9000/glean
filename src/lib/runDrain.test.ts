@@ -501,6 +501,35 @@ describe('runDrain — circuit breaker (item 1)', () => {
     }
   });
 
+  // ── Bug fix (2026-06-11 run d705f9) loop-guard interplay ─────────────────────
+  // Failed tasks no longer enter the completed ledger (pipeline.ts), so a
+  // deterministically-failing task is re-discovered every tick. The breaker is
+  // what bounds that: an all-fail tick reports productive!==true with no
+  // classification, so it INCREMENTS the counter and the window stops at the
+  // threshold — while the ledger itself never grows from failures.
+  it('all-fail ticks never grow the completed ledger and still trip the breaker', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ completed_task_ids: ['pre-existing'] }));
+    // An all-fail burst: tasks ran and ALL failed — no output, no rate-limit
+    // classification, and (post-fix) no completed_evidence_hashes reported.
+    const failTick = baseSummary({
+      reason: 'completed', ran: 0, failed: 7,
+      productive: undefined, completed_evidence_hashes: undefined,
+    });
+    for (let i = 1; i <= MAX_UNPRODUCTIVE; i++) {
+      const { fn } = fakeBurst(failTick);
+      const summary = await runDrain(opts(root), clockAt(T0 + i), fn);
+      expect(summary.reason).toBe('completed');
+      const read = readDrainState(root);
+      if (read.kind !== 'ok') throw new Error('expected ok');
+      expect(read.state.completed_task_ids).toEqual(['pre-existing']); // ledger unchanged
+      expect(read.state.unproductive_reentries).toBe(i);               // breaker counting
+    }
+    // The breaker has reached the threshold: the next tick refuses to burst.
+    const final = await runDrain(opts(root), clockAt(T0 + 10), burstNeverCalled);
+    expect(final.reason).toBe('no-progress');
+  });
+
   it('reaching the configured threshold via trivial bursts eventually trips guard 3d', async () => {
     const root = tmpRoot();
     writeDrainState(root, existingState({ unproductive_reentries: 0 }));

@@ -90,8 +90,10 @@ export type RunSummary = {
   // v0.8: when a run ends on a rate-limit, the classified signal (session vs
   // weekly vs ambiguous) the drain wrapper uses to decide the next move.
   classification?: import('./classify.js').RateLimitClassification;
-  // v0.8: STABLE evidence_hashes the burst executed this run. The drain wrapper
-  // unions these into its skip-set so a re-entry does not redo completed work
+  // v0.8: STABLE evidence_hashes of the tasks that genuinely COMPLETED this run
+  // (status 'ok'/'ok-fallback' ONLY — failed/timeout/rate-limit tasks are NOT
+  // recorded, so a later drain tick re-attempts them). The drain wrapper unions
+  // these into its skip-set so a re-entry does not redo completed work
   // (candidate ids are random per discovery and cannot match across bursts).
   completed_evidence_hashes?: string[];
   // v0.8.2 item 1: true iff this burst produced at least one NON-TRIVIAL output

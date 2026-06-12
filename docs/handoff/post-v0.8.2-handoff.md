@@ -1,6 +1,10 @@
 # Post-v0.8.2 handoff — what's next after drain robustness shipped
 
 > Self-contained handoff so a **fresh session** can pick up cold. Everything needed is here or linked.
+> This is the **only live handoff** (convention: one live handoff in `docs/handoff/`; superseded ones
+> move to `docs/archive/` — the shipped v0.8.2 bucket is at [`docs/archive/v0.8.2-handoff.md`](../archive/v0.8.2-handoff.md)).
+> **Update 2026-06-12:** the first real weekend drain ran 2026-06-11 (work-exhausted, not cap-exhausted);
+> the v0.9 direction is the capacity-governor design at [`docs/design/2026-06-12-capacity-governor-strategy.md`](../design/2026-06-12-capacity-governor-strategy.md).
 
 **As of:** 2026-06-02. `main` is at **v0.8.3**, published to npm as `@jonny-boy9000/glean@0.8.3`
 (merge `7e08e3a`/PR #14, tag `v0.8.3` — a patch fixing the `schedule status`/`disable` query, found
