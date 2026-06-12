@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-D97757)](https://claude.com/claude-code)
 
-> **🍎 macOS / Linux:** glean is Windows-first today. Cross-platform support is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1) — PRs very welcome.
+> **🍎 macOS / Linux:** glean is Windows-first, with **Linux support in beta** (see [Linux (beta)](#linux-beta)). macOS is the remaining gap — tracked in [issue #1](https://github.com/Jonny-boy9000/glean/issues/1), PRs very welcome.
 
 You're on a Claude Pro or Max subscription. The weekly rate-limit window resets Saturday morning. By Thursday and Friday you've often spent the high-value work and have unused capacity that **doesn't roll over**.
 
@@ -53,7 +53,17 @@ glean schedule enable --project C:\some-repo
 
 First run auto-creates `%USERPROFILE%\glean\config.json` with sensible defaults. See [Advanced configuration](#advanced-configuration) to set a project's `base_branch` (enables code drafts) or override the schedule.
 
-**Requirements:** Node 20+, the `claude` CLI on PATH (logged into a Pro/Max subscription), Git. Optional: `gh` for PR-based discovery. The scheduler is **Windows-only** today.
+**Requirements:** Node 20+, the `claude` CLI on PATH (logged into a Pro/Max subscription), Git. Optional: `gh` for PR-based discovery. The scheduler supports **Windows** (Task Scheduler, the battle-tested path) and **Linux** (systemd user timer, beta — see [Linux (beta)](#linux-beta)).
+
+### Linux (beta)
+
+The Linux port is new and has had far less mileage than the Windows path — treat it as beta and check `glean morning` after your first scheduled weekend.
+
+- `glean schedule enable` writes a **systemd user timer** (`glean-drain.timer` + `glean-drain.service` in `~/.config/systemd/user/`) and runs `systemctl --user enable --now glean-drain.timer`. The timer fires weekly (`OnCalendar=<Day> 18:00`) with `Persistent=true`, so a run missed while the laptop was asleep fires on wake.
+- If systemd `--user` is unavailable (some containers/WSL setups), it falls back to a **crontab** line with hourly re-entry through the weekend window (e.g. `0 18-23,0-6 * * 4,5,6`).
+- One behavioral difference from Windows: the systemd timer fires **once per week** (Persistent catch-up included) rather than hourly through the window, so a drain tick that exits on a 5-hour rate limit is not re-launched until the next weekly fire; the cron fallback re-enters hourly. Mid-window re-entry parity is open work.
+- Config lives at `~/glean/config.json`; output at `~/glean/`.
+- **macOS (launchd) is still future work** — `glean schedule` errors politely there; manual `glean run` works anywhere Node and the `claude` CLI do.
 
 ### Commands
 
@@ -61,7 +71,7 @@ First run auto-creates `%USERPROFILE%\glean\config.json` with sensible defaults.
 |---|---|
 | `glean run --project <path> [--budget 60m] [--dry-run]` | One discovery + execution pass (a "burst"). |
 | `glean run --drain --project <path>` | A drain *tick*: run a burst, and on a 5-hour rate-limit save state and exit so the scheduler can re-launch it. |
-| `glean schedule enable\|disable\|status` | Register/remove the weekly Windows Scheduled Task that drives the drain. |
+| `glean schedule enable\|disable\|status` | Register/remove the weekly schedule that drives the drain (Windows Task Scheduler, or a Linux systemd user timer). |
 | `glean morning [--md]` | The "while you slept" receipt for the latest run/drain window. `--md` prints shareable Markdown. |
 | `glean today` | Today's dossiers across all projects. |
 | `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |
@@ -156,10 +166,10 @@ You'll need *some* logged-in `claude` CLI. The free tier's stricter rate limits 
 The dogfood run against this repo (1178 LOC, 25 candidates discovered, 14 ran) used about 28 minutes of wall-clock and produced 14 OUT.md files. Your mileage varies with project size and budget.
 
 **What if I cancel mid-run?**
-Either Ctrl-C the orchestrator or run `glean stop` from another shell. Both kill the child `claude -p` tree (via a Windows Job Object) and exit cleanly. `glean stop` is checked *between* tasks, so the in-flight task finishes naturally before the run exits with code 30.
+Either Ctrl-C the orchestrator or run `glean stop` from another shell. Both kill the child `claude -p` tree (a tree-kill via `taskkill /T` on Windows, a process-group `SIGKILL` on Linux) and exit cleanly. `glean stop` is checked *between* tasks, so the in-flight task finishes naturally before the run exits with code 30.
 
 **Can I run it on a schedule?**
-Yes, on Windows. `glean schedule enable --project <path>` registers one Windows Scheduled Task that drives the weekend drain. The default trigger day is detected from your system timezone — Thursday for Israel's Sun–Thu work week, Friday otherwise — and the task is battery-safe and runs only when you're logged on. `glean schedule disable` removes it. (macOS launchd / Linux cron are on the [roadmap](#coming-next).)
+Yes, on Windows and Linux. `glean schedule enable --project <path>` registers one Windows Scheduled Task — or, on Linux, a systemd user timer (see [Linux (beta)](#linux-beta)) — that drives the weekend drain. The default trigger day is detected from your system timezone — Thursday for Israel's Sun–Thu work week, Friday otherwise. On Windows the task is battery-safe and runs only when you're logged on. `glean schedule disable` removes it. (macOS launchd is on the [roadmap](#coming-next).)
 
 ---
 
@@ -238,7 +248,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\glean\dossiers\<project>\<YYYY-MM-
 
 - **Drain robustness** — a configurable circuit-breaker, first-class mid-weekend candidate re-discovery (so a multi-day drain isn't working off a Thursday snapshot), and an anti-spill pre-emptive margin. Plus one real overnight drain run to capture the exact `claude -p` rate-limit stderr wording (the classifier is horizon-first, so it degrades gracefully until then).
 - **API-key fallback** — when Pro/Max rate-limits, optionally fall back to `ANTHROPIC_API_KEY` for the rest of the budget.
-- **macOS / Linux** — POSIX port (scheduling via launchd/cron); see [issue #1](https://github.com/Jonny-boy9000/glean/issues/1).
+- **macOS** — launchd scheduling, the remaining platform gap now that Linux is in beta; see [issue #1](https://github.com/Jonny-boy9000/glean/issues/1).
 
 Plus smaller items on the [issue tracker](https://github.com/Jonny-boy9000/glean/issues). The full vision is documented in [`glean.md`](./glean.md) and the actionable plan in [`docs/ROADMAP.md`](./docs/ROADMAP.md).
 

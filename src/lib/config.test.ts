@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from './config.js';
+import { loadConfig, defaultConfigPath } from './config.js';
 
 function tmpFile(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'glean-config-'));
@@ -83,5 +83,14 @@ describe('loadConfig', () => {
   it('rejects a fractional anti_spill_margin_minutes', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { anti_spill_margin_minutes: 14.9 } }));
     expect(() => loadConfig(p)).toThrow(/anti_spill_margin_minutes/);
+  });
+});
+
+describe('defaultConfigPath', () => {
+  // Linux regression: this used a hard-coded `\` join, yielding
+  // `/home/user\glean\config.json` on POSIX. Pin the platform-native join.
+  it('joins home + glean + config.json with the platform separator', () => {
+    const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+    expect(defaultConfigPath()).toBe(join(home, 'glean', 'config.json'));
   });
 });

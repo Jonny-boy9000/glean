@@ -20,7 +20,12 @@ export function spawnInJob(
     env: opts.env,
     stdio: opts.stdio ?? 'pipe',
     windowsHide: true,
-    detached: false,
+    // POSIX: detached puts the child in its OWN process group, so kill() can
+    // reap the whole tree via process.kill(-pid). Without it the child shares
+    // glean's group and the negative-pid kill fails (leaving grandchildren
+    // alive) — or worse. Windows keeps detached:false (taskkill /T handles
+    // the tree there, and detached changes console semantics).
+    detached: process.platform !== 'win32',
   });
 
   const exit = new Promise<number>((resolve) => {

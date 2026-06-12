@@ -1,17 +1,22 @@
 /**
- * schedule.ts — Windows Task Scheduler integration for `glean schedule`.
+ * schedule.ts — scheduled weekly drain for `glean schedule`.
  *
- * DESIGN:
- *   - buildRegisterScript() is a pure function that returns a PowerShell
- *     script string.  It can be unit-tested without touching the OS.
- *   - enableSchedule() runs that script via execFileSync.
- *   - disableSchedule() unregisters the task.
- *   - scheduleStatus() returns a human-readable summary.
+ *   - win32: Windows Task Scheduler (the original, live-validated path).
+ *   - linux: systemd USER timer (glean-drain.timer + glean-drain.service in
+ *     ~/.config/systemd/user/), with a crontab fallback when systemd --user
+ *     is unavailable.
+ *   - darwin (launchd): not yet — enable/disable/status throw.
  *
- * All three OS-touching functions guard against non-Windows platforms.
+ * DESIGN (both platforms):
+ *   - build*() are pure functions that return script/unit/crontab strings.
+ *     They can be unit-tested on any OS without touching it.
+ *   - enableSchedule() / disableSchedule() / scheduleStatus() are thin exec
+ *     wrappers that dispatch on process.platform.
  */
 
 import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const TASK_NAME = 'Glean\\Drain';
 // Register-ScheduledTask accepts the combined "folder\name" form in -TaskName and
@@ -137,20 +142,27 @@ Write-Host "Glean\\Drain task registered. Next run: ${day} at ${time} (repeats e
 `.trimStart();
 }
 
-function assertWindows(): void {
-  if (process.platform !== 'win32') {
-    throw new Error('glean schedule is Windows-only in v0.8.0');
+function assertSupportedPlatform(): void {
+  if (process.platform !== 'win32' && process.platform !== 'linux') {
+    throw new Error(
+      'glean schedule supports Windows (Task Scheduler) and Linux (systemd user timer / crontab fallback); macOS launchd is future work',
+    );
   }
 }
 
 export type EnableScheduleOpts = BuildRegisterScriptOpts;
 
 /**
- * Registers (or replaces) the Glean\Drain scheduled task.
- * Throws on non-Windows or if PowerShell exits non-zero.
+ * Registers (or replaces) the weekly drain schedule.
+ * win32: Glean\Drain scheduled task. linux: systemd user timer (or crontab).
+ * Throws on unsupported platforms or if the platform tool exits non-zero.
  */
 export function enableSchedule(opts: EnableScheduleOpts): void {
-  assertWindows();
+  assertSupportedPlatform();
+  if (process.platform === 'linux') {
+    enableScheduleLinux(opts);
+    return;
+  }
   const script = buildRegisterScript(opts);
   execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', script], {
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -170,7 +182,11 @@ export function buildUnregisterCommand(): string {
 }
 
 export function disableSchedule(): void {
-  assertWindows();
+  assertSupportedPlatform();
+  if (process.platform === 'linux') {
+    disableScheduleLinux();
+    return;
+  }
   const cmd = buildUnregisterCommand();
   execFileSync('powershell', ['-NonInteractive', '-NoProfile', '-Command', cmd], {
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -204,7 +220,8 @@ Write-Output "FOUND|$state|$lastRun|$nextRun"
 }
 
 export function scheduleStatus(): ScheduleStatusResult {
-  assertWindows();
+  assertSupportedPlatform();
+  if (process.platform === 'linux') return scheduleStatusLinux();
 
   const cmd = buildStatusScript();
 
@@ -230,4 +247,240 @@ export function scheduleStatus(): ScheduleStatusResult {
     lastRun: parts[2],
     nextRun: parts[3],
   };
+}
+
+// ===========================================================================
+// Linux — systemd user timer (primary) + crontab (fallback)
+// ===========================================================================
+
+export const SYSTEMD_SERVICE = 'glean-drain.service';
+export const SYSTEMD_TIMER = 'glean-drain.timer';
+/** Idempotency marker appended to the crontab line so enable/disable can find it. */
+export const CRON_MARKER = '# glean-drain';
+
+// systemd's abbreviated weekday names (OnCalendar accepts both, but emit the
+// canonical short form). Keys are the full names the CLI/config already use.
+const SYSTEMD_DAYS: Record<string, string> = {
+  sunday: 'Sun', monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed',
+  thursday: 'Thu', friday: 'Fri', saturday: 'Sat',
+};
+// cron day-of-week numbers (0 = Sunday).
+const CRON_DAYS: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+function systemdDay(day: string): string {
+  return SYSTEMD_DAYS[day.toLowerCase()] ?? 'Fri';
+}
+
+/** ~/.config/systemd/user — `home` is injectable for tests. */
+export function systemdUserDir(home: string = process.env.HOME ?? process.env.USERPROFILE ?? ''): string {
+  return join(home, '.config', 'systemd', 'user');
+}
+
+/** The drain command shared by the service unit and the crontab line. */
+function drainCommand(opts: BuildRegisterScriptOpts): string {
+  return `"${opts.nodePath}" "${opts.cliEntry}" run --drain --project "${opts.projectPath}"`;
+}
+
+/**
+ * Pure — glean-drain.service: a oneshot unit running one drain tick.
+ * Activated by the timer (and re-activatable by hand: systemctl --user start).
+ */
+export function buildSystemdUnit(opts: BuildRegisterScriptOpts): string {
+  return `[Unit]
+Description=Glean drain tick (consume idle Claude capacity; one burst per activation)
+
+[Service]
+Type=oneshot
+ExecStart=${drainCommand(opts)}
+`;
+}
+
+/**
+ * Pure — glean-drain.timer: weekly OnCalendar=<Day> <time>.
+ *
+ * The Windows task's hourly-repetition-for-60h window is approximated here by
+ * a single weekly fire + Persistent=true: laptops sleep at lid-close, and
+ * Persistent=true is what re-fires a missed activation on wake — the hard
+ * requirement (glean's drain relies on external re-launch). A drain tick that
+ * exits early on a 5-hour rate limit is NOT re-launched until next week on
+ * this path — the crontab fallback keeps hourly re-entry; revisit if the
+ * single-fire approximation proves too lossy in practice.
+ */
+export function buildTimerUnit(opts: BuildRegisterScriptOpts): string {
+  const day = systemdDay(opts.day ?? defaultTriggerDay());
+  const time = opts.time ?? DEFAULT_TIME;
+  return `[Unit]
+Description=Glean weekly drain timer
+
+[Timer]
+OnCalendar=${day} ${time}
+Persistent=true
+Unit=${SYSTEMD_SERVICE}
+
+[Install]
+WantedBy=timers.target
+`;
+}
+
+/**
+ * Pure — crontab fallback when systemd --user is unavailable: hourly re-entry
+ * through the drain window, e.g. `0 18-23,0-6 * * 4,5,6` for Thursday 18:00
+ * (Thu/Fri/Sat evenings + small hours — approximates the 60h Windows window).
+ */
+export function buildCrontabLine(opts: BuildRegisterScriptOpts): string {
+  const day = opts.day ?? defaultTriggerDay();
+  const time = opts.time ?? DEFAULT_TIME;
+  const [hh, mm] = time.split(':');
+  const startHour = Number(hh) || 0;
+  const minute = Number(mm) || 0;
+  const startDow = CRON_DAYS[day.toLowerCase()] ?? 5;
+  const days = [startDow, (startDow + 1) % 7, (startDow + 2) % 7].join(',');
+  const hours = `${startHour}-23,0-6`;
+  return `${minute} ${hours} * * ${days} ${drainCommand(opts)} ${CRON_MARKER}`;
+}
+
+/** Pure — existing crontab text + our line, replacing any previous glean-drain line. */
+export function mergeCrontabLines(existing: string, line: string): string {
+  const kept = stripCrontabLines(existing);
+  return (kept ? kept.replace(/\n?$/, '\n') : '') + line + '\n';
+}
+
+/** Pure — existing crontab text with any glean-drain marked line removed. */
+export function stripCrontabLines(existing: string): string {
+  const lines = existing.split(/\r?\n/).filter((l) => !l.includes(CRON_MARKER));
+  const out = lines.join('\n').replace(/\n+$/, '');
+  return out ? out + '\n' : '';
+}
+
+export type ListTimersResult = { found: false } | { found: true; next: string; last: string };
+
+/**
+ * Pure — parse `systemctl --user list-timers glean-drain.timer` output.
+ * Lenient: finds the glean-drain.timer row and pulls the (up to) two
+ * `Day YYYY-MM-DD HH:MM:SS TZ` timestamps in column order (NEXT, then LAST).
+ */
+export function parseListTimers(raw: string): ListTimersResult {
+  const row = raw.split(/\r?\n/).find((l) => l.includes(SYSTEMD_TIMER));
+  if (!row) return { found: false };
+  const stamps = row.match(/[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: \S+)?/g) ?? [];
+  return { found: true, next: stamps[0] ?? 'unknown', last: stamps[1] ?? 'never' };
+}
+
+/**
+ * True when a systemd user manager is reachable for this login session.
+ * `systemctl --user show-environment` exits non-zero (or systemctl is absent)
+ * on systemd-less boxes, containers, and sessions without a user bus.
+ */
+export function systemdUserAvailable(): boolean {
+  try {
+    execFileSync('systemctl', ['--user', 'show-environment'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function systemctlUser(args: string[]): void {
+  execFileSync('systemctl', ['--user', ...args], { stdio: ['ignore', 'inherit', 'inherit'] });
+}
+
+function readCrontab(): string {
+  try {
+    return execFileSync('crontab', ['-l'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return ''; // `crontab -l` exits non-zero when the user has no crontab yet
+  }
+}
+
+function writeCrontab(content: string): void {
+  execFileSync('crontab', ['-'], { input: content, stdio: ['pipe', 'inherit', 'inherit'] });
+}
+
+function enableScheduleLinux(opts: EnableScheduleOpts): void {
+  const day = opts.day ?? defaultTriggerDay();
+  const time = opts.time ?? DEFAULT_TIME;
+  if (systemdUserAvailable()) {
+    const dir = systemdUserDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, SYSTEMD_SERVICE), buildSystemdUnit(opts));
+    writeFileSync(join(dir, SYSTEMD_TIMER), buildTimerUnit(opts));
+    systemctlUser(['daemon-reload']);
+    systemctlUser(['enable', '--now', SYSTEMD_TIMER]);
+    console.log(
+      `${SYSTEMD_TIMER} enabled: ${systemdDay(day)} ${time} weekly (Persistent=true re-fires a run missed while asleep).`,
+    );
+  } else {
+    writeCrontab(mergeCrontabLines(readCrontab(), buildCrontabLine(opts)));
+    console.log(
+      `glean drain added to crontab (systemd --user unavailable): hourly through the ${day} ${time} weekend window.`,
+    );
+  }
+}
+
+function disableScheduleLinux(): void {
+  if (systemdUserAvailable()) {
+    try {
+      systemctlUser(['disable', '--now', SYSTEMD_TIMER]);
+    } catch {
+      /* not enabled — fine */
+    }
+    const dir = systemdUserDir();
+    for (const f of [SYSTEMD_TIMER, SYSTEMD_SERVICE]) {
+      try {
+        if (existsSync(join(dir, f))) unlinkSync(join(dir, f));
+      } catch {
+        /* best effort */
+      }
+    }
+    try {
+      systemctlUser(['daemon-reload']);
+    } catch {
+      /* best effort */
+    }
+  }
+  // Always strip the crontab line too — covers a box where the fallback was
+  // used before systemd --user became available (or vice versa).
+  const existing = readCrontab();
+  if (existing.includes(CRON_MARKER)) writeCrontab(stripCrontabLines(existing));
+  console.log('glean drain schedule removed (or was not present).');
+}
+
+function scheduleStatusLinux(): ScheduleStatusResult {
+  if (systemdUserAvailable()) {
+    let raw = '';
+    try {
+      raw = execFileSync('systemctl', ['--user', 'list-timers', SYSTEMD_TIMER, '--all', '--no-pager'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      return { found: false };
+    }
+    const parsed = parseListTimers(raw);
+    if (parsed.found) {
+      let state = 'registered';
+      try {
+        state = execFileSync('systemctl', ['--user', 'is-active', SYSTEMD_TIMER], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+      } catch {
+        state = 'inactive';
+      }
+      return { found: true, taskName: SYSTEMD_TIMER, state, lastRun: parsed.last, nextRun: parsed.next };
+    }
+    // fall through: maybe the cron fallback was used on this box
+  }
+  if (readCrontab().includes(CRON_MARKER)) {
+    return {
+      found: true,
+      taskName: 'glean-drain (crontab)',
+      state: 'registered (cron)',
+      lastRun: 'unknown (cron keeps no history)',
+      nextRun: 'per crontab line — run `crontab -l`',
+    };
+  }
+  return { found: false };
 }
