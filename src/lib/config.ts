@@ -1,7 +1,8 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { GleanConfig } from './types.js';
+import { atomicWriteFileSync } from './state.js';
+import type { GleanConfig, ProjectPriority } from './types.js';
 
 const Schema = z.object({
   claude_bin: z.string().optional(),
@@ -49,6 +50,62 @@ export function loadConfig(path: string): GleanConfig {
     throw new Error(`config: schema violation at ${issue.path.join('.')}: ${issue.message}`);
   }
   return result.data;
+}
+
+export const PROJECT_PRIORITIES: readonly ProjectPriority[] = ['off', 'low', 'normal', 'high'];
+
+export function isProjectPriority(v: unknown): v is ProjectPriority {
+  return typeof v === 'string' && (PROJECT_PRIORITIES as readonly string[]).includes(v);
+}
+
+/**
+ * Effective priority dial for a project: configured projects default to
+ * 'normal' when the dial is absent; an UNCONFIGURED project is always 'off' —
+ * discovery alone must never authorize spending capacity on a repo.
+ */
+export function effectivePriority(cfg: GleanConfig, projectPath: string): ProjectPriority {
+  const entry = cfg.projects?.[projectPath];
+  if (!entry) return 'off';
+  return entry.priority ?? 'normal';
+}
+
+/**
+ * Set (or opt-in create) a project's priority dial in config.json.
+ * - Adds the project entry when missing (= the explicit opt-in gesture).
+ * - 'off' KEEPS the entry — other fields (base_branch, test_command) survive.
+ * - Atomic write; a corrupt existing config is never overwritten.
+ */
+export function setProjectPriority(
+  configPath: string,
+  projectPath: string,
+  priority: string,
+): { ok: boolean; created?: boolean; reason?: string } {
+  if (!isProjectPriority(priority)) {
+    return { ok: false, reason: `invalid priority '${priority}' — use one of: ${PROJECT_PRIORITIES.join(', ')}` };
+  }
+  // Edit the RAW JSON (not the zod-parsed result) so unknown/extra fields a
+  // user added by hand are preserved verbatim.
+  let raw: Record<string, unknown> = {};
+  if (existsSync(configPath)) {
+    try {
+      raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    } catch (e) {
+      return { ok: false, reason: `config: invalid JSON in ${configPath}: ${(e as Error).message}` };
+    }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { ok: false, reason: `config: ${configPath} is not a JSON object` };
+    }
+  }
+  const projects = (raw.projects ?? {}) as Record<string, Record<string, unknown>>;
+  const created = !(projectPath in projects);
+  projects[projectPath] = { ...projects[projectPath], priority };
+  raw.projects = projects;
+  try {
+    atomicWriteFileSync(configPath, JSON.stringify(raw, null, 2) + '\n');
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+  return { ok: true, created };
 }
 
 export function defaultConfigPath(): string {
