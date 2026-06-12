@@ -56,15 +56,16 @@ export function renderUsage(report: UsageReport, useColor: boolean): string {
   // Per-day mini table: this week vs the per-weekday baseline median.
   const ACT = 'THIS WEEK';
   const BASE = 'BASELINE';
-  const actW = Math.max(ACT.length, ...rec.week.map((r) => fmt(r.actual).length), 5);
-  const baseW = Math.max(BASE.length, ...rec.week.map((r) => fmt(r.baseline).length), 5);
-  lines.push(`  ${'DAY'.padEnd(16)}${ACT.padStart(actW)}  ${BASE.padStart(baseW)}`);
-  for (const r of rec.week) {
-    lines.push(`  ${`${r.weekday} ${r.date}`.padEnd(16)}${fmt(r.actual).padStart(actW)}  ${fmt(r.baseline).padStart(baseW)}`);
-  }
   const actSum = rec.week.reduce((s, r) => s + r.actual, 0);
   const baseSum = rec.week.reduce((s, r) => s + r.baseline, 0);
-  lines.push(c.dim(`  ${'total (weighted)'.padEnd(16)}${fmt(actSum).padStart(actW)}  ${fmt(baseSum).padStart(baseW)}`));
+  const actW = Math.max(ACT.length, fmt(actSum).length, ...rec.week.map((r) => fmt(r.actual).length), 5);
+  const baseW = Math.max(BASE.length, fmt(baseSum).length, ...rec.week.map((r) => fmt(r.baseline).length), 5);
+  const LABEL_W = 18; // 'total (weighted)' is 16 chars — keep a 2-space gutter
+  lines.push(`  ${'DAY'.padEnd(LABEL_W)}${ACT.padStart(actW)}  ${BASE.padStart(baseW)}`);
+  for (const r of rec.week) {
+    lines.push(`  ${`${r.weekday} ${r.date}`.padEnd(LABEL_W)}${fmt(r.actual).padStart(actW)}  ${fmt(r.baseline).padStart(baseW)}`);
+  }
+  lines.push(c.dim(`  ${'total (weighted)'.padEnd(LABEL_W)}${fmt(actSum).padStart(actW)}  ${fmt(baseSum).padStart(baseW)}`));
   lines.push('');
 
   const ratioStr = rec.ratio === null ? '—' : rec.ratio.toFixed(2);
