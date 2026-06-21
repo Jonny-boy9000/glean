@@ -91,13 +91,26 @@ function parseDateDir(name: string): number | null {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
+// F5 / ADR-0003: only a SUCCESSFUL outcome may suppress a cross-day re-attempt,
+// mirroring the in-burst ledger discipline (pipeline.ts records only 'ok' /
+// 'ok-fallback'). A previously failed/timeout/rate-limit INDEX entry is
+// genuinely-unfinished work — suppressing it would skip it for the whole 7-day
+// dedup window. `ok-repaired` is the repair pass's recovered-artifact status
+// (repair.ts) — a real produced dossier, so it suppresses too. Keep this set
+// aligned with the statuses that mean "an artifact actually exists on disk".
+const OK_STATUSES = new Set(['ok', 'ok-fallback', 'ok-repaired']);
+
 function extractHashesFromIndex(content: string): string[] {
   // Frontmatter between leading --- lines
   const m = content.match(/^---\n([\s\S]+?)\n---/);
   if (!m) return [];
   try {
-    const fm = parseYaml(m[1]) as { entries?: { evidence_hash?: string }[] };
-    return (fm.entries ?? []).map((e) => e.evidence_hash ?? '').filter(Boolean);
+    const fm = parseYaml(m[1]) as { entries?: { evidence_hash?: string; status?: string }[] };
+    return (fm.entries ?? [])
+      // Only successful outcomes suppress; failed/timeout/rate-limit must retry.
+      .filter((e) => typeof e.status === 'string' && OK_STATUSES.has(e.status))
+      .map((e) => e.evidence_hash ?? '')
+      .filter(Boolean);
   } catch {
     return [];
   }

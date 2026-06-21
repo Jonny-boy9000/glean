@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { DRAFT_IMPL_DENY, draftImplAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from '../../src/lib/deny.js';
 
 const FAKE_CLAUDE = process.platform === 'win32'
   ? join(process.cwd(), 'test', 'fixtures', 'fake-claude.cmd')
@@ -35,9 +36,16 @@ function makeHome(repoPath: string): string {
   return home;
 }
 
-function runGlean(repo: string, home: string, scenarioFile: string) {
+function runGlean(repo: string, home: string, scenarioFile: string, argvOut?: string) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    USERPROFILE: home,
+    HOME: home,
+    FAKE_CLAUDE_SCENARIO: scenario(scenarioFile),
+  };
+  if (argvOut) env.FAKE_CLAUDE_ARGV_OUT = argvOut;
   return spawnSync('node', ['bin/glean.js', 'run', '--project', repo, '--budget', '60m'], {
-    env: { ...process.env, USERPROFILE: home, HOME: home, FAKE_CLAUDE_SCENARIO: scenario(scenarioFile) },
+    env,
     encoding: 'utf8',
   });
 }
@@ -115,6 +123,41 @@ describe('verification 18: draft-impl end-to-end', () => {
     const branchName = prep.replace(/^[*+\s]+/, '');
     const count = execSync(`git rev-list main..${branchName} --count`, { cwd: repo, encoding: 'utf8' }).trim();
     expect(Number(count)).toBeGreaterThanOrEqual(1);
+  });
+
+  // F2 safety proof (draft-impl): the spawn argv must carry the FULL draft-impl
+  // deny-list AND a SCOPED allow-list (Edit/Write + git commit-cycle + the
+  // project test command) — never a bare `Bash`. The deny/allow CONSTANTS are
+  // unit-tested in deny.test.ts; this asserts they actually reach `claude -p`,
+  // which is the regression guard that makes the executor refactor safe.
+  it('draft-impl spawn argv carries DRAFT_IMPL_DENY and the scoped draft-impl allow-list (no bare Bash)', () => {
+    const { repo } = makeRepo();
+    const home = makeHome(repo);
+    const argvOut = join(home, 'argv.jsonl');
+
+    const res = runGlean(repo, home, 'draft-impl-commit.yaml', argvOut);
+    expect(res.status).toBe(0);
+
+    expect(existsSync(argvOut)).toBe(true);
+    const invocations = readFileSync(argvOut, 'utf8').trim().split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l) as string[]);
+    expect(invocations.length).toBeGreaterThanOrEqual(1);
+    const argv = invocations[0];
+
+    // --disallowedTools is exactly DRAFT_IMPL_DENY.
+    const denyIdx = argv.indexOf('--disallowedTools');
+    expect(denyIdx).toBeGreaterThanOrEqual(0);
+    expect(argv[denyIdx + 1]).toBe(DRAFT_IMPL_DENY);
+
+    // --allowedTools is exactly draftImplAllowedTools(default test command). The
+    // v18 config has no test_command, so the default npm/node prefixes apply.
+    const allowIdx = argv.indexOf('--allowedTools');
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+    const allow = argv[allowIdx + 1];
+    expect(allow).toBe(draftImplAllowedTools(DEFAULT_TEST_COMMAND_ALLOW));
+
+    // No bare `Bash` token (a wholesale-shell grant that a prefix deny can't fully block).
+    const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+    expect(tokens).not.toContain('Bash');
   });
 
   it('recovers from a kill mid-commit (stale index.lock) and still produces a branch', () => {

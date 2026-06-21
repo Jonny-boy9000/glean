@@ -109,6 +109,22 @@ describe('buildServeRegisterScript — hidden, resilient, battery-safe', () => {
   });
 });
 
+describe('buildServeRegisterScript — injection hardening (F3)', () => {
+  it('neutralizes $(...) in an interpolated path (cannot execute)', () => {
+    const evil = 'C:\\evil$(calc.exe)\\glean.js';
+    const script = buildServeRegisterScript(makeOpts({ cliEntry: evil }));
+    // No unescaped `$(` survives (a preceding backtick makes it literal in PS).
+    expect(script).not.toMatch(/(?<!`)\$\(/);
+    expect(script).toContain('`$(calc.exe)');
+  });
+
+  it('neutralizes a $ subexpression in the node path too', () => {
+    const script = buildServeRegisterScript(makeOpts({ nodePath: 'C:\\n$(rmdir)\\node.exe' }));
+    expect(script).not.toMatch(/(?<!`)\$\(/);
+    expect(script).toContain('`$(rmdir)');
+  });
+});
+
 describe('buildServeRegisterScript — pure function contract', () => {
   it('returns a non-empty string and is deterministic', () => {
     const opts = makeOpts();

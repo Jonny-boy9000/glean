@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
-import { startServer } from './serve.js';
+import { EventEmitter } from 'node:events';
+import { startServer, createHandler, isLoopbackHost } from './serve.js';
 import { writeDrainState, type DrainState } from './state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -305,5 +306,93 @@ describe('glean serve — project portfolio', () => {
       });
       expect(r.status).toBe(403);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F4 — DNS-rebinding / loopback-Host POST guard (direct handler drive).
+//
+// postGuardOk rejects on (1) missing x-glean-dashboard, (2) non-loopback Host,
+// (3) cross-origin Origin. Only (1) was covered above (fetch() cannot forge a
+// non-loopback Host header). To exercise the Host/Origin branches we drive
+// createHandler() with a mock req/res and forged headers.
+// ---------------------------------------------------------------------------
+
+type MockRes = {
+  statusCode: number | null;
+  writeHead: (s: number, h?: unknown) => MockRes;
+  end: (b?: string) => void;
+};
+
+function mockRes(): MockRes {
+  const res: MockRes = {
+    statusCode: null,
+    writeHead(s) { res.statusCode = s; return res; },
+    end() {},
+  };
+  return res;
+}
+
+// Drive a mutating POST through the handler with the given headers. createHandler
+// only needs root/templatesDir/cliEntry/nodePath; a forbidden POST short-circuits
+// before any filesystem access, and a passing POST to /api/stop writes a STOP
+// sentinel under root (a throwaway temp dir).
+async function postGuard(headers: Record<string, string | undefined>): Promise<number | null> {
+  const root = mkdtempSync(join(tmpdir(), 'glean-serve-guard-'));
+  const handle = createHandler({ root, templatesDir: root, cliEntry: 'x', nodePath: process.execPath });
+  const req = new EventEmitter() as EventEmitter & {
+    method: string; url: string; headers: Record<string, string | undefined>; destroy: () => void;
+  };
+  req.method = 'POST';
+  req.url = '/api/stop';
+  req.headers = headers;
+  req.destroy = () => {};
+  const res = mockRes();
+  const p = handle(req as never, res as never);
+  // On a guard pass the handler awaits the request body — deliver an empty one.
+  req.emit('end');
+  await p;
+  return res.statusCode;
+}
+
+describe('isLoopbackHost', () => {
+  it('accepts loopback hosts (with and without a port)', () => {
+    expect(isLoopbackHost('localhost')).toBe(true);
+    expect(isLoopbackHost('localhost:4317')).toBe(true);
+    expect(isLoopbackHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackHost('127.0.0.1:4317')).toBe(true);
+    expect(isLoopbackHost('[::1]')).toBe(true);
+    expect(isLoopbackHost('::1')).toBe(true);
+  });
+
+  it('rejects non-loopback hosts and a missing header', () => {
+    expect(isLoopbackHost('evil.com')).toBe(false);
+    expect(isLoopbackHost('evil.com:4317')).toBe(false);
+    expect(isLoopbackHost('192.168.1.5')).toBe(false);
+    expect(isLoopbackHost(undefined)).toBe(false);
+  });
+});
+
+describe('POST guard — DNS-rebinding / cross-origin (direct handler)', () => {
+  it('403s a forged non-loopback Host even with the dashboard header', async () => {
+    expect(await postGuard({ host: 'evil.com', 'x-glean-dashboard': '1' })).toBe(403);
+  });
+
+  it('403s a cross-origin Origin (loopback Host + dashboard header)', async () => {
+    expect(await postGuard({
+      host: '127.0.0.1:4317', 'x-glean-dashboard': '1', origin: 'http://evil.com',
+    })).toBe(403);
+  });
+
+  it('403s when the dashboard header is missing (control)', async () => {
+    expect(await postGuard({ host: '127.0.0.1:4317' })).toBe(403);
+  });
+
+  it('passes the guard (200, not 403) for loopback Host + header + loopback Origin', async () => {
+    const code = await postGuard({
+      host: '127.0.0.1:4317', 'x-glean-dashboard': '1', origin: 'http://127.0.0.1:4317',
+    });
+    expect(code).not.toBe(403);
+    expect(code).toBe(200);
   });
 });

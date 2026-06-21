@@ -422,7 +422,14 @@ const scheduleCmd = defineCommand({
       // __dirname here is dist/; bin/glean.js is one level up.
       const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
 
-      enableSchedule({ nodePath, cliEntry, projectPath, day, time, repeatMinutes, durationHours });
+      try {
+        enableSchedule({ nodePath, cliEntry, projectPath, day, time, repeatMinutes, durationHours });
+      } catch (e) {
+        // F3: invalid --day / --time (or config drain_trigger) is rejected before
+        // any PowerShell is generated — surface it as a clean CLI error.
+        console.error(`error: ${(e as Error).message}`);
+        process.exit(1);
+      }
       // Announce the resolved day Node-side (enableSchedule's own output is emitted
       // by the PowerShell script and can't carry this). Make the work-week guess
       // transparent so a wrong detection is obvious and one flag fixes it.

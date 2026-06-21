@@ -51,6 +51,38 @@ describe('gcWorktrees (CRITICAL 2: 21-day worktree expiry)', () => {
     expect(branches).toContain('prep/glean-bbbb');
   });
 
+  // F1 regression: the worktree dir is `<slug>-<uuid>` and the branch is
+  // `prep/glean-<uuid>`, where <uuid> is a full UUID v4 that CONTAINS hyphens.
+  // The old prepBranchFor sliced on the LAST '-', so for a real id like
+  // 3f8a1c2b-9d4e-4f6a-b1c2-d3e4f5a6b7c8 it produced prep/glean-d3e4f5a6b7c8
+  // (only the trailing UUID segment) and `git branch -D` silently missed the
+  // real branch → prep/glean-* branches leaked forever. Use a REAL UUID with
+  // internal hyphens (the prior `stale-aaaa` masked this) and assert the actual
+  // prep/glean-<full-uuid> branch is gone after gc.
+  it('removes the prep branch when the worktree id is a real UUID (internal hyphens)', () => {
+    const repo = setupRepo();
+    const gleanRoot = mkdtempSync(join(tmpdir(), 'glean-gc-uuid-'));
+    const workDir = join(gleanRoot, 'work');
+    mkdirSync(workDir, { recursive: true });
+
+    const uuid = '3f8a1c2b-9d4e-4f6a-b1c2-d3e4f5a6b7c8';
+    const slug = 'C--Glean';
+    const staleWt = join(workDir, `${slug}-${uuid}`);
+    const branch = `prep/glean-${uuid}`;
+    execSync(`git -C "${repo}" worktree add "${staleWt}" -b ${branch} main`);
+
+    ageDir(staleWt, 22 * 24 * 60 * 60 * 1000);
+
+    const removed = gcWorktrees(repo, gleanRoot, Date.now());
+    expect(removed).toContain(staleWt);
+    expect(existsSync(staleWt)).toBe(false);
+
+    // The FULL-uuid branch must be gone — not just a trailing-segment guess.
+    const branches = execSync('git branch --list "prep/glean-*"', { cwd: repo, encoding: 'utf8' });
+    expect(branches).not.toContain(branch);
+    expect(branches.trim()).toBe('');
+  });
+
   it('never throws — a missing work dir is a no-op', () => {
     const repo = setupRepo();
     const gleanRoot = mkdtempSync(join(tmpdir(), 'glean-gc-empty-'));

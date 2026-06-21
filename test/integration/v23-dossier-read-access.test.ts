@@ -3,7 +3,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { researchAllowedTools } from '../../src/lib/deny.js';
+import { researchAllowedTools, BASE_DENY } from '../../src/lib/deny.js';
 
 const FAKE_CLAUDE = process.platform === 'win32'
   ? join(process.cwd(), 'test', 'fixtures', 'fake-claude.cmd')
@@ -94,6 +94,14 @@ describe('verification 23: research-dossier read-access + read-only allow-list (
     expect(tokens).not.toContain('Bash');
     expect(allow).not.toContain('Edit');
     expect(allow).not.toContain('Write');
+
+    // --- F2 safety proof: the deny-list actually reaches the spawn argv ---
+    // The deny CONSTANT is unit-tested in deny.test.ts, but nothing proved it is
+    // passed through to `claude -p`. This guards the executor refactor: if a
+    // future change drops --disallowedTools, this fails loudly.
+    const denyIdx = argv.indexOf('--disallowedTools');
+    expect(denyIdx).toBeGreaterThanOrEqual(0);
+    expect(argv[denyIdx + 1]).toBe(BASE_DENY);
 
     // --- Case 5: OUT.md is reconstructed from the multi-block final message ---
     const dossiers = join(home, 'glean', 'dossiers');
