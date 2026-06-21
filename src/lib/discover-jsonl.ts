@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Candidate, EvidenceJsonl } from './types.js';
 import { evidenceHash } from './dedup.js';
+import { homeDir } from './state.js';
 
 const TODO_TITLE_RE = /\b(TODO|FIXME|fix|finish|continue|later|reminder)\b/i;
 
@@ -240,7 +241,7 @@ export async function discoverJsonl(
     };
 
     const cand: Candidate = {
-      id: uuid(),
+      id: randomUUID(),
       evidence_hash: '',
       type: 'research-dossier',
       project_path: projectPath,
@@ -256,6 +257,5 @@ export async function discoverJsonl(
 }
 
 function defaultProjectsRoot(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return join(home, '.claude', 'projects');
+  return join(homeDir(), '.claude', 'projects');
 }

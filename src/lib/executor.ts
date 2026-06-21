@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, createWriteStream, rmSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Candidate, TaskResult, TaskOutput, DraftTestStatus } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { render } from './render.js';
@@ -10,17 +10,15 @@ import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
 import { StringDecoder } from 'node:string_decoder';
-import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, type RateLimitClassification } from './classify.js';
+import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, RATE_LIMIT_RE, type RateLimitClassification } from './classify.js';
 import { resolveModel, resolveMaxTurns, type ModelRoutingConfig, type PaceTier } from './model-routing.js';
 
 // ADR-0003: the REAL `claude -p` block (session limit, captured 2026-06-11) is a
 // STRUCTURED stream-json signal on stdout — see classify.ts:isStreamBlockLine —
-// and that is now the PRIMARY detector (scanned live in runClaude below). This
-// stderr regex is the FALLBACK for any block that arrives as stderr prose
-// instead. ASSUMPTION[ADR-0003]: the weekly block shape is still unobserved;
-// keep this fallback until it is captured. Kept in sync with classify.ts.
-// 'session limit' added 2026-06-11 (the observed block wording).
-const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit|session limit)/i;
+// and that is now the PRIMARY detector (scanned live in runClaude below). The
+// RATE_LIMIT_RE imported from classify.ts is the FALLBACK for any block that
+// arrives as stderr prose instead. ASSUMPTION[ADR-0003]: the weekly block shape
+// is still unobserved; keep this fallback until it is captured.
 
 // Classify the rate-limit signal (session vs weekly vs ambiguous). Only called
 // when spawn.rateLimited is true. Hierarchy (ADR-0003):
@@ -807,7 +805,7 @@ async function runClaude(
   // --allowedTools so a headless -p run does not hang on an interactive approval.
   if (opts.allowedTools) claudeArgs.push('--allowedTools', opts.allowedTools);
   claudeArgs.push('--disallowedTools', opts.deny);
-  claudeArgs.push('--session-id', uuid());
+  claudeArgs.push('--session-id', randomUUID());
 
   // On Windows, .cmd files must be invoked via cmd.exe /c
   const [spawnCmd, spawnArgs] = resolveSpawn(ctx.claudeBin, claudeArgs);

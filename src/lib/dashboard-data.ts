@@ -7,6 +7,7 @@ import {
   isStopRequested,
   drainStatePath,
   writeDrainState,
+  homeDir,
   type DrainState,
 } from './state.js';
 import { scheduleStatus, type ScheduleStatusResult } from './schedule.js';
@@ -551,8 +552,7 @@ export function budgetPath(root: string): string {
 
 /** Where Claude Code keeps per-project session history (~/.claude/projects). */
 export function defaultClaudeProjectsDir(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return join(home, '.claude', 'projects');
+  return join(homeDir(), '.claude', 'projects');
 }
 
 export type ProjectRegistryEntry = {

@@ -6,7 +6,7 @@ import { runPipeline } from './lib/pipeline.js';
 import { runDrain } from './lib/runDrain.js';
 import { findTodayDossiers } from './lib/today.js';
 import { renderToday } from './lib/render-today.js';
-import { writeStop, gleanRoot, ensureDefaultConfig } from './lib/state.js';
+import { writeStop, stopPath, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
 import { Memory } from './lib/memory.js';
 import { renderRateList } from './lib/rate.js';
@@ -102,7 +102,7 @@ const stopCmd = defineCommand({
   meta: { name: 'stop', description: 'Write STOP sentinel; active run exits between tasks' },
   async run() {
     writeStop(gleanRoot());
-    console.log(`STOP sentinel written: ${gleanRoot()}\\STOP`);
+    console.log(`STOP sentinel written: ${stopPath(gleanRoot())}`);
   },
 });
 

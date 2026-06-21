@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, copyFileSync, unlinkSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
+import { z } from 'zod';
 import type { RunSummary } from './types.js';
 
 export type DrainState = {
@@ -17,9 +18,33 @@ export type DrainState = {
   schema: 1;
 };
 
+// Zod schema mirroring DrainState. Validated in readDrainState so a
+// structurally-valid-but-wrong-shape budget.json is treated as corrupt (not
+// silently cast). Must accept every shape writeDrainState actually produces:
+// consecutive_ambiguous is optional (backward-compat with pre-field files).
+const DrainStateSchema = z.object({
+  drain_window_id: z.string(),
+  drain_window_started_at: z.string(),
+  next_eligible_at: z.string().nullable(),
+  week_exhausted: z.boolean(),
+  last_observed_weekly_reset: z.string().nullable(),
+  completed_task_ids: z.array(z.string()),
+  unproductive_reentries: z.number(),
+  consecutive_ambiguous: z.number().optional(),
+  schema: z.literal(1),
+});
+
+/**
+ * The user's home directory. Single source of truth for the USERPROFILE-then-HOME
+ * precedence (Windows-first; HOME is the POSIX fallback). Import this everywhere a
+ * home dir is needed so the precedence can never drift between call sites.
+ */
+export function homeDir(): string {
+  return process.env.USERPROFILE ?? process.env.HOME ?? '';
+}
+
 export function gleanRoot(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return join(home, 'glean');
+  return join(homeDir(), 'glean');
 }
 
 export function projectSlug(projectPath: string): string {
@@ -134,12 +159,17 @@ export function readDrainState(root: string): ReadDrainStateResult {
   if (!existsSync(path)) {
     return { kind: 'missing' };
   }
+  let parsed: unknown;
   try {
-    const state = JSON.parse(readFileSync(path, 'utf8')) as DrainState;
-    return { kind: 'ok', state };
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch {
-    return { kind: 'corrupt' };
+    return { kind: 'corrupt' }; // not valid JSON
   }
+  const result = DrainStateSchema.safeParse(parsed);
+  if (!result.success) {
+    return { kind: 'corrupt' }; // valid JSON, wrong shape
+  }
+  return { kind: 'ok', state: result.data as DrainState };
 }
 
 export function atomicWriteFileSync(path: string, contents: string): void {

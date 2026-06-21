@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Candidate, EvidenceTodo } from './types.js';
 import { evidenceHash } from './dedup.js';
 
@@ -48,7 +48,7 @@ export async function discoverGitTodos(projectPath: string): Promise<Candidate[]
   return [...byFile.entries()].map(([file, todo_lines]) => {
     const ev: EvidenceTodo = { kind: 'todo', file, todo_lines };
     const cand: Candidate = {
-      id: uuid(),
+      id: randomUUID(),
       evidence_hash: '',
       type: 'research-dossier',
       project_path: projectPath,
@@ -92,7 +92,7 @@ export async function discoverGitPrs(projectPath: string, opts: GhOpts = {}): Pr
   return prs.map((pr) => {
     const review_comments = opts.skipComments ? [] : fetchUnresolvedComments(ghBin, projectPath, pr.number);
     const cand: Candidate = {
-      id: uuid(),
+      id: randomUUID(),
       evidence_hash: '',
       type: 'research-dossier',
       project_path: projectPath,

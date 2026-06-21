@@ -17,6 +17,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homeDir } from './state.js';
 
 export const TASK_NAME = 'Glean\\Drain';
 // Register-ScheduledTask accepts the combined "folder\name" form in -TaskName and
@@ -319,7 +320,7 @@ function systemdDay(day: string): string {
 }
 
 /** ~/.config/systemd/user — `home` is injectable for tests. */
-export function systemdUserDir(home: string = process.env.HOME ?? process.env.USERPROFILE ?? ''): string {
+export function systemdUserDir(home: string = homeDir()): string {
   return join(home, '.config', 'systemd', 'user');
 }
 
