@@ -298,6 +298,63 @@ describe('buildUnregisterCommand — deletes by split path + leaf', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// F3 — PowerShell injection hardening. `day` / `time` reach the generated
+// script unquoted (`-DaysOfWeek ${day}`, `-At "${time}"`) and paths were
+// escaped for `"` only — not `$(...)` / backtick subexpressions. Values come
+// from CLI flags / config.json (defense-in-depth, not the web surface), but a
+// malicious value could inject PowerShell. Validate day/time and neutralize
+// `$` + backtick in interpolated paths.
+// ---------------------------------------------------------------------------
+
+describe('buildRegisterScript — injection hardening (F3)', () => {
+  it('rejects a malicious day (not a weekday name)', () => {
+    expect(() => buildRegisterScript(makeOpts({ day: 'Thursday; rm -rf /' }))).toThrow(/day/i);
+    expect(() => buildRegisterScript(makeOpts({ day: '$(calc.exe)' }))).toThrow(/day/i);
+    expect(() => buildRegisterScript(makeOpts({ day: 'Funday' }))).toThrow(/day/i);
+  });
+
+  it('accepts every real weekday name (and defaultTriggerDay output)', () => {
+    for (const d of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
+      expect(() => buildRegisterScript(makeOpts({ day: d }))).not.toThrow();
+    }
+    // The two values defaultTriggerDay can ever produce must pass the whitelist.
+    for (const tz of ['Asia/Jerusalem', 'America/New_York', 'UTC']) {
+      expect(() => buildRegisterScript(makeOpts({ day: defaultTriggerDay(tz) }))).not.toThrow();
+    }
+  });
+
+  it('rejects a malicious time (not HH:MM)', () => {
+    expect(() => buildRegisterScript(makeOpts({ time: '18:00"; calc; "' }))).toThrow(/time/i);
+    expect(() => buildRegisterScript(makeOpts({ time: '$(calc)' }))).toThrow(/time/i);
+    expect(() => buildRegisterScript(makeOpts({ time: '6:00' }))).toThrow(/time/i); // needs HH
+    expect(() => buildRegisterScript(makeOpts({ time: '1800' }))).toThrow(/time/i);
+  });
+
+  it('accepts a valid HH:MM time', () => {
+    expect(() => buildRegisterScript(makeOpts({ time: '18:00' }))).not.toThrow();
+    expect(() => buildRegisterScript(makeOpts({ time: '06:30' }))).not.toThrow();
+    expect(() => buildRegisterScript(makeOpts({ time: '23:59' }))).not.toThrow();
+  });
+
+  it('neutralizes $(...) / backtick in an interpolated path (cannot execute)', () => {
+    const evil = 'C:\\evil$(calc.exe)\\glean.js';
+    const script = buildRegisterScript(makeOpts({ cliEntry: evil }));
+    // In PowerShell, a backtick before `$` makes it a literal — so the subexpr
+    // cannot run. Assert NO unescaped `$(` survives (negative lookbehind for a
+    // preceding backtick), and that the escaped form `\`$( IS present.
+    expect(script).not.toMatch(/(?<!`)\$\(/);
+    expect(script).toContain('`$(calc.exe)');
+  });
+
+  it('neutralizes a backtick in an interpolated path (no live escape sequence)', () => {
+    const script = buildRegisterScript(makeOpts({ cliEntry: 'C:\\a`b\\glean.js' }));
+    // A lone path backtick is doubled to a literal backtick (``), so it can't
+    // form an escape like `n / `t against the next char.
+    expect(script).toContain('C:\\a``b\\glean.js');
+  });
+});
+
 // ===========================================================================
 // Linux scheduling — pure builders. These run on every OS (including Windows
 // CI): they only generate strings, mirroring the buildRegisterScript contract.

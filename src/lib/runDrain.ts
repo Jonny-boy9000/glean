@@ -13,7 +13,7 @@
 // All time flows through the injected `now()` so the state machine is fully
 // deterministic under test. All persisted timestamps are ISO UTC.
 
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { RunSummary } from './types.js';
 import type { DrainState } from './state.js';
 import {
@@ -251,7 +251,7 @@ function sessionNextEligible(resetAt: string | null, now: () => number): string 
 function freshWindow(now: () => number): DrainState {
   const iso = new Date(now()).toISOString();
   return {
-    drain_window_id: uuid(),
+    drain_window_id: randomUUID(),
     drain_window_started_at: iso,
     next_eligible_at: null,
     week_exhausted: false,
@@ -307,7 +307,7 @@ function readStopTimestamp(root: string): string | null {
 function synthSummary(reason: RunSummary['reason'], now: () => number, opts: PipelineOpts): RunSummary {
   const iso = new Date(now()).toISOString();
   return {
-    run_id: `drain-noop-${uuid().slice(0, 8)}`,
+    run_id: `drain-noop-${randomUUID().slice(0, 8)}`,
     started_at: iso,
     ended_at: iso,
     reason,

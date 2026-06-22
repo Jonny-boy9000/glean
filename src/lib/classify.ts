@@ -34,10 +34,10 @@ export type RateLimitClassification = {
   reset_horizon: 'hours' | 'days' | 'unknown';
 };
 
-// Matches the same pattern used in executor.ts so they stay in sync.
-// 'session limit' added 2026-06-11: the observed block prose is "You've hit
+// Canonical rate-limit signal regex (single source of truth; executor.ts imports
+// this). 'session limit' added 2026-06-11: the observed block prose is "You've hit
 // your session limit · resets 8pm (<tz>)" (ADR-0003).
-const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit|session limit)/i;
+export const RATE_LIMIT_RE = /(rate limit|429|usage limit|5-hour limit|weekly limit|session limit)/i;
 
 // The 6-hour cut: resets within this window are classified as a session reset
 // (<=~5h), resets beyond it are weekly resets. Sits just past the 5-hour

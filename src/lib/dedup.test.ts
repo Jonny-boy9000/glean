@@ -25,6 +25,24 @@ function writeIndex(root: string, proj: string, date: string, hashes: string[]):
   writeFileSync(join(dir, 'INDEX.md'), fm);
 }
 
+// Like writeIndex but takes [hash, status] pairs, so a test can plant a FAILED /
+// timeout entry alongside a successful one (F5).
+function writeIndexWithStatus(root: string, proj: string, date: string, entries: Array<[string, string]>): void {
+  const dir = join(root, proj, date);
+  mkdirSync(dir, { recursive: true });
+  const fm = [
+    '---',
+    'run_id: r',
+    'project_path: x',
+    `generated_at: ${new Date().toISOString()}`,
+    'entries:',
+    ...entries.map(([h, s]) => `  - { task_id: t, evidence_hash: ${h}, type: research-dossier, title: t, output: o, status: ${s} }`),
+    '---',
+    '# index',
+  ].join('\n');
+  writeFileSync(join(dir, 'INDEX.md'), fm);
+}
+
 function candidate(hash: string): Candidate {
   return {
     id: 'x', evidence_hash: hash, type: 'research-dossier', project_path: 'C:\\Glean',
@@ -142,5 +160,39 @@ describe('filterRecentlyProduced', () => {
     const { kept, skipped } = filterRecentlyProduced(cands, root, 'C-Glean');
     expect(kept.length).toBe(1);
     expect(skipped.length).toBe(0);
+  });
+
+  // F5: only SUCCESSFUL outcomes (ok/ok-fallback — matching the in-burst ledger
+  // discipline per ADR-0003) may suppress a re-attempt across days. A previously
+  // FAILED/timeout/rate-limit INDEX entry is genuinely-unfinished work and must
+  // NOT be skipped, or it stays skipped for a full 7-day window.
+  it('does NOT skip a candidate whose recent INDEX entry FAILED (only successes suppress)', () => {
+    const root = dossierRoot();
+    const today = new Date().toISOString().slice(0, 10);
+    // hash-ok succeeded; hash-fail failed last time.
+    writeIndexWithStatus(root, 'C-Glean', today, [['hash-ok', 'ok'], ['hash-fail', 'failed']]);
+    const cands: Candidate[] = [candidate('hash-ok'), candidate('hash-fail')];
+    const { kept, skipped } = filterRecentlyProduced(cands, root, 'C-Glean');
+    // The successful one is suppressed; the failed one is retried.
+    expect(skipped).toEqual(['hash-ok']);
+    expect(kept.map((c) => c.evidence_hash)).toEqual(['hash-fail']);
+  });
+
+  it('does not skip timeout or rate-limit entries either', () => {
+    const root = dossierRoot();
+    const today = new Date().toISOString().slice(0, 10);
+    writeIndexWithStatus(root, 'C-Glean', today, [['hash-timeout', 'timeout'], ['hash-rl', 'rate-limit']]);
+    const cands: Candidate[] = [candidate('hash-timeout'), candidate('hash-rl')];
+    const { kept, skipped } = filterRecentlyProduced(cands, root, 'C-Glean');
+    expect(skipped).toEqual([]);
+    expect(kept.map((c) => c.evidence_hash)).toEqual(['hash-timeout', 'hash-rl']);
+  });
+
+  it('still suppresses an ok-fallback entry (a successful outcome)', () => {
+    const root = dossierRoot();
+    const today = new Date().toISOString().slice(0, 10);
+    writeIndexWithStatus(root, 'C-Glean', today, [['hash-fb', 'ok-fallback']]);
+    const { skipped } = filterRecentlyProduced([candidate('hash-fb')], root, 'C-Glean');
+    expect(skipped).toEqual(['hash-fb']);
   });
 });

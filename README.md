@@ -74,8 +74,11 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 | `glean schedule enable\|disable\|status` | Register/remove the weekly schedule that drives the drain (Windows Task Scheduler, or a Linux systemd user timer). |
 | `glean serve [--port 4317] [--open]` | Launch the local management dashboard (127.0.0.1 only): browse runs/dossiers, view per-task streams, and manage operation — Run now, Stop/Resume, retry failed tasks, discard/rate dossiers, toggle the schedule. **`glean serve install`** keeps it always on (auto-start at logon + restart on failure; `uninstall` / `status` manage it). See the [dashboard guide](docs/guides/dashboard.md). |
 | `glean morning [--md]` | The "while you slept" receipt for the latest run/drain window. `--md` prints shareable Markdown. |
+| `glean usage [--json]` | Weekly pacing report: this week's capacity spend vs. your own per-weekday baseline, the pace tier, and the last captured rate-limit utilization. `--json` for scripting. |
+| `glean projects [set <path> <off\|low\|normal\|high>]` | List the project portfolio (every Claude project on the machine + configured ones) or steer a project's priority dial. |
 | `glean today` | Today's dossiers across all projects. |
 | `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |
+| `glean doctor` | Environment preflight: Node 20+, `claude` on PATH, git (gh optional), config, native deps. Exits non-zero if a hard requirement is missing. |
 | `glean gc` | Expire draft-impl worktrees + `prep/glean-*` branches older than 21 days. |
 | `glean stop` | Halt the active run/drain between tasks. |
 
@@ -92,17 +95,20 @@ Everything glean does, in one local page — every run with its outcome and ok/f
 
 ## How it works
 
-Three discovery sources run in parallel:
+Four discovery sources run in parallel:
 
 1. **Claude Code session history** — scans `~/.claude/projects/<project>/*.jsonl` for sessions whose AI-generated title mentions TODO/FIXME/etc.
 2. **`git grep` for `TODO`/`FIXME`/`XXX`/`HACK`** plus `gh pr list` (if available) for unresolved review comments.
 3. **Recently-added dependencies** in `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, `pyproject.toml` (last 14 days via `git log`).
+4. **The project's own planning docs** (`discover-docs`) — mines `ROADMAP`/`TODO`/`BACKLOG`/`PLAN`, `docs/ROADMAP.md`, `docs/handoff/*.md`, and planning-titled root `*.md` for "up next" list items and unchecked `- [ ]` tasks, so the work you already wrote down becomes prep candidates.
 
 Each candidate becomes a single `claude -p` invocation, sandboxed inside a Windows Job Object so the child tree dies cleanly on Ctrl-C or `glean stop`. The spawned Claude session runs with a `--disallowedTools` deny-list blocking `git push`, `git switch`/`checkout`/`reset`/`branch`/`worktree`, and `gh pr` mutations — speculative work only, no production-affecting changes.
 
 **Code drafts (`draft-impl`).** For a project with a `base_branch` set in config, the single highest-value TODO is implemented into an isolated `git worktree` on a `prep/glean-*` branch off that base. Your `main` is never checked out, mutated, pushed, or merged — review by `cd`-ing into the worktree (the receipt prints the exact command). glean runs the project's `test_command` inside the worktree and reports `pass`/`fail`/`none`.
 
-**The drain (`--drain` + `glean schedule`).** A weekly cap on Pro/Max is a rolling 7-day window, and a separate 5-hour session window throttles how much you can use at once — so draining a big leftover bucket means working until the 5-hour wall, waiting ~5h, and going again, several times across the weekend. glean does this by **exit-and-re-enter**: on a 5-hour rate-limit it classifies the reset *horizon* from stderr (hours → session, pause and resume; days → weekly cap, stop and report "drained weekly capacity"), persists `next_eligible_at` + a resume cursor to `state/budget.json`, and exits. The Windows Task Scheduler trigger re-launches it after the window reopens. It never sleeps in-process (that dies at laptop lid-close), and never spills into the fresh new-week allowance.
+**The drain (`--drain` + `glean schedule`).** A weekly cap on Pro/Max is a rolling 7-day window, and a separate 5-hour session window throttles how much you can use at once — so draining a big leftover bucket means working until the 5-hour wall, waiting ~5h, and going again, several times across the weekend. glean does this by **exit-and-re-enter**: on a 5-hour rate-limit it classifies the reset *horizon* and pauses or stops accordingly (hours → session, pause and resume; days → weekly cap, stop and report "drained weekly capacity"), persists `next_eligible_at` + a resume cursor to `state/budget.json`, and exits. The reset signal it reads is the structured `rate_limit_event` that `claude -p` emits in its stream-json output (session-limit shape verified live; the stderr-prose regex is kept only as a fallback). The Windows Task Scheduler trigger re-launches it after the window reopens. It never sleeps in-process (that dies at laptop lid-close), and never spills into the fresh new-week allowance.
+
+**The capacity governor.** `glean usage` reports your self-relative weekly pacing — this week's capacity spend against your own per-weekday baseline — so you can see whether you're under- or over-spending before the drain does. Speculative work is routed to Sonnet by default (`--model sonnet`): on Max plans Sonnet has its own weekly pool and burns the shared cap several times slower than Opus.
 
 For the full architecture see the design spec under [`docs/superpowers/specs/`](./docs/superpowers/specs/).
 
@@ -239,7 +245,8 @@ Add this to `~/.claude/settings.json`:
   },
   "drain_trigger": { "day": "Friday", "time": "18:00", "repeat_minutes": 60, "duration_hours": 60 },
   "models": { "fetch-docs": "haiku", "research-dossier": "sonnet", "draft-impl": "sonnet" },
-  "max_turns": { "fetch-docs": 8, "research-dossier": 24, "draft-impl": 50 }
+  "max_turns": { "fetch-docs": 8, "research-dossier": 24, "draft-impl": 50 },
+  "pacing": { "enabled": true, "haircut": 0 }
 }
 ```
 
@@ -249,6 +256,7 @@ Add this to `~/.claude/settings.json`:
 - **`drain_trigger`** — overrides the scheduler default (day/time/repetition). Omit it to let `glean schedule enable` auto-detect the day from your timezone.
 - **`models`** — per-task-type `--model` for spawned sessions (alias like `sonnet` or a full model id). The values shown are the built-in defaults: speculative work runs on Sonnet (on Max plans it has its own weekly pool and burns the shared cap several times slower than Opus), doc fetches on Haiku. The resolved model is logged per task. Omit the key entirely to use the defaults.
 - **`max_turns`** — per-task-type `--max-turns` runaway-loop guard on every spawned session (orthogonal to the per-task timeout). The values shown are the defaults.
+- **`pacing`** — the capacity-governor gate behind `glean usage`. `enabled` (default `true`) turns self-relative pacing on/off; `haircut` (0–1, default 0) is a manual discount you can add to the measured pace ratio to account for capacity glean can't see locally (claude.ai web/desktop or other machines that share your cap but write no JSONL here). An optional `thresholds` object (`skip_above`/`small_above`/`normal_above`) overrides the tier boundaries. Omit the whole key to use the defaults.
 
 To discard a day's output:
 
@@ -260,7 +268,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\glean\dossiers\<project>\<YYYY-MM-
 
 ## Coming next
 
-- **Drain robustness** — a configurable circuit-breaker, first-class mid-weekend candidate re-discovery (so a multi-day drain isn't working off a Thursday snapshot), and an anti-spill pre-emptive margin. Plus one real overnight drain run to capture the exact `claude -p` rate-limit stderr wording (the classifier is horizon-first, so it degrades gracefully until then).
+- **Capacity-governor wave 2** — a nightly schedule preset gated by `glean usage`'s pace tier (only drain on the nights you're underspending), and a morning anti-spill margin that ends a drain N hours before your typical first prompt so a run never eats into the day's fresh capacity.
 - **API-key fallback** — when Pro/Max rate-limits, optionally fall back to `ANTHROPIC_API_KEY` for the rest of the budget.
 - **macOS** — launchd scheduling, the remaining platform gap now that Linux is in beta; see [issue #1](https://github.com/Jonny-boy9000/glean/issues/1).
 

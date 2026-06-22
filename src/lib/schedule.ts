@@ -17,6 +17,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homeDir } from './state.js';
 
 export const TASK_NAME = 'Glean\\Drain';
 // Register-ScheduledTask accepts the combined "folder\name" form in -TaskName and
@@ -51,6 +52,45 @@ export function defaultTriggerDay(
   return SUN_THU_ZONES.has(tz) ? 'Thursday' : 'Friday';
 }
 
+// ── F3: PowerShell injection hardening ──────────────────────────────────────
+// day/time reach the generated script unquoted/quoted, and paths were escaped
+// for `"` only. These values come from CLI flags / config.json (defense-in-depth,
+// not the web surface), but an unvalidated value is a real injection. Validate
+// day/time against strict whitelists, and neutralize PowerShell's interpolation
+// metacharacters (`"`, backtick, `$`) inside double-quoted interpolated paths so
+// a `$(...)` subexpression or backtick escape cannot execute.
+
+const WEEKDAYS = new Set<string>([
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+]);
+
+/** Throws unless `day` is one of the seven capitalized weekday names. */
+export function assertValidDay(day: string): void {
+  if (!WEEKDAYS.has(day)) {
+    throw new Error(
+      `invalid schedule day '${day}' — must be one of: ${[...WEEKDAYS].join(', ')}`,
+    );
+  }
+}
+
+/** Throws unless `time` is a 24-hour HH:MM string (00:00–23:59). */
+export function assertValidTime(time: string): void {
+  const m = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
+    throw new Error(`invalid schedule time '${time}' — must be 24-hour HH:MM (e.g. 18:00)`);
+  }
+}
+
+/**
+ * Escape a string for safe interpolation inside a PowerShell double-quoted
+ * string. Backtick is PowerShell's escape char, so it must come FIRST, then `$`
+ * (kills `$(...)` subexpressions + `$var`) and `"` (string break-out). Paths can
+ * legitimately contain none of these, so this only ever neutralizes an attack.
+ */
+export function psDoubleQuoteEscape(s: string): string {
+  return s.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
+}
+
 export type BuildRegisterScriptOpts = {
   /** Absolute path to the `node` executable (process.execPath at call time). */
   nodePath: string;
@@ -81,10 +121,16 @@ export function buildRegisterScript(opts: BuildRegisterScriptOpts): string {
   const repeatMinutes  = opts.repeatMinutes  ?? DEFAULT_REPEAT_MINUTES;
   const durationHours  = opts.durationHours  ?? DEFAULT_DURATION_HOURS;
 
-  // Escape any embedded double-quotes in paths (PowerShell string safety).
-  const safeNode    = opts.nodePath.replace(/"/g, '`"');
-  const safeCli     = opts.cliEntry.replace(/"/g, '`"');
-  const safeProject = opts.projectPath.replace(/"/g, '`"');
+  // F3: validate the interpolated-unquoted/quoted scalars before they reach the
+  // script (day is interpolated bare into -DaysOfWeek; time into -At "...").
+  assertValidDay(day);
+  assertValidTime(time);
+
+  // Escape PowerShell interpolation metachars in paths (`"`, backtick, `$`) so a
+  // `$(...)` subexpression or backtick escape in a path cannot execute (F3).
+  const safeNode    = psDoubleQuoteEscape(opts.nodePath);
+  const safeCli     = psDoubleQuoteEscape(opts.cliEntry);
+  const safeProject = psDoubleQuoteEscape(opts.projectPath);
 
   // Convert durationHours to a TimeSpan string understood by New-ScheduledTaskTrigger.
   // PT60H → ISO 8601 period, or we can use the direct cmdlet param format.
@@ -274,7 +320,7 @@ function systemdDay(day: string): string {
 }
 
 /** ~/.config/systemd/user — `home` is injectable for tests. */
-export function systemdUserDir(home: string = process.env.HOME ?? process.env.USERPROFILE ?? ''): string {
+export function systemdUserDir(home: string = homeDir()): string {
   return join(home, '.config', 'systemd', 'user');
 }
 

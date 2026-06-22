@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,7 @@ import {
   writeDrainState,
   atomicWriteFileSync,
   STALE_LOCK_MS,
+  homeDir,
 } from './state.js';
 import type { DrainState } from './state.js';
 
@@ -181,6 +182,48 @@ describe('readDrainState', () => {
     // MUST NOT be treated as missing
     expect(result.kind).not.toBe('missing');
   });
+
+  it('returns corrupt when JSON is valid but the shape is wrong (week_exhausted a string, missing completed_task_ids)', () => {
+    const root = newRoot();
+    mkdirSync(join(root, 'state'), { recursive: true });
+    // Structurally valid JSON, but week_exhausted is a string and
+    // completed_task_ids is absent — not a real DrainState.
+    writeFileSync(
+      join(root, 'state', 'budget.json'),
+      JSON.stringify({
+        drain_window_id: 'dw',
+        drain_window_started_at: '2026-06-01T00:00:00.000Z',
+        next_eligible_at: null,
+        week_exhausted: 'nope',
+        last_observed_weekly_reset: null,
+        unproductive_reentries: 0,
+        schema: 1,
+      }),
+    );
+    const result = readDrainState(root);
+    expect(result.kind).toBe('corrupt');
+  });
+
+  it('accepts a valid DrainState that omits the optional consecutive_ambiguous field', () => {
+    const root = newRoot();
+    mkdirSync(join(root, 'state'), { recursive: true });
+    // backward-compat: budget.json written before consecutive_ambiguous existed
+    writeFileSync(
+      join(root, 'state', 'budget.json'),
+      JSON.stringify({
+        drain_window_id: 'dw-legacy',
+        drain_window_started_at: '2026-06-01T00:00:00.000Z',
+        next_eligible_at: null,
+        week_exhausted: false,
+        last_observed_weekly_reset: null,
+        completed_task_ids: [],
+        unproductive_reentries: 0,
+        schema: 1,
+      }),
+    );
+    const result = readDrainState(root);
+    expect(result.kind).toBe('ok');
+  });
 });
 
 describe('atomicWriteFileSync', () => {
@@ -229,6 +272,33 @@ describe('writeDrainState atomicity', () => {
     if (result.kind === 'ok') {
       expect(result.state).toEqual(state);
     }
+  });
+});
+
+describe('homeDir precedence', () => {
+  const savedUser = process.env.USERPROFILE;
+  const savedHome = process.env.HOME;
+  afterEach(() => {
+    if (savedUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedUser;
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+  });
+
+  it('prefers USERPROFILE over HOME when both are set', () => {
+    process.env.USERPROFILE = 'C:\\Users\\winhome';
+    process.env.HOME = '/posix/home';
+    expect(homeDir()).toBe('C:\\Users\\winhome');
+  });
+
+  it('falls back to HOME when USERPROFILE is unset (Linux)', () => {
+    delete process.env.USERPROFILE;
+    process.env.HOME = '/posix/home';
+    expect(homeDir()).toBe('/posix/home');
+  });
+
+  it('returns empty string when neither is set', () => {
+    delete process.env.USERPROFILE;
+    delete process.env.HOME;
+    expect(homeDir()).toBe('');
   });
 });
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
 import type { Candidate, RunSummary, RunReason, TaskResult } from './types.js';
 import type { RateLimitClassification } from './classify.js';
@@ -359,7 +359,7 @@ function newRunId(): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const ymd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const hms = `${pad(d.getHours())}${pad(d.getMinutes())}`;
-  return `${ymd}-${hms}-${uuid().slice(0, 6)}`;
+  return `${ymd}-${hms}-${randomUUID().slice(0, 6)}`;
 }
 
 function appendIndex(root: string, projSlug: string, runId: string, c: Candidate, result: TaskResult): void {

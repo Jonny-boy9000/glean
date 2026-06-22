@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Candidate, EvidenceDoc } from './types.js';
 import { evidenceHash } from './dedup.js';
 
@@ -147,7 +147,7 @@ export async function discoverDocs(projectPath: string): Promise<Candidate[]> {
     for (const item of extractDocItems(content)) {
       const ev: EvidenceDoc = { kind: 'doc', file: file.rel, heading: item.heading, item_text: item.item_text, line: item.line };
       const cand: Candidate = {
-        id: uuid(),
+        id: randomUUID(),
         evidence_hash: '',
         type: 'research-dossier',
         project_path: projectPath,

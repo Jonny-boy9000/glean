@@ -20,7 +20,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { systemdUserAvailable, systemdUserDir } from './schedule.js';
+import { systemdUserAvailable, systemdUserDir, psDoubleQuoteEscape } from './schedule.js';
 
 export const SERVE_TASK_NAME = 'Glean\\Serve';
 // v0.8.3 lesson (see schedule.ts): Register-ScheduledTask accepts the combined
@@ -59,9 +59,10 @@ export type ServeInstallOpts = {
 export function buildServeRegisterScript(opts: ServeInstallOpts): string {
   const port = opts.port ?? DEFAULT_SERVE_PORT;
 
-  // Escape any embedded double-quotes in paths (PowerShell string safety).
-  const safeNode = opts.nodePath.replace(/"/g, '`"');
-  const safeCli = opts.cliEntry.replace(/"/g, '`"');
+  // Escape PowerShell interpolation metachars in paths (`"`, backtick, `$`) so a
+  // `$(...)` subexpression or backtick escape in a path cannot execute (F3).
+  const safeNode = psDoubleQuoteEscape(opts.nodePath);
+  const safeCli = psDoubleQuoteEscape(opts.cliEntry);
 
   return `
 # Glean Serve — register the dashboard auto-start task (logon trigger)

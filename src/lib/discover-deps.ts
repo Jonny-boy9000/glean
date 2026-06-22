@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { parse as parseToml } from 'smol-toml';
 import type { Candidate, EvidenceDep } from './types.js';
 import { evidenceHash } from './dedup.js';
@@ -34,7 +34,7 @@ export async function discoverDeps(projectPath: string): Promise<Candidate[]> {
       if (preDeps.has(pkg)) continue;
       const ev: EvidenceDep = { kind: 'dep', manifest: m, package: pkg, added_at: new Date().toISOString() };
       const cand: Candidate = {
-        id: uuid(),
+        id: randomUUID(),
         evidence_hash: '',
         type: 'fetch-docs',
         project_path: projectPath,

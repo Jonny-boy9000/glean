@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { atomicWriteFileSync } from './state.js';
+import { atomicWriteFileSync, homeDir } from './state.js';
 import type { GleanConfig, ProjectPriority } from './types.js';
 
 // v0.9 model routing (ADR-0006): maps are keyed STRICTLY by the known task
@@ -143,6 +143,5 @@ export function setProjectPriority(
 export function defaultConfigPath(): string {
   // join (not a hard-coded `\`) — this must resolve to ~/glean/config.json on
   // POSIX too; same output as before on Windows.
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
-  return join(home, 'glean', 'config.json');
+  return join(homeDir(), 'glean', 'config.json');
 }

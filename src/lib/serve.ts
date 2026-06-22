@@ -55,10 +55,25 @@ function sendJson(res: ServerResponse, status: number, body: Json): void {
   res.end(text);
 }
 
-function isLoopbackHost(hostHeader: string | undefined): boolean {
+// Exported for unit testing (F4): fetch() cannot forge a non-loopback Host
+// header, so the DNS-rebinding guard is exercised directly.
+//
+// Host header forms: `host`, `host:port`, `[ipv6]`, `[ipv6]:port`. The bracketed
+// IPv6 loopback `[::1]` (what browsers actually send) and the bare `::1` were
+// already in the intended allow-set, but a naive split(':') broke both (it
+// yielded `[` and `''` respectively) — IPv6 loopback was silently rejected.
+// Strip an optional `[...]` wrapper, then drop a trailing `:port` only for the
+// IPv4/hostname case (an unbracketed IPv6 literal has no host:port form).
+export function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
-  const host = hostHeader.split(':')[0].toLowerCase();
-  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  let host = hostHeader.trim().toLowerCase();
+  const bracket = host.match(/^\[(.+?)\](?::\d+)?$/);
+  if (bracket) {
+    host = bracket[1]; // bracketed IPv6, e.g. [::1] or [::1]:4317 → ::1
+  } else if (!host.includes('::') && host.includes(':')) {
+    host = host.slice(0, host.indexOf(':')); // hostname/IPv4 host:port → host
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
 /**
