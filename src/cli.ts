@@ -8,6 +8,9 @@ import {
   enableSchedule,
   disableSchedule,
   scheduleStatus,
+  enableNightlySchedule,
+  disableNightlySchedule,
+  nightlyScheduleStatus,
   defaultTriggerDay,
   DEFAULT_TIME,
   DEFAULT_REPEAT_MINUTES,
@@ -36,6 +39,26 @@ async function loadMemoryCtor(): Promise<(typeof import('./lib/memory.js'))['Mem
     process.stderr.write(`warning: telemetry disabled (better-sqlite3 unavailable: ${(e as Error).message})\n`);
     return null;
   }
+}
+
+/**
+ * PIECE 2: the user's typical first-prompt time of day (minutes past local
+ * midnight) for the morning anti-spill guard. Returns undefined when the buffer
+ * is OFF (no buffer configured) — skipping the JSONL walk entirely — or null
+ * when there's too little data (the guard then no-ops). Lazy import keeps the
+ * non-drain paths sqlite/JSONL-free.
+ */
+async function resolveTypicalFirstPrompt(bufferHours: number | undefined): Promise<number | null | undefined> {
+  if (!bufferHours || bufferHours <= 0) return undefined;
+  const { loadFirstPromptEvents, typicalFirstPromptMinutes } = await import('./lib/activity.js');
+  const { defaultClaudeProjectsDir } = await import('./lib/dashboard-data.js');
+  const now = new Date();
+  const events = loadFirstPromptEvents(defaultClaudeProjectsDir(), {
+    gleanRoot: gleanRoot(),
+    // 21-day mtime window comfortably covers the 14-day lookback.
+    sinceMs: now.getTime() - 21 * 86_400_000,
+  });
+  return typicalFirstPromptMinutes(events, { now });
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +124,15 @@ const runCmd = defineCommand({
       ? await (await import('./lib/runDrain.js')).runDrain(pipelineOpts, undefined, undefined, {
           maxUnproductive: cfg.drain_trigger?.max_unproductive,
           antiSpillMarginMinutes: cfg.drain_trigger?.anti_spill_margin_minutes,
+          // PIECE 1 (#3): weekly-block reset fallback uses the configured anchor.
+          weekAnchor: cfg.pacing?.week_anchor,
+          // PIECE 2: morning anti-spill. Compute the typical first-prompt time
+          // ONLY when the buffer is enabled (avoid the JSONL walk otherwise).
+          morningBufferHours: cfg.pacing?.morning_buffer_hours,
+          typicalFirstPromptMinutes: await resolveTypicalFirstPrompt(cfg.pacing?.morning_buffer_hours),
+          // PIECE 3: nightly pace gate — let the drain self-gate on the pacing
+          // tier (only when pacing.enabled; recommendTier respects the flag).
+          pacing: cfg.pacing,
         })
       : await (await import('./lib/pipeline.js')).runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
@@ -401,22 +433,28 @@ const scheduleCmd = defineCommand({
     // below, so a config-file drain_trigger is reachable (citty defaults would
     // otherwise always populate args.* and shadow the config).
     day: { type: 'string', description: 'Day of week for the weekly trigger (default: detected from your system timezone — Thursday for Israel, else Friday)' },
-    time: { type: 'string', description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME})` },
+    time: { type: 'string', description: `Local 24-h HH:MM start time (default: ${DEFAULT_TIME}; nightly default 02:00)` },
     'repeat-minutes': { type: 'string', description: `Repetition interval in minutes (default: ${DEFAULT_REPEAT_MINUTES})` },
     'duration-hours': { type: 'string', description: `Repetition window duration in hours (default: ${DEFAULT_DURATION_HOURS})` },
+    // PIECE 3: operate on the separate daily pace-gated Glean\Nightly task.
+    nightly: { type: 'boolean', default: false, description: 'Target the daily pace-gated drain (Glean\\Nightly) instead of the weekly Glean\\Drain task' },
   },
   async run({ args }) {
     const action = (args.action as string).toLowerCase();
+    const nightly = Boolean(args.nightly);
 
     if (action === 'disable') {
-      disableSchedule();
+      if (nightly) disableNightlySchedule();
+      else disableSchedule();
       return;
     }
 
     if (action === 'status') {
-      const result = scheduleStatus();
+      const result = nightly ? nightlyScheduleStatus() : scheduleStatus();
       // Platform-appropriate label; on Windows this stays the exact 'Glean\Drain'.
-      const label = process.platform === 'win32' ? 'Glean\\Drain' : 'glean-drain.timer';
+      const label = nightly
+        ? 'Glean\\Nightly'
+        : process.platform === 'win32' ? 'Glean\\Drain' : 'glean-drain.timer';
       if (!result.found) {
         console.log(`${label}: not registered`);
       } else {
@@ -463,6 +501,21 @@ const scheduleCmd = defineCommand({
       const nodePath = process.execPath;
       // __dirname here is dist/; bin/glean.js is one level up.
       const cliEntry = resolve(join(__dirname, '..', 'bin', 'glean.js'));
+
+      // PIECE 3: --nightly registers the separate daily pace-gated Glean\Nightly
+      // task (the weekly Glean\Drain path is untouched). Nightly uses a 02:00
+      // default time; day/repeat/duration do not apply to a daily trigger.
+      if (nightly) {
+        const nightlyTime = (args.time as string | undefined) ?? cfgTrigger.time ?? '02:00';
+        try {
+          enableNightlySchedule({ nodePath, cliEntry, projectPath, time: nightlyTime });
+        } catch (e) {
+          console.error(`error: ${(e as Error).message}`);
+          process.exit(1);
+        }
+        console.log(`nightly drain scheduled: daily at ${nightlyTime} (pace-gated — spends only when under weekly pace)`);
+        return;
+      }
 
       try {
         enableSchedule({ nodePath, cliEntry, projectPath, day, time, repeatMinutes, durationHours });

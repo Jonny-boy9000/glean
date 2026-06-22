@@ -294,6 +294,37 @@ describe('runDrain — post-burst state transitions', () => {
     expect(read.state.last_observed_weekly_reset).toBe(new Date(T0 + DRAIN_DURATION_MS).toISOString());
   });
 
+  // PIECE 1 (#3): when a weekly block fires with no observed reset_at and a
+  // week_anchor IS configured, the fallback is the NEXT anchor occurrence
+  // (the user's real subscription reset) rather than the blind now+60h.
+  it('weekly rate-limit with no reset_at + week_anchor → next anchor occurrence', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const cls: RateLimitClassification = { kind: 'weekly', reset_at: null, reset_horizon: 'days' };
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: cls }));
+    // T0 = 2026-06-02T12:00:00Z (a Tuesday, in UTC tests run in UTC TZ). The next
+    // Saturday 03:00 LOCAL after T0 is 2026-06-06T03:00. nextWeekAnchorAfter is
+    // exported and unit-tested separately; here we assert runDrain uses it.
+    const { nextWeekAnchorAfter } = await import('./runDrain.js');
+    const expected = nextWeekAnchorAfter({ day: 'Saturday', time: '03:00' }, T0);
+    await runDrain(opts(root), clockAt(T0), fn, { weekAnchor: { day: 'Saturday', time: '03:00' } });
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.last_observed_weekly_reset).toBe(expected);
+    // sanity: it is NOT the blind now+60h fallback
+    expect(read.state.last_observed_weekly_reset).not.toBe(new Date(T0 + DRAIN_DURATION_MS).toISOString());
+  });
+
+  it('an OBSERVED reset_at always wins over the anchor fallback', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn } = fakeBurst(baseSummary({ reason: 'rate-limit', ran: 0, classification: WEEKLY_CLS }));
+    await runDrain(opts(root), clockAt(T0), fn, { weekAnchor: { day: 'Saturday', time: '03:00' } });
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.last_observed_weekly_reset).toBe(WEEKLY_CLS.reset_at);
+  });
+
   it('first ambiguous rate-limit → session-paused retry (next_eligible_at set)', async () => {
     const root = tmpRoot();
     writeDrainState(root, existingState({ unproductive_reentries: 0 }));
@@ -621,5 +652,198 @@ describe('runDrain — anti-spill guard 3e (item 3)', () => {
     const summary = await runDrain(opts(root), clockAt(T0), fn);
     expect(calls).toHaveLength(1);
     expect(summary.reason).not.toBe('anti-spill');
+  });
+});
+
+// ── PIECE 2: morning anti-spill guard ────────────────────────────────────────
+// Local-noon-ish reference so the guard math is far from a midnight edge. The
+// typical first prompt is expressed in minutes past LOCAL midnight; the clock is
+// a LOCAL Date's epoch so the guard's local-time reconstruction lines up.
+describe('runDrain — morning anti-spill (PIECE 2)', () => {
+  // typical first prompt 09:00 (540 min). buffer 2h → hold from 07:00 to 09:00.
+  const FIRST_PROMPT_MIN = 9 * 60;
+
+  function localClock(y: number, mo: number, d: number, h: number, mi: number): () => number {
+    return () => new Date(y, mo - 1, d, h, mi, 0).getTime();
+  }
+
+  it('within the buffer window before the typical first prompt → morning-anti-spill, no burst', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    // now = 08:00 local, first prompt 09:00, buffer 2h → 08:00 is inside [07:00,09:00).
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 8, 0),
+      burstNeverCalled,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    expect(summary.reason).toBe('morning-anti-spill');
+    expect(summary.ran).toBe(0);
+  });
+
+  it('a morning-anti-spill no-op writes no burst row and leaves state unchanged', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const raw = readFileSync(drainStatePath(root), 'utf8');
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 8, 30),
+      burstNeverCalled,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    expect(summary.reason).toBe('morning-anti-spill');
+    expect(readFileSync(drainStatePath(root), 'utf8')).toBe(raw);
+    expect(existsSync(join(root, 'state', summary.run_id))).toBe(false);
+  });
+
+  it('OUTSIDE the buffer (well before the window) → burst runs', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    // now = 02:00 local, window is [07:00,09:00) → not inside → run.
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 2, 0),
+      fn,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('morning-anti-spill');
+  });
+
+  it('AT/after the typical first prompt → burst runs (window is before, not after)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    // now = 09:30 local, past the 09:00 first prompt → not inside the pre-window.
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 9, 30),
+      fn,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('morning-anti-spill');
+  });
+
+  it('feature OFF when buffer is 0 (default) even inside the would-be window', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 8, 0),
+      fn,
+      { morningBufferHours: 0, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('morning-anti-spill');
+  });
+
+  it('no-ops on thin data (typicalFirstPromptMinutes null) — never blocks on a guess', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 8, 0),
+      fn,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: null },
+    );
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('morning-anti-spill');
+  });
+
+  it('morning-anti-spill is NOT counted as unproductive (no progress penalty)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 1 }));
+    await runDrain(
+      opts(root),
+      localClock(2026, 6, 3, 8, 0),
+      burstNeverCalled,
+      { morningBufferHours: 2, typicalFirstPromptMinutes: FIRST_PROMPT_MIN },
+    );
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(1); // unchanged
+  });
+});
+
+// ── PIECE 3: nightly pace-gated drain gate ───────────────────────────────────
+describe('runDrain — pace gate (PIECE 3)', () => {
+  it('tier "skip" → pace-skip, no burst, spends nothing', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled, {
+      pacing: { enabled: true },
+      paceTier: async () => 'skip',
+    });
+    expect(summary.reason).toBe('pace-skip');
+    expect(summary.ran).toBe(0);
+    expect(summary.exit_code).toBe(0);
+  });
+
+  it('a pace-skip no-op writes no burst row and leaves state unchanged', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const raw = readFileSync(drainStatePath(root), 'utf8');
+    const summary = await runDrain(opts(root), clockAt(T0), burstNeverCalled, {
+      pacing: { enabled: true },
+      paceTier: async () => 'skip',
+    });
+    expect(summary.reason).toBe('pace-skip');
+    expect(readFileSync(drainStatePath(root), 'utf8')).toBe(raw);
+    expect(existsSync(join(root, 'state', summary.run_id))).toBe(false);
+  });
+
+  it('tier "normal" (not skip) → burst runs', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn, calls } = fakeBurst(baseSummary());
+    const summary = await runDrain(opts(root), clockAt(T0), fn, {
+      pacing: { enabled: true },
+      paceTier: async () => 'normal',
+    });
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('pace-skip');
+  });
+
+  it('gate is a NO-OP when pacing.enabled is false (even if tier would skip)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn, calls } = fakeBurst(baseSummary());
+    let gateCalled = false;
+    const summary = await runDrain(opts(root), clockAt(T0), fn, {
+      pacing: { enabled: false },
+      paceTier: async () => { gateCalled = true; return 'skip'; },
+    });
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('pace-skip');
+    expect(gateCalled).toBe(false); // never even consulted
+  });
+
+  it('gate is a NO-OP when pacing config is absent (byte-identical to bare drain)', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState());
+    const { fn, calls } = fakeBurst(baseSummary());
+    let gateCalled = false;
+    const summary = await runDrain(opts(root), clockAt(T0), fn, {
+      paceTier: async () => { gateCalled = true; return 'skip'; },
+    });
+    expect(calls).toHaveLength(1);
+    expect(summary.reason).not.toBe('pace-skip');
+    expect(gateCalled).toBe(false);
+  });
+
+  it('pace-skip is NOT counted as unproductive', async () => {
+    const root = tmpRoot();
+    writeDrainState(root, existingState({ unproductive_reentries: 1 }));
+    await runDrain(opts(root), clockAt(T0), burstNeverCalled, {
+      pacing: { enabled: true },
+      paceTier: async () => 'skip',
+    });
+    const read = readDrainState(root);
+    if (read.kind !== 'ok') throw new Error('expected ok');
+    expect(read.state.unproductive_reentries).toBe(1);
   });
 });

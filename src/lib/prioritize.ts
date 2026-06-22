@@ -56,13 +56,19 @@ export function prioritize(candidates: Candidate[], budgetMs: number, elapsedMs:
   const onlyDocs = remaining < 5 * 60_000;
   const eligible = onlyDocs ? candidates.filter((c) => c.type === 'fetch-docs') : [...candidates];
 
-  for (const c of eligible) c.est_value = Math.round(c.est_value * pathPenalty(c));
-
+  // wave-2: scoring is now IDEMPOTENT. The vendor/noise path penalty is folded
+  // INTO score() (computed from the candidate each call) instead of mutating
+  // c.est_value. That made the old `for ... c.est_value *= penalty` a footgun:
+  // a second prioritize() call compounded the 0.7 factor (0.49, 0.343, …) and
+  // reordered the queue. est_value is now immutable after scoreValue(), so the
+  // in-run re-rank loop (pipeline.ts) can call prioritize() once per task safely.
   eligible.sort((a, b) => score(b) - score(a));
   eligible.forEach((c, i) => (c.rank = i + 1));
   return eligible;
 }
 
-function score(c: Candidate): number {
-  return TYPE_WEIGHT[c.type] * (c.est_value / Math.log(c.est_tokens + 1));
+export function score(c: Candidate): number {
+  // pathPenalty is applied HERE (not by mutating est_value) so prioritize() is
+  // idempotent — see prioritize() comment.
+  return TYPE_WEIGHT[c.type] * ((c.est_value * pathPenalty(c)) / Math.log(c.est_tokens + 1));
 }

@@ -85,7 +85,16 @@ export type RunReason =
   // v0.8.2 item 3: a drain tick held off because now() is within the anti-spill
   // margin before a known weekly reset (no-op; no burst, refuses to spill into
   // next week's fresh allowance).
-  | 'anti-spill';
+  | 'anti-spill'
+  // PIECE 2: a drain tick held off because now() is within the configured
+  // morning buffer BEFORE the user's typical first-prompt time (no-op; no burst,
+  // so prep is finished before the workday and the drain doesn't bleed into
+  // fresh capacity). Opt-in (pacing.morning_buffer_hours > 0); never counts as
+  // unproductive.
+  | 'morning-anti-spill'
+  // PIECE 3: a nightly/scheduled drain tick that the pacing gate told to spend
+  // nothing this week (recommendTier tier === 'skip'). Opt-in (pacing.enabled).
+  | 'pace-skip';
 
 export type RunSummary = {
   run_id: string;
@@ -157,10 +166,22 @@ export type DailyUsage = {
 
 // v0.9 capacity governor: pacing gate config. All optional — absent keys fall
 // back to pacing.ts defaults (enabled, haircut 0, DEFAULT_THRESHOLDS).
+export type WeekAnchor = {
+  day: 'Sunday' | 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday';
+  time: string; // 24-h HH:MM, e.g. '03:00'
+};
+
 export type PacingConfig = {
   enabled?: boolean;
   haircut?: number; // 0..1 manual blind-spot discount
   thresholds?: { skip_above?: number; small_above?: number; normal_above?: number };
+  // PIECE 1 (#3): the user's subscription week reset day/time. Absent → pacing
+  // keeps the Monday-00:00 calendar week. Threaded into recommendTier (pure).
+  week_anchor?: WeekAnchor;
+  // PIECE 2: morning anti-spill buffer in hours. > 0 → a drain refuses to start
+  // within this many hours before the user's typical first-prompt time. Absent /
+  // 0 → OFF (default).
+  morning_buffer_hours?: number;
 };
 
 export type GleanConfig = {

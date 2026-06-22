@@ -73,7 +73,10 @@ describe('prioritize', () => {
     expect(ranked.every((c) => c.type === 'fetch-docs')).toBe(true);
   });
 
-  it('soft-weights TODO candidates in vendor/ paths to 70%', () => {
+  // wave-2: the path penalty is now applied INSIDE score() rather than by
+  // mutating est_value, so the raw est_value a vendor/ candidate carries is left
+  // UNCHANGED (the 0.7 factor only affects ranking, never the stored value).
+  it('does NOT mutate est_value for vendor/ TODO candidates (penalty lives in score)', () => {
     const normal = c({
       type: 'research-dossier',
       est_value: 100,
@@ -88,6 +91,31 @@ describe('prioritize', () => {
     });
     prioritize([noisy, normal], 60 * 60_000, 0);
     expect(normal.est_value).toBe(100);
-    expect(noisy.est_value).toBe(70);
+    expect(noisy.est_value).toBe(100); // raw est_value untouched (penalty is in scoring only)
+  });
+
+  // wave-2 prerequisite: prioritize() must be IDEMPOTENT — callable multiple
+  // times with identical results. Previously it mutated c.est_value *= penalty,
+  // so a second call compounded the vendor penalty (0.7 → 0.49) and reordered.
+  it('is idempotent: calling twice yields identical order and est_values', () => {
+    const mk = () => [
+      c({ id: 'a', type: 'research-dossier', est_value: 80, est_tokens: 1000, evidence: { kind: 'todo', file: 'vendor/lib.ts', todo_lines: [{ line: 1, text: 'TODO' }] } }),
+      c({ id: 'b', type: 'research-dossier', est_value: 60, est_tokens: 1000, evidence: { kind: 'todo', file: 'src/x.ts', todo_lines: [{ line: 1, text: 'TODO' }] } }),
+      c({ id: 'd', type: 'fetch-docs', est_value: 30, est_tokens: 1000, evidence: { kind: 'dep', manifest: 'package.json', package: 'p', added_at: 'now' } }),
+    ];
+    // Re-ranking the SAME array twice (the in-run re-rank path) must be stable.
+    const arr = mk();
+    const first = prioritize(arr, 60 * 60_000, 0).map((x) => ({ id: x.id, ev: x.est_value }));
+    const second = prioritize(arr, 60 * 60_000, 0).map((x) => ({ id: x.id, ev: x.est_value }));
+    expect(second).toEqual(first);
+  });
+
+  // The vendor penalty must still change RANKING (a vendor TODO loses to an
+  // equal-raw-value non-vendor TODO), even though est_value is no longer mutated.
+  it('still ranks a vendor/ TODO below an equal-value non-vendor TODO', () => {
+    const noisy = c({ id: 'noisy', type: 'research-dossier', est_value: 100, est_tokens: 1000, evidence: { kind: 'todo', file: 'vendor/lib.ts', todo_lines: [{ line: 1, text: 'TODO' }] } });
+    const clean = c({ id: 'clean', type: 'research-dossier', est_value: 100, est_tokens: 1000, evidence: { kind: 'todo', file: 'src/x.ts', todo_lines: [{ line: 1, text: 'TODO' }] } });
+    const ranked = prioritize([noisy, clean], 60 * 60_000, 0);
+    expect(ranked[0].id).toBe('clean');
   });
 });

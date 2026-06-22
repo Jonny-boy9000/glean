@@ -186,6 +186,13 @@ export function outcomeLine(reason: string | null, c: Painter): string {
       // "drained" or "weekly" (honesty rule) — it deliberately did NOT work, to
       // avoid spilling into next week's fresh allowance.
       return c.dim('Outcome: held off near the upcoming reset (anti-spill margin).');
+    case 'morning-anti-spill':
+      // PIECE 2: held off before the user's typical first prompt. Deliberately
+      // did NOT work, to leave fresh morning capacity untouched (honesty rule).
+      return c.dim('Outcome: held off before your typical first prompt (morning buffer).');
+    case 'pace-skip':
+      // PIECE 3: the pacing gate said there is no slack this week → spent nothing.
+      return c.dim('Outcome: skipped by the pacing gate (no slack this week).');
     default:
       return c.dim(`Outcome: ${reason ?? 'unknown'}.`);
   }

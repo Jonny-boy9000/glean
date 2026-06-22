@@ -9,6 +9,21 @@ import type { GleanConfig, ProjectPriority } from './types.js';
 const TASK_TYPES = ['fetch-docs', 'research-dossier', 'draft-impl'] as const;
 const TaskTypeKey = z.enum(TASK_TYPES);
 
+// PIECE 1 (#3): validators for pacing.week_anchor (the user's subscription week
+// reset). Mirror schedule.ts's weekday whitelist + 24-h HH:MM rule so the two
+// "day/time" surfaces validate identically. zod refinements keep the field
+// optional and only reject a PRESENT-but-malformed value.
+const WEEKDAY_NAMES = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+] as const;
+const WeekAnchor = z.object({
+  day: z.enum(WEEKDAY_NAMES),
+  time: z.string().regex(/^(\d{2}):(\d{2})$/).refine((t) => {
+    const [hh, mm] = t.split(':').map(Number);
+    return hh <= 23 && mm <= 59;
+  }, 'must be 24-hour HH:MM (e.g. 03:00)'),
+});
+
 const Schema = z.object({
   claude_bin: z.string().optional(),
   // v0.9 model routing: per-task-type model (alias like 'sonnet' or a full
@@ -59,6 +74,15 @@ const Schema = z.object({
       small_above: z.number().optional(),
       normal_above: z.number().optional(),
     }).optional(),
+    // PIECE 1 (#3): the user's subscription week reset (e.g. Saturday 03:00).
+    // Absent → pacing.ts keeps the Monday-00:00 calendar week (fully backward
+    // compatible). Threaded into recommendTier as `weekAnchor` (pacing stays pure).
+    week_anchor: WeekAnchor.optional(),
+    // PIECE 2: morning anti-spill buffer (hours). > 0 → a drain refuses to START
+    // within this many hours BEFORE the user's typical first-prompt time, so prep
+    // finishes before the workday. Absent / 0 → feature OFF (default). Fractional
+    // hours allowed; must be >= 0.
+    morning_buffer_hours: z.number().min(0).optional(),
   }).optional(),
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "@jonny-boy9000/glean",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Consume idle Claude Pro/Max capacity for speculative prep work between sessions",
   "type": "module",
   "license": "MIT",

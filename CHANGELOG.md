@@ -4,6 +4,24 @@
 
 _Nothing yet._
 
+## v0.10.0 — 2026-06-22
+
+The **strategy-driven moat wave.** A competitive review (verified research + a codebase coupling audit) found the platform owner now ships first-party scheduled Claude agents (Routines + Desktop tasks) — so the *scheduling shell* is commodity, but Glean's **local cross-project discovery + idle-capacity-drain economics** are uncontested. This release doubles down on that wedge: deeper capacity governance, smarter looping, and a documented API-mode seam — while staying narrow, subscription-only, and Claude-native by design. Strategy: `docs/strategy/2026-06-22-next-wave-strategy.md`. **801 tests + 7 skips.**
+
+### Added
+- **User-input subscription week anchor.** Optional `config.json` `pacing.week_anchor: { day, time }` (e.g. Saturday 03:00). Pacing previously assumed a Monday calendar week and only learned the real reset *reactively* from the rate-limit signal — so a user whose week resets on another day was mismodeled until the first block. The anchor is threaded into the pacing week boundary + baseline and used as the weekly-reset fallback in the drain. Absent → byte-identical to the prior Monday-calendar behavior.
+- **Morning anti-spill margin.** Opt-in `config.json` `pacing.morning_buffer_hours` (default 0 = off). glean refuses to *start* a drain burst within N hours before the user's **typical first-prompt time** — the median local time-of-day of the first human message per active day, derived from session history (`src/lib/activity.ts`, glean's own spawned sessions excluded). No-ops on thin data (< ~5 active days). New drain exit reason `morning-anti-spill` (never counted as unproductive).
+- **Nightly pace-gated drain.** When `pacing.enabled`, the drain consults `recommendTier()` (ADR-0005/0007 pacing) at burst start and exits cleanly with reason `pace-skip` when the week is ahead of pace — so a nightly schedule can fire daily but only spends capacity when there's slack. `glean schedule {enable|disable|status} --nightly` registers a separate daily `Glean\Nightly` task (Windows full; Linux registration is a clear "Windows-only for now" message — the pace-gate itself is cross-platform). The weekly drain path is untouched.
+- **`glean doctor`** (carried from the v0.9.0 review prep, now released): environment preflight (Node ≥ 20, `claude` on PATH, git, gh optional, config, `better-sqlite3` load); exits non-zero if a hard requirement is missing.
+
+### Changed
+- **Smarter execution loop (in-run re-ranking).** The candidate loop now re-ranks the remaining pool each tick against the live remaining budget and **defers tasks too large to finish** in the time left (`src/lib/select-next.ts`), instead of a crude "fetch-docs-only in the last 5 min" gate. With ample budget and no failures the order is identical to before (regression-pinned). A task **type that fails ≥ 2× in a run is soft-downweighted** (×0.3, not skipped) so the budget tail isn't burned on a type that's clearly not working this session. Pure/in-memory; no `claude -p` triage probe (heuristic-only ranking, per CLAUDE.md).
+- **Idempotent ranking.** `prioritize()` no longer mutates `est_value` (the path penalty now lives in `score()`), removing a footgun that made re-ranking double-penalize.
+
+### Security / deps
+- **Spawn-backend seam ([ADR-0008](./docs/decisions/0008-spawn-backend-seam.md)).** A type-checked `SpawnBackend` interface + `subscriptionBackend` conformance marks exactly where an **opt-in API-key backend** would slot in — a *designed-but-unbuilt hedge* against Anthropic un-pausing metered `claude -p` billing (the 2026-06-15 pause). Subscription-auth stays the only implemented backend; the deny-list safety boundary is unchanged (still argv-asserted). Multi-LLM is explicitly out of scope (a separate product, not a backend).
+- `npm audit fix` cleared js-yaml (moderate). The remaining advisories are all **dev-only** dependencies (esbuild←vite←vitest, minimatch←@typescript-eslint) that never ship in the published package (`files: bin/dist/templates`); their fixes require major dev-tooling bumps (vitest 1→4, typescript-eslint 6→8) tracked for a dedicated PR.
+
 ## v0.9.0 — 2026-06-22
 
 The **capacity governor** milestone: glean now *measures* its own weekly pacing, routes speculative work to the cheaper-on-cap Sonnet pool, mines each project's own planning docs for work, and keeps the dashboard always-on — plus a full-project review hardening pass that closed a branch leak, a dedup-suppression bug, a loopback-host bug, and a PowerShell-injection vector. Prepped on branch `chore/full-review-improvements`; npm publish is a separate step. **739 tests + 7 skips.**

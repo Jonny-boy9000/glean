@@ -254,3 +254,71 @@ describe('BLIND_SPOT_NOTE', () => {
     expect(BLIND_SPOT_NOTE).toMatch(/other machines/i);
   });
 });
+
+// PIECE 1 (#3): user-input subscription week anchor. An optional weekAnchor
+// shifts the "week" boundary (and the baseline window) to start at the
+// configured day/time instead of Monday 00:00. Pure — anchor is passed in.
+describe('weekStart — with a week anchor', () => {
+  it('Saturday-03:00 anchor: a Wednesday belongs to the prior Saturday', () => {
+    // now = Wed 2026-06-10 12:00. Most recent Saturday 03:00 is Sat 2026-06-06.
+    const ws = weekStart(at(2026, 6, 10), { day: 'Saturday', time: '03:00' });
+    expect([ws.getFullYear(), ws.getMonth(), ws.getDate()]).toEqual([2026, 5, 6]);
+    expect([ws.getHours(), ws.getMinutes()]).toEqual([3, 0]);
+    expect(ws.getDay()).toBe(6); // Saturday
+  });
+
+  it('on the anchor day BEFORE the anchor time, the week started a week earlier', () => {
+    // now = Sat 2026-06-13 at 01:00 (before 03:00) → week started Sat 2026-06-06 03:00.
+    const ws = weekStart(new Date(2026, 5, 13, 1, 0), { day: 'Saturday', time: '03:00' });
+    expect(ws.getDate()).toBe(6);
+  });
+
+  it('on the anchor day AT/AFTER the anchor time, the week starts today', () => {
+    // now = Sat 2026-06-13 at 05:00 (after 03:00) → week started Sat 2026-06-13 03:00.
+    const ws = weekStart(new Date(2026, 5, 13, 5, 0), { day: 'Saturday', time: '03:00' });
+    expect(ws.getDate()).toBe(13);
+    expect(ws.getHours()).toBe(3);
+  });
+
+  it('no anchor is byte-identical to the Monday-00:00 calendar week', () => {
+    const a = weekStart(at(2026, 6, 10));
+    const b = weekStart(at(2026, 6, 10), undefined);
+    expect(a.getTime()).toBe(b.getTime());
+  });
+});
+
+describe('recommendTier — with a week anchor', () => {
+  // Saturday-03:00 anchor. now = Wed 2026-06-10 → week started Sat 2026-06-06.
+  // Baseline window = the 4 anchor-weeks before, starting Sat 2026-05-09 03:00.
+  // Anchor-week weekday 0 = Saturday; the current week through Wed spans
+  // Sat,Sun,Mon,Tue,Wed (5 rows).
+  function anchorBaseline(): DailyUsage[] {
+    return [
+      // Saturdays of the 4 baseline weeks: 05-09, 05-16, 05-23, 05-30 → 100,200,300,400 → median 250
+      day('2026-05-09', 100), day('2026-05-16', 200), day('2026-05-23', 300), day('2026-05-30', 400),
+      // history anchor so the 14-day cold-start guard is satisfied
+      day('2026-04-25', 1),
+    ];
+  }
+
+  it('the current-week rows start on the anchor weekday (Sat)', () => {
+    const rec = recommendTier({
+      days: [...anchorBaseline(), day('2026-06-06', 500)], // Sat this anchor-week
+      now: at(2026, 6, 10),
+      weekAnchor: { day: 'Saturday', time: '03:00' },
+    });
+    expect(rec.week[0].weekday).toBe('Sat');
+    expect(rec.week[0].date).toBe('2026-06-06');
+    expect(rec.week[0].actual).toBe(500);
+    expect(rec.week[0].baseline).toBe(250); // median of 100,200,300,400
+    expect(rec.week).toHaveLength(5); // Sat..Wed
+    expect(rec.week[4].weekday).toBe('Wed');
+  });
+
+  it('no anchor produces the identical recommendation to today (no drift)', () => {
+    const days = [...baselineDays(), day('2026-06-08', 600), day('2026-06-09', 400)];
+    const withUndef = recommendTier({ days, now: at(2026, 6, 10), weekAnchor: undefined });
+    const without = recommendTier({ days, now: at(2026, 6, 10) });
+    expect(withUndef).toEqual(without);
+  });
+});

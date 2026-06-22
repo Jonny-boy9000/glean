@@ -211,6 +211,10 @@ describe('renderMorning — v0.8 drain exit reasons (T6)', () => {
     ['weekly-drained',   /drained weekly capacity/i],
     // v0.8.2 item 3: anti-spill held off near the weekly reset.
     ['anti-spill',       /anti-spill margin/i],
+    // PIECE 2: morning anti-spill held off before the typical first prompt.
+    ['morning-anti-spill', /typical first prompt/i],
+    // PIECE 3: pacing gate found no slack this week.
+    ['pace-skip',        /pacing gate/i],
   ];
 
   for (const [reason, re] of drainCases) {
@@ -225,7 +229,7 @@ describe('renderMorning — v0.8 drain exit reasons (T6)', () => {
     expect(weeklyDrainedOut).toContain('drained');
 
     // Every other v0.8 reason must NOT claim the week was drained.
-    const nonDrainReasons = ['session-paused', 'no-progress', 'ambiguous-signal', 'discovery-failed', 'anti-spill'];
+    const nonDrainReasons = ['session-paused', 'no-progress', 'ambiguous-signal', 'discovery-failed', 'anti-spill', 'morning-anti-spill', 'pace-skip'];
     for (const reason of nonDrainReasons) {
       const out = renderMorning(baseReport({ exit_reason: reason }), false).toLowerCase();
       expect(out, `exit_reason '${reason}' must not claim week was drained`).not.toContain('drained');
