@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-22 (v0.9.0 prepped on branch `chore/full-review-improvements`; 739 tests + 7 skips).
+> **Last updated:** 2026-06-22 (v0.10.0 published — capacity-governor wave-2 + discovery optimization; 801 tests + 7 skips).
 
 ---
 
