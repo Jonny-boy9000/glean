@@ -17,6 +17,12 @@ import {
   SYSTEMD_SERVICE,
   SYSTEMD_TIMER,
   CRON_MARKER,
+  // PIECE 3: nightly pace-gated drain task.
+  buildNightlyRegisterScript,
+  buildNightlyStatusScript,
+  buildNightlyUnregisterCommand,
+  NIGHTLY_TASK_NAME,
+  DEFAULT_NIGHTLY_TIME,
 } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -352,6 +358,73 @@ describe('buildRegisterScript — injection hardening (F3)', () => {
     // A lone path backtick is doubled to a literal backtick (``), so it can't
     // form an escape like `n / `t against the next char.
     expect(script).toContain('C:\\a``b\\glean.js');
+  });
+});
+
+// ===========================================================================
+// PIECE 3: nightly pace-gated drain — a SEPARATE Glean\Nightly DAILY task that
+// runs `glean run --drain` every night. The drain self-gates on the pacing tier
+// (pace-skip when there's no slack), so a daily fire is safe. The weekly path is
+// untouched. These builders are pure strings, runnable on every OS.
+// ===========================================================================
+
+describe('buildNightlyRegisterScript — daily Glean\\Nightly task', () => {
+  // Lazy import keeps these symbols out of the main import block if absent.
+  function build(overrides: Partial<Parameters<typeof buildRegisterScript>[0]> = {}) {
+    return buildNightlyRegisterScript(makeOpts(overrides));
+  }
+
+  it('registers the Glean\\Nightly task (separate from Glean\\Drain)', () => {
+    const script = build();
+    expect(script).toContain(NIGHTLY_TASK_NAME); // 'Glean\\Nightly'
+    expect(script).not.toContain(TASK_NAME);     // never touches Glean\Drain
+  });
+
+  it('uses a DAILY trigger (not weekly)', () => {
+    const script = build();
+    expect(script).toContain('-Daily');
+    expect(script).not.toContain('-Weekly');
+  });
+
+  it('runs node <cliEntry> run --drain --project <path> (no .cmd shim)', () => {
+    const script = build({ projectPath: 'C:\\Projects\\app' });
+    expect(script).toContain('run --drain --project');
+    expect(script).toContain('C:\\Projects\\app');
+    expect(script).not.toContain('glean.cmd');
+  });
+
+  it('defaults to a nightly time and respects an override', () => {
+    expect(build()).toContain(`"${DEFAULT_NIGHTLY_TIME}"`);
+    expect(build({ time: '02:15' })).toContain('"02:15"');
+  });
+
+  it('registers with -Force for idempotency', () => {
+    expect(build()).toContain('Register-ScheduledTask');
+    expect(build()).toContain('-Force');
+  });
+
+  it('validates day/time (injection hardening, like the weekly builder)', () => {
+    expect(() => build({ time: '$(calc)' })).toThrow(/time/i);
+    expect(() => build({ time: '25:00' })).toThrow(/time/i);
+  });
+
+  it('is pure + deterministic', () => {
+    const opts = makeOpts();
+    expect(buildNightlyRegisterScript(opts)).toBe(buildNightlyRegisterScript(opts));
+  });
+});
+
+describe('nightly status / unregister builders — split path + leaf', () => {
+  it('buildNightlyStatusScript queries by -TaskPath \\Glean\\ + -TaskName Nightly', () => {
+    const script = buildNightlyStatusScript();
+    expect(script).toContain("Get-ScheduledTask -TaskPath '\\Glean\\' -TaskName 'Nightly'");
+    expect(script).not.toContain("-TaskName 'Glean\\Nightly'");
+  });
+
+  it('buildNightlyUnregisterCommand deletes by split path + leaf', () => {
+    const cmd = buildNightlyUnregisterCommand();
+    expect(cmd).toContain("Unregister-ScheduledTask -TaskPath '\\Glean\\' -TaskName 'Nightly'");
+    expect(cmd).toContain('-Confirm:$false');
   });
 });
 

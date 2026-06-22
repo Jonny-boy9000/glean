@@ -152,6 +152,58 @@ describe('loadConfig pacing', () => {
   });
 });
 
+// PIECE 1 (#3): user-input subscription week anchor — pacing.week_anchor {day,time}.
+describe('loadConfig pacing.week_anchor', () => {
+  it('parses a valid week_anchor (day + HH:MM)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { week_anchor: { day: 'Saturday', time: '03:00' } } }));
+    const cfg = loadConfig(p);
+    expect(cfg.pacing?.week_anchor).toEqual({ day: 'Saturday', time: '03:00' });
+  });
+
+  it('leaves week_anchor undefined when absent (backward compatible)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { enabled: true } }));
+    expect(loadConfig(p).pacing?.week_anchor).toBeUndefined();
+  });
+
+  it('rejects an invalid weekday name', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { week_anchor: { day: 'Funday', time: '03:00' } } }));
+    expect(() => loadConfig(p)).toThrow(/week_anchor/);
+  });
+
+  it('rejects a malformed time', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { week_anchor: { day: 'Saturday', time: '3am' } } }));
+    expect(() => loadConfig(p)).toThrow(/week_anchor/);
+  });
+
+  it('rejects an out-of-range time (25:00)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { week_anchor: { day: 'Saturday', time: '25:00' } } }));
+    expect(() => loadConfig(p)).toThrow(/week_anchor/);
+  });
+});
+
+// PIECE 2: morning anti-spill buffer (opt-in; default 0 = off).
+describe('loadConfig pacing.morning_buffer_hours', () => {
+  it('parses a positive morning_buffer_hours', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { morning_buffer_hours: 2 } }));
+    expect(loadConfig(p).pacing?.morning_buffer_hours).toBe(2);
+  });
+
+  it('accepts a fractional buffer (1.5h)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { morning_buffer_hours: 1.5 } }));
+    expect(loadConfig(p).pacing?.morning_buffer_hours).toBe(1.5);
+  });
+
+  it('leaves morning_buffer_hours undefined when absent (off by default)', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { enabled: true } }));
+    expect(loadConfig(p).pacing?.morning_buffer_hours).toBeUndefined();
+  });
+
+  it('rejects a negative buffer', () => {
+    const p = tmpFile(JSON.stringify({ pacing: { morning_buffer_hours: -1 } }));
+    expect(() => loadConfig(p)).toThrow(/morning_buffer_hours/);
+  });
+});
+
 // v0.9 model routing (ADR-0006): per-task-type model + max-turns maps, plus
 // the pacing_promote list ('large' tier route-up eligibility).
 describe('loadConfig model routing keys', () => {

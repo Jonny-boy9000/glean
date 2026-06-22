@@ -97,6 +97,9 @@ export type RecommendOpts = {
   haircut?: number;
   thresholds?: Partial<TierThresholds>;
   weights?: Partial<Record<ModelFamily, number>>;
+  // PIECE 1 (#3): the user's subscription week reset day/time. Absent → the
+  // Monday-00:00 calendar week (byte-identical to pre-anchor behavior).
+  weekAnchor?: WeekAnchor;
 };
 
 /** Honest blind-spot disclosure rendered by `glean usage` (design-mandated). */
@@ -115,13 +118,51 @@ export function weighDay(
   return (Object.keys(tokens) as ModelFamily[]).reduce((sum, f) => sum + tokens[f] * (w[f] ?? 1), 0);
 }
 
-/** Local Monday 00:00 of `now`'s calendar week (ISO: Sunday is day 7). */
-export function weekStart(now: Date): Date {
-  const backToMonday = (now.getDay() + 6) % 7;
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - backToMonday);
+// PIECE 1 (#3): the user's subscription week reset. When supplied, the "week"
+// starts at this day/time instead of Monday 00:00. Pure — passed in, never read
+// from disk here. getDay() index: Sunday 0 … Saturday 6.
+export type WeekAnchor = { day: string; time: string };
+
+const DAY_INDEX: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+/**
+ * Local week start of `now`'s week.
+ * - No anchor → Monday 00:00 of `now`'s calendar week (ISO: Sunday is day 7).
+ * - With anchor → the most recent `<anchor.day> <anchor.time>` at or before
+ *   `now` (e.g. Saturday 03:00). On the anchor day before the anchor time, the
+ *   week started a week earlier.
+ */
+export function weekStart(now: Date, anchor?: WeekAnchor): Date {
+  if (!anchor) {
+    const backToMonday = (now.getDay() + 6) % 7;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - backToMonday);
+  }
+  const anchorDow = DAY_INDEX[anchor.day.toLowerCase()] ?? 1;
+  const [ah, am] = anchor.time.split(':').map(Number);
+  // Days since the most recent occurrence of the anchor weekday (0..6).
+  let back = (now.getDay() - anchorDow + 7) % 7;
+  // On the anchor day itself, if we're still BEFORE the anchor time, the
+  // current week's boundary is the PREVIOUS week's occurrence.
+  if (back === 0) {
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin < ah * 60 + am) back = 7;
+  }
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, ah, am);
 }
 
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// Labels for the seven days of a week, indexed from the week's FIRST day.
+// No anchor → Monday-first. With anchor → rotated so index 0 is the anchor day.
+const MON_FIRST_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const SUN_FIRST_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function weekdayLabels(anchor?: WeekAnchor): string[] {
+  if (!anchor) return MON_FIRST_LABELS;
+  const anchorDow = DAY_INDEX[anchor.day.toLowerCase()] ?? 1;
+  // Rotate the Sunday-indexed labels so position 0 is the anchor weekday.
+  return Array.from({ length: 7 }, (_, i) => SUN_FIRST_LABELS[(anchorDow + i) % 7]);
+}
 
 function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
@@ -167,10 +208,16 @@ export function recommendTier(opts: RecommendOpts): TierRecommendation {
     weighted.set(d.date, (weighted.get(d.date) ?? 0) + weighDay(d.tokens, opts.weights));
   }
 
-  // Baseline: per-weekday median over the 4 complete calendar weeks before
-  // this one. The window starts on a Monday, so day i's weekday index is i%7.
-  const monday = weekStart(now);
-  const windowStart = addDays(monday, -28);
+  // Baseline: per-weekday median over the 4 complete weeks before this one. The
+  // window starts on the week's FIRST day (Monday by default, or the anchor
+  // weekday), so day i's index is i%7. PIECE 1 (#3): `weekAnchor` shifts the
+  // week boundary; absent → the prior Monday-00:00 calendar week (identical).
+  const labels = weekdayLabels(opts.weekAnchor);
+  // Day-granular start: the week's first calendar DAY at local midnight, so the
+  // whole-day addDays/localDateKey accounting is unaffected by the anchor TIME.
+  const start = weekStart(now, opts.weekAnchor);
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const windowStart = addDays(startDay, -28);
   const perWeekday: number[] = [];
   for (let wd = 0; wd < 7; wd++) {
     const samples: number[] = [];
@@ -180,12 +227,13 @@ export function recommendTier(opts: RecommendOpts): TierRecommendation {
     perWeekday.push(median4(samples));
   }
 
-  // Current week rows, Monday through today (local days).
-  const todayIdx = (now.getDay() + 6) % 7;
+  // Current week rows, week-start through today (local days).
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayIdx = daysBetween(startDay, todayMidnight);
   const week: WeekRow[] = [];
   for (let wd = 0; wd <= todayIdx; wd++) {
-    const date = localDateKey(addDays(monday, wd));
-    week.push({ date, weekday: WEEKDAY_LABELS[wd], actual: weighted.get(date) ?? 0, baseline: perWeekday[wd] });
+    const date = localDateKey(addDays(startDay, wd));
+    week.push({ date, weekday: labels[wd], actual: weighted.get(date) ?? 0, baseline: perWeekday[wd] });
   }
   const currentCum = week.reduce((s, r) => s + r.actual, 0);
   const baselineCum = week.reduce((s, r) => s + r.baseline, 0);
@@ -229,7 +277,7 @@ export function recommendTier(opts: RecommendOpts): TierRecommendation {
       'skip',
       null,
       null,
-      `${fmt(currentCum)} weighted tokens this week against a zero baseline through ${WEEKDAY_LABELS[todayIdx]} → skip`,
+      `${fmt(currentCum)} weighted tokens this week against a zero baseline through ${labels[todayIdx]} → skip`,
       false,
     );
   }
@@ -244,7 +292,7 @@ export function recommendTier(opts: RecommendOpts): TierRecommendation {
   const haircutNote = haircut > 0 ? ` (measured ${ratio.toFixed(2)} + haircut ${haircut})` : '';
   const reason =
     `pace ${effective.toFixed(2)}${haircutNote}: ${fmt(currentCum)} weighted tokens this week vs ` +
-    `${fmt(baselineCum)} baseline through ${WEEKDAY_LABELS[todayIdx]} → ${tier} (${TIER_BUDGET_MINUTES[tier]}m)`;
+    `${fmt(baselineCum)} baseline through ${labels[todayIdx]} → ${tier} (${TIER_BUDGET_MINUTES[tier]}m)`;
   return make(tier, ratio, effective, reason, false);
 }
 

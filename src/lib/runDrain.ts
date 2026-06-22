@@ -14,7 +14,8 @@
 // deterministic under test. All persisted timestamps are ISO UTC.
 
 import { randomUUID } from 'node:crypto';
-import type { RunSummary } from './types.js';
+import type { RunSummary, PacingConfig } from './types.js';
+import type { Tier } from './pacing.js';
 import type { DrainState } from './state.js';
 import {
   readDrainState,
@@ -52,7 +53,71 @@ export type DrainOpts = {
   // item 3: anti-spill pre-emptive margin, in minutes, before a known weekly
   // reset (default 15). A burst is held off inside this margin.
   antiSpillMarginMinutes?: number;
+  // PIECE 1 (#3): the user's configured subscription week reset (pacing.week_anchor).
+  // When a weekly block fires with NO observed reset_at, the fallback becomes the
+  // next anchor occurrence instead of the blind now+60h. Absent → now+60h.
+  weekAnchor?: { day: string; time: string };
+  // PIECE 2: morning anti-spill. When > 0 AND a typical-first-prompt time is
+  // known, a burst whose start falls within this many hours BEFORE that time is
+  // held off (reason 'morning-anti-spill'). Default 0 / absent → OFF.
+  morningBufferHours?: number;
+  // PIECE 2: the user's typical first-prompt time in minutes past LOCAL midnight
+  // (from activity.ts), or null when there's too little data → guard no-ops.
+  typicalFirstPromptMinutes?: number | null;
+  // PIECE 3: the loaded pacing config. The pace gate fires ONLY when
+  // `pacing.enabled === true`; absent / false → no gate (bare-drain behavior).
+  pacing?: PacingConfig;
+  // PIECE 3: injectable pace-tier resolver (test seam). Returns the recommended
+  // tier at burst start. Default reads local usage and calls recommendTier.
+  paceTier?: (pacing: PacingConfig) => Promise<Tier>;
 };
+
+// PIECE 3: default pace-tier resolver — reads the user's local JSONL usage and
+// asks the pacing engine for a tier. Lazy imports keep this off the bare-drain
+// (non-gated) and non-drain code paths entirely.
+async function defaultPaceTier(pacing: PacingConfig): Promise<Tier> {
+  const [{ loadDailyUsage }, { recommendTier }, { defaultClaudeProjectsDir }, { gleanRoot }] =
+    await Promise.all([
+      import('./usage.js'),
+      import('./pacing.js'),
+      import('./dashboard-data.js'),
+      import('./state.js'),
+    ]);
+  const now = new Date();
+  const days = loadDailyUsage(defaultClaudeProjectsDir(), {
+    gleanRoot: gleanRoot(),
+    sinceMs: now.getTime() - 42 * 86_400_000,
+  });
+  return recommendTier({
+    days,
+    now,
+    enabled: pacing.enabled,
+    haircut: pacing.haircut,
+    thresholds: pacing.thresholds,
+    weekAnchor: pacing.week_anchor,
+  }).tier;
+}
+
+// PIECE 1 (#3): the next local `<day> <time>` STRICTLY after `nowMs`. Pure;
+// returns an ISO UTC string (matching the rest of the persisted timestamps).
+// getDay(): Sunday 0 … Saturday 6.
+const ANCHOR_DAY_INDEX: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+export function nextWeekAnchorAfter(anchor: { day: string; time: string }, nowMs: number): string {
+  const target = ANCHOR_DAY_INDEX[anchor.day.toLowerCase()] ?? 1;
+  const [hh, mm] = anchor.time.split(':').map(Number);
+  const now = new Date(nowMs);
+  let delta = (target - now.getDay() + 7) % 7;
+  const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + delta, hh, mm);
+  // Must be STRICTLY in the future — if today is the anchor day but the time has
+  // already passed (or is exactly now), roll forward a full week.
+  if (candidate.getTime() <= nowMs) {
+    delta += 7;
+    candidate.setTime(new Date(now.getFullYear(), now.getMonth(), now.getDate() + delta, hh, mm).getTime());
+  }
+  return candidate.toISOString();
+}
 
 // Reasons that NEVER count toward the no-progress backstop (item 1): a transient
 // no-op (discovery hiccup / another burst held the lock / window not yet eligible)
@@ -141,6 +206,31 @@ export async function runDrain(
     return synthSummary('anti-spill', now, opts);
   }
 
+  // 3f. Morning anti-spill (PIECE 2): if a morning buffer is configured AND the
+  // user's typical first-prompt time is known, and now() falls within the buffer
+  // window BEFORE that time, hold off — so prep finishes before the workday and
+  // the drain doesn't bleed into fresh capacity. Opt-in (morningBufferHours > 0);
+  // thin data (typicalFirstPromptMinutes null) → no-op. A no-op tick (no burst,
+  // no state write) like guards 3a-3e; never counts toward the no-progress
+  // backstop (it's a deliberate hold, not a stall).
+  if (withinMorningBuffer(drainOpts.typicalFirstPromptMinutes, drainOpts.morningBufferHours, now)) {
+    return synthSummary('morning-anti-spill', now, opts);
+  }
+
+  // 3g. Pace gate (PIECE 3): when pacing is ENABLED, consult the pacing tier at
+  // burst start and self-gate. A nightly schedule can fire daily but only spend
+  // capacity when the user is UNDER pace; tier 'skip' means there's no slack this
+  // week → spend nothing (exit 0, reason 'pace-skip'). Strictly opt-in
+  // (pacing.enabled === true); absent/false pacing → no gate, byte-identical to a
+  // bare drain. A no-op tick (no burst, no state write) like guards 3a-3f.
+  if (drainOpts.pacing?.enabled === true) {
+    const resolveTier = drainOpts.paceTier ?? defaultPaceTier;
+    const tier = await resolveTier(drainOpts.pacing);
+    if (tier === 'skip') {
+      return synthSummary('pace-skip', now, opts);
+    }
+  }
+
   // ── 4. Eligible → run one burst ────────────────────────────────────────────
   const summary = await runBurst({ ...opts, completedTaskIds: state.completed_task_ids });
 
@@ -201,7 +291,14 @@ export async function runDrain(
   if (cls?.kind === 'weekly') {
     next.consecutive_ambiguous = 0;
     next.week_exhausted = true;
-    next.last_observed_weekly_reset = cls.reset_at ?? new Date(now() + DRAIN_DURATION_MS).toISOString();
+    // An OBSERVED reset_at always wins. Otherwise prefer the configured week
+    // anchor's next occurrence (PIECE 1 / #3), falling back to the blind now+60h
+    // only when no anchor is configured (the genuine blind spot).
+    next.last_observed_weekly_reset =
+      cls.reset_at ??
+      (drainOpts.weekAnchor
+        ? nextWeekAnchorAfter(drainOpts.weekAnchor, now())
+        : new Date(now() + DRAIN_DURATION_MS).toISOString());
     writeDrainState(opts.gleanRoot, next);
     summary.reason = 'weekly-drained';
     return summary;
@@ -278,6 +375,33 @@ function withinAntiSpillMargin(
   const marginMs = marginMinutes * 60_000;
   const t = now();
   return t >= resetMs - marginMs && t < resetMs;
+}
+
+// PIECE 2: true iff `now` falls within the half-open window
+// [firstPrompt - buffer, firstPrompt) for the NEXT upcoming typical-first-prompt
+// moment. `firstPromptMin` is minutes past LOCAL midnight (e.g. 540 = 09:00);
+// null (thin data) or a non-positive buffer → false (feature OFF / no-op). The
+// window is reconstructed in LOCAL time around `now`, checking today's occurrence
+// and tomorrow's, so a "now" just past midnight still sees the morning ahead.
+export function withinMorningBuffer(
+  firstPromptMin: number | null | undefined,
+  bufferHours: number | undefined,
+  now: () => number,
+): boolean {
+  if (firstPromptMin == null) return false;
+  if (!bufferHours || bufferHours <= 0) return false;
+  const bufferMs = bufferHours * 3600_000;
+  const t = now();
+  const d = new Date(t);
+  // Today's and tomorrow's first-prompt moments in local time.
+  for (const dayOffset of [0, 1]) {
+    const fp = new Date(
+      d.getFullYear(), d.getMonth(), d.getDate() + dayOffset,
+      Math.floor(firstPromptMin / 60), firstPromptMin % 60, 0,
+    ).getTime();
+    if (t >= fp - bufferMs && t < fp) return true;
+  }
+  return false;
 }
 
 function pastWeeklyReset(state: DrainState, now: () => number): boolean {
