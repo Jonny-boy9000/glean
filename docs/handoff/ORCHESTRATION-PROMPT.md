@@ -15,7 +15,7 @@ of a fresh session.
 **Do NOT use this prompt for:**
 - **Closing ADR-0001 (the real-block capture)** — that's blocked until the scheduled drain actually
   hits the weekly cap and `~/glean/logs/<run>/<task>.BLOCK-CAPTURE.txt` appears. See the live
-  [`post-v0.9.0-handoff.md`](./post-v0.9.0-handoff.md) (item 3) for the current framing; the dedicated
+  [`post-v0.10.0-handoff.md`](./post-v0.10.0-handoff.md) (item 2) for the current framing; the dedicated
   kickoff prompt is in the archived [`post-v0.8.2-handoff.md`](../archive/post-v0.8.2-handoff.md).
 - **Launch / demo-GIF** — needs you (recording, posting), not a subagent build. See the launch
   prompt in the archived [`post-v0.8.2-handoff.md`](../archive/post-v0.8.2-handoff.md).
@@ -31,8 +31,8 @@ of a fresh session.
 ```
 Build <TASK> for glean end to end, and you orchestrate it with the gstack + superpowers pipeline.
 
-Read first, in order: CLAUDE.md, docs/handoff/post-v0.9.0-handoff.md, docs/ROADMAP.md,
-docs/PROJECT-MAP.md, and any ADR in docs/decisions/ that touches the area you'll change. v0.9.0 is
+Read first, in order: CLAUDE.md, docs/handoff/post-v0.10.0-handoff.md, docs/ROADMAP.md,
+docs/PROJECT-MAP.md, and any ADR in docs/decisions/ that touches the area you'll change. v0.10.0 is
 prepped on branch `chore/full-review-improvements` (npm still publicly at v0.8.5). If <TASK> is "pick
 the top item", confirm the choice with me from docs/ROADMAP.md "Up next" before designing anything.
 
