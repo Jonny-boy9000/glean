@@ -343,6 +343,73 @@ describe('runPipeline', () => {
     expect(summary.ran).toBeGreaterThan(0);
     expect(summary.reason).toBe('completed');
   });
+
+  // ── wave-2 bounded execution loop: REGRESSION PIN ────────────────────────────
+  // The new in-run re-rank loop must, under no pressure (ample budget, no
+  // failures, static scores), pick tasks in EXACTLY the prioritized order
+  // candidates.json records. This is the core safety property: bare `glean run`
+  // is unchanged. We assert the task.start order in the orchestrator log equals
+  // the ranked order in candidates.json.
+  it('no-pressure: task.start order matches the prioritized candidates.json order', async () => {
+    const repo = tmpRepo();
+    // Add several more TODO files so there is a real multi-candidate ordering.
+    writeFileSync(join(repo, 'b.ts'), '// TODO: bbb\n// TODO: bbb2\nexport const b = 1;');
+    writeFileSync(join(repo, 'c.ts'), '// TODO: ccc\nexport const cc = 1;');
+    execSync('git add . && git commit -q -m more', { cwd: repo });
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      budgetMs: 60 * 60_000, // ample → no budget pressure
+      taskTimeoutMs: 10_000,
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.ran).toBeGreaterThan(1);
+    const rankedIds = (JSON.parse(readFileSync(join(root, 'state', summary.run_id, 'candidates.json'), 'utf8')).ranked as Array<{ id: string }>).map((c) => c.id);
+    const log = readFileSync(join(root, 'logs', summary.run_id, 'orchestrator.log'), 'utf8');
+    const startedIds = log.split('\n').filter((l) => l.includes('"evt":"task.start"')).map((l) => JSON.parse(l).task_id as string);
+    // The executed order is exactly the prioritized order (no deferral, no
+    // reordering) — the loop is byte-identical to the old fixed-iteration loop.
+    expect(startedIds).toEqual(rankedIds);
+    // And nothing was deferred for budget-fit under an ample budget.
+    expect(log).not.toContain('"evt":"task.defer_budget"');
+  });
+
+  // ── wave-2 budget-fit deferral ───────────────────────────────────────────────
+  // A candidate whose estimated cost cannot finish in the remaining wall-clock
+  // budget is DEFERRED (not started). We force this by setting an enormous
+  // per-task timeout (so the est_tokens→cost estimate clamps high) against a
+  // budget that is above the 5-min fetch-docs floor (so research-dossier
+  // candidates survive ranking) but below the estimated cost. Every candidate is
+  // deferred → nothing runs, a task.defer_budget event is logged, run completes.
+  it('budget-fit: defers candidates too big to finish, emitting task.defer_budget', async () => {
+    const repo = tmpRepo();
+    const root = mkdtempSync(join(tmpdir(), 'glean-root-'));
+    const summary = await runPipeline({
+      projectPath: repo,
+      gleanRoot: root,
+      claudeBin: FAKE_CLAUDE,
+      claudeEnv: { ...process.env, FAKE_CLAUDE_SCENARIO: join(__dirname, '..', '..', 'test', 'fixtures', 'scenarios', 'clean-exit.yaml') },
+      // 6-min budget: above the 5-min floor so research-dossier candidates rank,
+      // below the estimated cost (timeout * tokens/200k ≈ 450s > 360s).
+      budgetMs: 6 * 60_000,
+      taskTimeoutMs: 15_000_000, // huge timeout → est cost clamps far above the budget
+      dryRun: false,
+      templatesDir: join(__dirname, '..', '..', 'templates'),
+      projectsRoot: '/does-not-exist',
+    });
+    expect(summary.candidates_total).toBeGreaterThan(0); // candidates existed...
+    expect(summary.ran).toBe(0);                          // ...but none could finish in budget
+    expect(summary.reason).toBe('completed');
+    const log = readFileSync(join(root, 'logs', summary.run_id, 'orchestrator.log'), 'utf8');
+    expect(log).toContain('"evt":"task.defer_budget"');
+    // no task ever started — they were all deferred for budget-fit
+    expect(log.split('\n').filter((l) => l.includes('"evt":"task.start"')).length).toBe(0);
+  });
 });
 
 // v0.8.2 item 1: the triviality classifier the `productive` summary field is

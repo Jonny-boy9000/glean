@@ -11,6 +11,7 @@ import { discoverDeps } from './discover-deps.js';
 import { discoverDocs } from './discover-docs.js';
 import { filterRecentlyProduced } from './dedup.js';
 import { prioritize, scoreValue } from './prioritize.js';
+import { pickNext } from './select-next.js';
 import { executeOne } from './executor.js';
 import { resolveModel, type ModelRoutingConfig, type PaceTier } from './model-routing.js';
 import { acquireLock, releaseLock, isStopRequested, writeSummary, writeCandidatesJson, appendOrchestratorLog, ensureTemplatesDir, projectSlug } from './state.js';
@@ -177,9 +178,10 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
     for (const c of kept) c.est_value = scoreValue(c, {});
     // v0.7.0 thin slice: when a base_branch is configured, promote the single
     // highest est_value TODO candidate to draft-impl BEFORE ranking, so glean
-    // writes a reviewable branch instead of a dossier for it. Promoting here
-    // (rather than re-ranking) means prioritize() runs exactly once — calling it
-    // twice would apply the vendor/path est_value penalty twice.
+    // writes a reviewable branch instead of a dossier for it. It reads the RAW
+    // est_value (set by scoreValue above) — which prioritize() no longer mutates
+    // (wave-2: the path penalty moved into score(), so est_value is immutable and
+    // prioritize() is idempotent), so promotion is order-independent of ranking.
     if (opts.baseBranch) {
       const todos = kept.filter((c) => c.evidence.kind === 'todo');
       const top = todos.sort((a, b) => b.est_value - a.est_value)[0];
@@ -225,19 +227,53 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       return finalize();
     }
 
+    // v0.8 drain: skip candidates already completed in an earlier burst of this
+    // drain window, keyed on the STABLE evidence_hash (candidate ids are random
+    // per discovery). Inert when completedTaskIds is empty / bare `glean run`
+    // (nothing is skipped → pool == finalRanked, byte-identical). The dedup set is
+    // STATIC for the whole run, so pre-filtering here (in finalRanked order) emits
+    // the same skip_completed events the inline check used to, then leaves a clean
+    // executable pool for the budget-fit re-rank loop below.
+    const pool: Candidate[] = [];
     for (const c of finalRanked) {
-      // v0.8 drain: skip candidates already completed in an earlier burst of this
-      // drain window, keyed on the STABLE evidence_hash (candidate ids are random
-      // per discovery). Inert when completedTaskIds is empty / bare `glean run`.
       if (completedSet.has(c.evidence_hash)) {
         appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.skip_completed', evidence_hash: c.evidence_hash });
         continue;
       }
+      pool.push(c);
+    }
+
+    // wave-2 bounded execution-loop optimization. Instead of a fixed-order
+    // for-loop over finalRanked, re-rank the REMAINING pool before each task with
+    // the CURRENT remaining budget (prioritize() is now idempotent) and pick the
+    // top candidate that can still FINISH (budget-fit). A per-type failure tally
+    // accrued this run downweights a type that keeps failing. INVARIANT: with
+    // static scores, ample budget (remaining ≥ taskTimeoutMs) and no failures,
+    // pickNext reproduces finalRanked's order and defers nothing — so bare
+    // `glean run` is unchanged. New behavior only fires under budget pressure /
+    // repeated failures.
+    const typeFailures = new Map<Candidate['type'], number>();
+    while (pool.length > 0) {
       if (isStopRequested(opts.gleanRoot)) { reason = 'stop-sentinel'; exitCode = 30; break; }
       if (Date.now() - start >= opts.budgetMs) { reason = 'budget-exhausted'; exitCode = 10; break; }
-      // Skip research-dossier tasks when fewer than 5 min remain (fetch-docs are fast enough).
-      const remaining = opts.budgetMs - (Date.now() - start);
-      if (remaining < 5 * 60_000 && c.type !== 'fetch-docs') continue;
+      const remainingMs = opts.budgetMs - (Date.now() - start);
+
+      // Re-rank what's left with the live budget + failure tally, then take the
+      // top candidate that fits. Anything ranked above it that can't finish is
+      // deferred (logged + dropped from this tick's pool).
+      const { pick, deferred } = pickNext(pool, { remainingMs, taskTimeoutMs: opts.taskTimeoutMs, typeFailures });
+      for (const d of deferred) {
+        appendOrchestratorLog(opts.gleanRoot, runId, { evt: 'task.defer_budget', evidence_hash: d.evidence_hash, est_tokens: d.est_tokens, remaining_ms: remainingMs });
+      }
+      // No candidate fits the remaining budget (deferred everything, or the <5min
+      // floor left only non-fetch-docs). Nothing more can run this tick → stop.
+      if (!pick) break;
+      const c = pick;
+      // Remove the pick (and the just-deferred candidates) from the pool. The
+      // deferred ones can't fit a budget that only shrinks, so they won't fit a
+      // later tick either — dropping them keeps the loop bounded.
+      const consumed = new Set<Candidate>([c, ...deferred]);
+      for (let i = pool.length - 1; i >= 0; i--) if (consumed.has(pool[i])) pool.splice(i, 1);
 
       // v0.9 (ADR-0006): log the RESOLVED model on task.start — aliases drift
       // across model generations, so the receipt of WHAT actually ran must be
@@ -283,6 +319,15 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
       // permanently losing the task.
       if (result.status === 'ok' || result.status === 'ok-fallback') {
         completedHashes.push(c.evidence_hash);
+      }
+
+      // wave-2 adaptive downweighting: tally per-type FAILURE outcomes
+      // (failed/timeout/rate-limit) so the next pickNext re-rank can downweight a
+      // type that keeps failing this run (e.g. draft-impl repeatedly hitting env
+      // failures). In-memory, resets each run. Pure ranking nudge — the existing
+      // counters / ledger / rate-limit short-circuit below are untouched.
+      if (result.status === 'rate-limit' || result.status === 'timeout' || result.status === 'failed') {
+        typeFailures.set(c.type, (typeFailures.get(c.type) ?? 0) + 1);
       }
 
       if (result.status === 'rate-limit') {
