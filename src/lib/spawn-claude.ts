@@ -172,10 +172,30 @@ nowMs.impl = Date.now;
 export const __nowMs = nowMs;
 
 // ── Shared spawn helper ─────────────────────────────────────────────────────
+// The render-and-spawn inputs for one `claude -p` invocation. `deny` is the
+// load-bearing safety boundary (INVARIANT: appended unconditionally below as
+// `--disallowedTools`, argv-asserted by the F2 tests).
+export type RunClaudeOpts = { prompt: string; cwd: string; addDir: string | string[]; deny: string; allowedTools?: string };
+
+// SEAM[ADR-0008]: `runClaude` IS the SUBSCRIPTION spawn backend. Subscription-auth
+// is the headline and the only implemented backend; an opt-in API-key backend (the
+// hedge against metered `claude -p` billing — ADR-0008 + the 2026-06-22 strategy
+// memo) would implement this same contract and be selected explicitly in the
+// executor. Not built today — this interface only marks where it slots in.
+export interface SpawnBackend {
+  readonly kind: 'subscription' | 'api-key';
+  run(c: Candidate, ctx: RunClaudeCtx, opts: RunClaudeOpts): Promise<SpawnOutcome>;
+}
+
+// The only backend today. A future `apiKeyBackend: SpawnBackend` (ADR-0008) would
+// be selected in the executor by an explicit opt-in; this conformance type-checks
+// that `runClaude` satisfies the contract so the seam can't silently drift.
+export const subscriptionBackend: SpawnBackend = { kind: 'subscription', run: runClaude };
+
 export async function runClaude(
   c: Candidate,
   ctx: RunClaudeCtx,
-  opts: { prompt: string; cwd: string; addDir: string | string[]; deny: string; allowedTools?: string },
+  opts: RunClaudeOpts,
 ): Promise<SpawnOutcome> {
   const logDir = join(ctx.gleanRoot, 'logs', ctx.runId);
   mkdirSync(logDir, { recursive: true });
