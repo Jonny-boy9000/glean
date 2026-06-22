@@ -2,18 +2,8 @@ import { defineCommand, runMain } from 'citty';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { runPipeline } from './lib/pipeline.js';
-import { runDrain } from './lib/runDrain.js';
-import { findTodayDossiers } from './lib/today.js';
-import { renderToday } from './lib/render-today.js';
 import { writeStop, stopPath, gleanRoot, ensureDefaultConfig } from './lib/state.js';
 import { loadConfig, defaultConfigPath } from './lib/config.js';
-import { Memory } from './lib/memory.js';
-import { renderRateList } from './lib/rate.js';
-import { findPeekDossier } from './lib/peek.js';
-import { findMorningRun, writeReceipt } from './lib/morning.js';
-import { renderMorning } from './lib/render-morning.js';
-import { renderReceiptMarkdown } from './lib/render-receipt.js';
 import {
   enableSchedule,
   disableSchedule,
@@ -23,6 +13,30 @@ import {
   DEFAULT_REPEAT_MINUTES,
   DEFAULT_DURATION_HOURS,
 } from './lib/schedule.js';
+
+// F6: pipeline.js, runDrain.js, today.js, morning.js, peek.js, rate.js, repair.js
+// and memory.js are NOT imported at the top of this file. Each transitively pulls
+// in `better-sqlite3` — a native module that fails to load when a global install
+// lacks a matching prebuilt binding. Because citty's runMain walks this module's
+// import graph at process start, a static import here would make EVERY command
+// (even `version` / `--help` / `doctor` / `schedule status`) crash on a broken
+// binding. They are instead lazily `await import(...)`-ed inside the specific
+// command handlers that need sqlite, so non-sqlite commands never touch it.
+
+/**
+ * Dynamically import the memory module, tolerating a broken better-sqlite3
+ * native binding. Returns `null` (with a one-line stderr warning) instead of
+ * throwing, so a memory-backed command degrades to a no-op rather than crashing.
+ */
+async function loadMemoryCtor(): Promise<(typeof import('./lib/memory.js'))['Memory'] | null> {
+  try {
+    const mod = await import('./lib/memory.js');
+    return mod.Memory;
+  } catch (e) {
+    process.stderr.write(`warning: telemetry disabled (better-sqlite3 unavailable: ${(e as Error).message})\n`);
+    return null;
+  }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_TEMPLATES = join(__dirname, '..', 'templates');
@@ -81,16 +95,19 @@ const runCmd = defineCommand({
     };
     // --drain wraps the burst in the drain window state machine (eligibility
     // guards + classified rate-limit handling). Default is a single burst.
+    // F6: pipeline/runDrain are lazy-imported here (inside the handler, before any
+    // work) so bare `glean run` behavior is unchanged but startup stays sqlite-free.
     const summary = args.drain
-      ? await runDrain(pipelineOpts, undefined, undefined, {
+      ? await (await import('./lib/runDrain.js')).runDrain(pipelineOpts, undefined, undefined, {
           maxUnproductive: cfg.drain_trigger?.max_unproductive,
           antiSpillMarginMinutes: cfg.drain_trigger?.anti_spill_margin_minutes,
         })
-      : await runPipeline(pipelineOpts);
+      : await (await import('./lib/pipeline.js')).runPipeline(pipelineOpts);
     console.log(`run ${summary.run_id} ended: ${summary.reason} — ran=${summary.ran} skipped=${summary.skipped_dedup} failed=${summary.failed} timed_out=${summary.timed_out}`);
     // v0.8.1: refresh the durable, shareable RECEIPT.md for this run/drain window.
     // Best-effort (writeReceipt swallows its own errors); skip on dry-run.
     if (!args['dry-run']) {
+      const { writeReceipt } = await import('./lib/morning.js');
       const receiptPath = writeReceipt(gleanRoot());
       if (receiptPath) console.log(`receipt: ${receiptPath}`);
     }
@@ -136,7 +153,17 @@ const repairCmd = defineCommand({
 const todayCmd = defineCommand({
   meta: { name: 'today', description: 'Show today\'s glean dossiers across all projects' },
   async run() {
-    const report = findTodayDossiers(gleanRoot());
+    let mod: typeof import('./lib/today.js');
+    try {
+      mod = await import('./lib/today.js');
+    } catch (e) {
+      // F6: a broken better-sqlite3 binding throws at import. Degrade with a clear
+      // one-line warning instead of dumping a native-module stack trace.
+      process.stderr.write(`warning: telemetry disabled (better-sqlite3 unavailable: ${(e as Error).message})\n`);
+      return;
+    }
+    const { renderToday } = await import('./lib/render-today.js');
+    const report = mod.findTodayDossiers(gleanRoot());
     const useColor = Boolean(process.stdout.isTTY);
     process.stdout.write(renderToday(report, useColor) + '\n');
   },
@@ -150,6 +177,14 @@ const rateCmd = defineCommand({
     verdict: { type: 'positional', required: false, description: 'kept | discarded | actioned' },
   },
   async run({ args }) {
+    const Memory = await loadMemoryCtor();
+    if (!Memory) {
+      // F6: a broken native binding leaves rating unavailable; degrade with a
+      // clear non-zero exit rather than crashing at import time.
+      process.stderr.write('error: cannot rate — telemetry/memory is unavailable\n');
+      process.exit(1);
+    }
+    const { renderRateList } = await import('./lib/rate.js');
     const memory = new Memory(join(gleanRoot(), 'memory.db'));
     try {
       if (args.list) {
@@ -192,12 +227,15 @@ const peekCmd = defineCommand({
   },
   async run() {
     try {
+      const { findPeekDossier } = await import('./lib/peek.js');
+      const { renderToday } = await import('./lib/render-today.js');
       const report = findPeekDossier(gleanRoot(), process.cwd());
       if (report === null) return;  // exit 0, no output
       const useColor = Boolean(process.stdout.isTTY);
       process.stdout.write(renderToday(report, useColor) + '\n');
     } catch {
       // Silent: exit 0 no matter what. Hook commands must never break a session.
+      // A broken better-sqlite3 binding lands here too (import throws) → no-op.
     }
   },
 });
@@ -212,19 +250,23 @@ const morningCmd = defineCommand({
   },
   async run({ args }) {
     try {
+      const { findMorningRun } = await import('./lib/morning.js');
       const report = findMorningRun(gleanRoot());
       if (report === null) {
         process.stdout.write('No recent glean run to report.\n');
         return;
       }
       if (args.md) {
+        const { renderReceiptMarkdown } = await import('./lib/render-receipt.js');
         process.stdout.write(renderReceiptMarkdown(report) + '\n');
         return;
       }
+      const { renderMorning } = await import('./lib/render-morning.js');
       const useColor = Boolean(process.stdout.isTTY);
       process.stdout.write(renderMorning(report, useColor) + '\n');
     } catch {
-      // Silent-degrade like peek: a missing/corrupt memory.db must never throw.
+      // Silent-degrade like peek: a missing/corrupt memory.db (or a broken
+      // better-sqlite3 binding — the dynamic import throws here) must never throw.
       process.stdout.write('No recent glean run to report.\n');
     }
   },
@@ -562,6 +604,23 @@ const serveCmd = defineCommand({
   },
 });
 
+const doctorCmd = defineCommand({
+  meta: {
+    name: 'doctor',
+    description: 'Preflight: check Node, the claude CLI, git/gh, config, and the better-sqlite3 binding. Exits non-zero if a hard requirement fails.',
+  },
+  async run() {
+    // D5: doctor must work even when better-sqlite3 is broken (that's the point),
+    // so doctor.js is lazy-imported and probes sqlite via try/catch.
+    const { runDoctor, summarizeDoctor, renderDoctor, defaultDoctorProbes } = await import('./lib/doctor.js');
+    const probes = await defaultDoctorProbes();
+    const checks = runDoctor(probes);
+    const useColor = Boolean(process.stdout.isTTY);
+    process.stdout.write(renderDoctor(checks, useColor) + '\n');
+    process.exit(summarizeDoctor(checks).exitCode);
+  },
+});
+
 const gcCmd = defineCommand({
   meta: { name: 'gc', description: 'Expire draft-impl worktrees + prep/glean-* branches older than 21 days' },
   args: {
@@ -589,7 +648,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, doctor: doctorCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd },
 });
 
 export function main(argv: string[]): void {
