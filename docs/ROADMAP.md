@@ -2,9 +2,9 @@
 
 > Single source of truth for planned work. Each entry links to the spec, dogfood doc, or critique that originated it. Update on every release and whenever an item is added, deferred, or completed.
 
-**Last updated:** 2026-06-12 (v0.8.4 released: PRs #15–#19 merged; Terra Firma live test run)
-**Current release:** **v0.8.5 published to npm** (`@jonny-boy9000/glean@0.8.5`, PRs #15–#23, tag `v0.8.5`) — the `glean serve` management dashboard + capacity panel, Linux beta (systemd user timers), drain-resilience fixes (honest dedup ledger + structured-429 short-circuit, ADR-0003), dossier read-scope (ADR-0002 Accepted), docs consolidation. 538 tests + 6 skips (4 Linux-gated).
-**Branch state:** `main` at v0.8.5, clean.
+**Last updated:** 2026-06-22 (v0.9.0 prepped on branch `chore/full-review-improvements`: v0.9 capacity-governor wave-1 + the 2026-06-22 full-project-review hardening)
+**Current release:** **v0.9.0 prepped, not yet published** (npm still publicly at `@jonny-boy9000/glean@0.8.5`; the user publishes 0.9.0 separately). v0.9.0 bundles capacity-governor wave-1 (`glean usage` + pacing engine, per-spawn model routing + `--max-turns`, `discover-docs` 4th pass, project portfolio, always-on dashboard) and the review hardening (gc branch-leak fix, dedup status fix, IPv6-loopback host-check fix, PowerShell injection hardening, lazy `better-sqlite3`, new `glean doctor`, `uuid` dropped, `executor.ts` split). **739 tests + 7 skips.** Full review: [`docs/reviews/2026-06-21-full-project-review.md`](./reviews/2026-06-21-full-project-review.md).
+**Branch state:** `chore/full-review-improvements` (off `main`) carries the v0.9.0 prep; `main` is at v0.8.5. **Two v0.9 features remain in-flight on unmerged WIP branches in locked worktrees** (so they aren't mistaken for stale noise): `feat/discover-docs-dirs` (discover-docs directory expansion / configurable doc globs — the Terra Firma follow-up below) and `feat/nightly-mode` (the wave-2 nightly pace-gated schedule preset).
 **Live validation (2026-06-02):** first real `glean run` (4 tasks, 0 failed) + `--drain` tick both succeeded against `claude -p` on the logged-in machine; `glean schedule enable` registered the unattended drain (fires **Thu 2026-06-04 18:00**, Asia/Jerusalem → Thursday auto-detect). The drain will run unattended; the v0.8.2 **BLOCK-CAPTURE tripwire** auto-captures the real hard-block the first time the weekly cap is hit (closes ADR-0001 — see Up next #1).
 
 ---
@@ -26,7 +26,7 @@ per-project priority dials steering allocation; a `discover-docs` pass mining ea
 project's roadmap/handoff docs as candidates; post-hoc overlap learning — compare
 what glean prepped vs what the user actually advanced, recomputed from git/JSONL
 each run, nudging allocation within the user's dial).
-New CLI verbs planned: `resume`, `retry <run-id>`, `doctor` (`projects` and `usage` shipped — below).
+New CLI verbs planned: `resume`, `retry <run-id>` (`projects`, `usage`, and `doctor` shipped — `doctor` in the 2026-06-22 review hardening).
 
 **`glean usage` + pacing engine — BUILT 2026-06-13** (branch `feat/usage-pacing`):
 the design's "Pacing definition" math, pinned and tested — `src/lib/usage.ts`

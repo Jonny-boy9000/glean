@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-02 (v0.8.2 built + PR open; 406 tests + 2 documented skips).
+> **Last updated:** 2026-06-22 (v0.9.0 prepped on branch `chore/full-review-improvements`; 739 tests + 7 skips).
 
 ---
 
@@ -58,7 +58,7 @@ design history that drives every release lives partly *outside* the repo.
 ## 2. Source (`src/`) — module map
 
 `src/cli.ts` — citty CLI: dispatches `run [--drain]`, `serve [install|uninstall|status]`, `schedule`, `projects [set]`,
-`morning [--md]`, `today`, `peek`, `rate`, `gc`, `stop`, `repair`, `version`. Everything else
+`usage [--json]`, `morning [--md]`, `today`, `peek`, `rate`, `doctor`, `gc`, `stop`, `repair`, `version`. Everything else
 is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 
 ### Orchestration / drain state machine
@@ -87,7 +87,10 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 ### Execution
 | File | LOC | Responsibility |
 |------|-----|----------------|
-| `executor.ts` | 789 | Per-candidate: provision (worktree/dossier), render template, spawn `claude -p` (stream-json + deny-list + timeout), capture output, classify rate-limit, draft-impl commit + test-status. Biggest file. |
+| `executor.ts` | ~430 | Per-candidate **orchestration** after the F7 split (2026-06-22): provision (worktree/dossier), render template, run the task, capture output, route to draft-impl commit/test. Spawn + git + test plumbing now live in the three files below. |
+| `spawn-claude.ts` | ~410 | The `claude -p` spawn state machine + rate-limit signal glue (stream-json + deny-list + wall-clock timeout + bounded kill grace), extracted from `executor.ts`. Holds the ADR-0003/0004 spawn invariants. |
+| `draft-git.ts` | ~140 | draft-impl git plumbing: worktree provision off `base_branch`, commit, diff-stat — extracted from `executor.ts`. |
+| `draft-test.ts` | ~130 | draft-impl post-commit test runner: runs the per-project `test_command` inside the worktree, bounded by budget/STOP, reports `pass`/`fail`/`none` — extracted from `executor.ts`. |
 | `jobobject.ts` | 58 | Child-tree kill on timeout/stop: `taskkill /T /F` on Windows; detached process group + `kill(-pid)` on POSIX. |
 | `deny.ts` | 80 | The non-negotiable `--disallowedTools` deny-list applied to every spawn. |
 | `model-routing.ts` | 97 | **v0.9 model routing (ADR-0006)**: pure `resolveModel`/`resolveMaxTurns` — pool-aware `sonnet` base → task-type default → config `models`/`max_turns` override → pace-tier override (wave-2 `paceTier` hook). Every spawn gets `--model` + `--max-turns`; `task.start` logs the resolved model. |
@@ -108,6 +111,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `today.ts` | 122 | `glean today` — today's dossiers across projects. **v0.8.2 lane D (window-aware).** |
 | `peek.ts` | 27 | `glean peek` — CWD-scoped `today` for the SessionStart hook. **v0.8.2 lane D.** |
 | `morning.ts` | 345 | `glean morning` — "while you slept" receipt; aggregates the whole drain window; writes `RECEIPT.md`. |
+| `doctor.ts` | ~270 | **v0.9** `glean doctor` environment preflight: Node ≥ 20, `claude` on PATH, git, gh (optional/non-fatal), `config.json` presence, `better-sqlite3` loadable. Exits non-zero if a hard requirement fails. |
 
 ### Renderers (pure formatting)
 | File | LOC | Responsibility |
@@ -139,14 +143,14 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 | `config.ts` | ~150 | Zod-validated `config.json` loader; per-project `priority` dial + `setProjectPriority` (opt-in add, atomic write, `off` keeps entry) + `effectivePriority` (configured-sans-dial = `normal`; unconfigured = `off`); **`pacing` keys** (`enabled`, `haircut` 0–1, `thresholds.{skip,small,normal}_above`). |
 | `types.ts` | ~175 | Shared types: `Candidate`, `RunSummary`, `RunReason`, `TaskOutput`, `GleanConfig`, `DrainTrigger`, `ProjectPriority`, **`ModelFamily`/`DailyUsage`/`PacingConfig`** (v0.9 pacing). |
 
-> Each impl file has a co-located `*.test.ts` (vitest). 63 test files total.
+> Each impl file has a co-located `*.test.ts` (vitest). 66 test files total. **Dependency note:** the `uuid` package was dropped in the 2026-06-22 review hardening — task ids now use Node's built-in `crypto.randomUUID`.
 
 ---
 
 ## 3. Tests (`test/` + co-located `src/lib/*.test.ts`)
 
 - **Unit specs:** co-located `src/lib/<mod>.test.ts` (e.g. `classify.test.ts`, `runDrain.test.ts`, `dedup.test.ts`, `schedule.test.ts`, `render-receipt.test.ts`).
-- **Integration specs:** `test/integration/v01…v27-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI), **v27 serve install/status surface** — read-only + singleton paths only; never registers a real task).
+- **Integration specs:** `test/integration/v01…v28-*.test.ts` — one per verification row (dry-run, full-task, budget, stop, rate-limit, dedup, lock, jobobject, gh-missing, stale-lock, repair, task-timeout, memory, today, rate, peek, draft-impl, gc, morning, **v21 drain**, **v22 drain-robustness** cross-lane, v23 dossier-read-access, **v24 projects CLI**, **v25 discover-docs**, **v26 usage CLI** (pace ratio + tiers + glean-session exclusion via the real CLI), **v27 serve install/status surface** — read-only + singleton paths only; never registers a real task, **v28 lazy-sqlite** (a missing `better-sqlite3` binding still lets `glean version`/`doctor` run)).
 - **Fixtures:** `test/fixtures/`
   - `fake-claude.{js,cmd,sh}` — stub `claude` binary driven by YAML scenarios.
   - `scenarios/*.yaml` — incl. `rate-limit`, `session-limit`, `weekly-limit`, `structured-429` (the real stream-json session block), `failed-exit`, `clean-exit-with-warning-event`, `wedged` (child stuck emitting past the timeout, ADR-0004), draft-impl variants.
@@ -155,7 +159,7 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
   - **`captured-rate-limit/real-session-429-block.jsonl`** — ⭐ the REAL session-limit BLOCK (sanitized; run `2026-06-11-1800-d705f9`): `rate_limit_event` status `rejected` + message `error:"rate_limit"` + result `is_error/429`. Closed ADR-0001 → [ADR-0003](./decisions/0003-structured-stream-json-block-signal.md).
   - **`captured-rate-limit/real-capacity-event.jsonl`** — REAL sanitized `rate_limit_event` line from the 2026-06-11 drain run (`allowed_warning`, `utilization: 0.95`, `surpassedThreshold`); drives the dashboard `readCapacity` tests.
 
-Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 skip**.
+Run: `npm test` (builds first via `pretest`). Baseline @ v0.9.0: **739 pass, 7 skip** (66 files).
 
 ---
 
@@ -165,9 +169,10 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.8.1: **352 pass, 1 s
 |------|---------|
 | `docs/ROADMAP.md` | Planned-work source of truth. |
 | `docs/PROJECT-MAP.md` | This index. |
-| `docs/handoff/post-v0.8.2-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
+| `docs/handoff/post-v0.9.0-handoff.md` | **Live forward handoff** — the ONLY active handoff. **Read this to pick up cold.** Convention: exactly one live handoff in `docs/handoff/`; when superseded it moves to `docs/archive/`. |
 | `docs/handoff/ORCHESTRATION-PROMPT.md` | Reusable paste-ready kickoff: gstack pipeline + Superpowers worktree subagents for a buildable roadmap item. |
-| `docs/archive/` | Shipped/superseded handoffs (e.g. `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
+| `docs/archive/` | Shipped/superseded handoffs (`post-v0.8.2-handoff.md`, `v0.8.2-handoff.md`). Historical reference only — never read these to pick up work. |
+| `docs/reviews/2026-06-21-full-project-review.md` | The 7-dimension multi-agent full-project review that drove the v0.9.0 hardening; residual low/nice-to-have items in its §3. |
 | `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0005` = pacing model-weight multipliers (UNVERIFIED, consistency-over-truth); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open); `0007` = internal JSONL usage loader (ccusage's programmatic API gone upstream). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
