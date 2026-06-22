@@ -26,6 +26,13 @@ const WeekAnchor = z.object({
 
 const Schema = z.object({
   claude_bin: z.string().optional(),
+  // ADR-0009 spawned-session trust boundary: when true, the draft-impl session's
+  // in-session test-command allow-list is dropped entirely (no `node`/`npm run`/
+  // test-runner code execution) — a hard "read-only against main" guarantee on
+  // every platform, at the cost of the model running tests in-session (glean still
+  // re-runs them out-of-session for the surfaced status). Absent/false = the
+  // Narrow default (declared test runners allowed, arbitrary-code verbs excluded).
+  strict_spawn: z.boolean().optional(),
   // v0.9 model routing: per-task-type model (alias like 'sonnet' or a full
   // model id — accepted verbatim). Partial: unlisted types use the built-in
   // defaults at resolution time (model-routing.ts).

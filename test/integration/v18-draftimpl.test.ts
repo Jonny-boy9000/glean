@@ -149,7 +149,8 @@ describe('verification 18: draft-impl end-to-end', () => {
     expect(argv[denyIdx + 1]).toBe(DRAFT_IMPL_DENY);
 
     // --allowedTools is exactly draftImplAllowedTools(default test command). The
-    // v18 config has no test_command, so the default npm/node prefixes apply.
+    // v18 config has no test_command, so the default test-runner prefixes apply
+    // (ADR-0009 narrow: npm test / npx vitest — no node / npm run).
     const allowIdx = argv.indexOf('--allowedTools');
     expect(allowIdx).toBeGreaterThanOrEqual(0);
     const allow = argv[allowIdx + 1];

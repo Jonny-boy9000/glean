@@ -182,6 +182,35 @@ export function isStreamBlockLine(line: string): boolean {
   }
 }
 
+// ── Auth-error signal (UNVERIFIED — never captured; capture-armed) ────────────
+//
+// ASSUMPTION[ADR-0009] UNVERIFIED: an EXPIRED / missing subscription login
+// surfaces from `claude -p` as either (a) claude's own STDERR prose ("Invalid API
+// key · Please run /login", "credentials expired", "not authenticated") or (b) a
+// structured stdout `result` with api_error_status 401 / a top-level
+// authentication error. The exact shape has NEVER been captured (unlike the
+// session block, ADR-0003) — spawn-claude arms an AUTH-CAPTURE tripwire so the
+// first real one self-documents. The stderr regex is matched on CLAUDE's stderr
+// (operational errors), NOT model stdout content, so a research dossier ABOUT
+// authentication can't trip it. Conservative phrasing keeps false positives low.
+export const AUTH_ERROR_RE =
+  /(please run\s+\/login|please log ?in|invalid api key|oauth token (?:expired|invalid|missing)|authentication_error|not (?:logged in|authenticated)|credentials? (?:expired|invalid|missing|not found)|401 unauthorized|session (?:expired|invalid))/i;
+
+// Structured stdout auth signal: a result line carrying HTTP 401, or a top-level
+// error whose value names an authentication failure. Parse-tolerant.
+export function isStreamAuthErrorLine(line: string): boolean {
+  const t = line.trim();
+  // Cheap pre-filter: only JSON.parse plausible lines.
+  if (!t.includes('401') && !t.includes('authentication')) return false;
+  try {
+    const obj = JSON.parse(t) as StreamLine;
+    if (obj?.type === 'result' && obj.is_error === true && obj.api_error_status === 401) return true;
+    return typeof obj?.error === 'string' && /authentication/i.test(obj.error);
+  } catch {
+    return false;
+  }
+}
+
 // ── rate_limit_event resetsAt enrichment (ADR-0001 → ADR-0003) ───────────────
 //
 // VERIFIED: the `claude -p` stream-json output emits discrete

@@ -68,3 +68,6 @@ not a conclusion — verify the negative case before asserting (see `CLAUDE.md` 
 | [0005](./0005-model-weight-multipliers.md) | Model-family weight multipliers for pacing (haiku 0.25 / sonnet 1 / opus 5) | **UNVERIFIED** (consistency over truth) |
 | [0006](./0006-model-routing-pool-assumption.md) | Model routing: pool-aware Sonnet default + unverified Pro pool split | **Accepted** (Pro pool-split assumption open) |
 | [0007](./0007-internal-usage-loader.md) | Internal JSONL usage loader (ccusage/data-loader unavailable upstream) | **Accepted** |
+| [0008](./0008-spawn-backend-seam.md) | Spawn-backend seam (subscription-only headline; API mode a designed-but-unbuilt hedge) | **Accepted** (seam only) |
+| [0009](./0009-spawned-session-trust-boundary.md) | Spawned-session trust boundary (allow-list bounds tool names, not subprocess writes; no Windows sandbox) | **Accepted** (Narrow default + opt-in `strict_spawn`; sandbox-on-supported-platforms deferred) |
+| [0010](./0010-auth-failure-handling.md) | Auth-failure handling (detect + stop loudly, exit 50) + the `setup-token` scheduled-auth path | **Accepted** (detection built; shape UNVERIFIED/capture-armed; scheduled-auth path designed-not-built) |

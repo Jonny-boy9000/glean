@@ -1,0 +1,9 @@
+# Synthetic auth-failure shape (UNVERIFIED — the real shape has never been
+# captured; ADR-0009). Mimics `claude -p` failing to authenticate: claude's own
+# auth-failure prose on STDERR + a non-zero exit. spawn-claude's AUTH_ERROR_RE
+# flags it, the executor sets TaskResult.authExpired, and the pipeline stops the
+# run with reason 'auth-error' (exit 50) instead of letting a dead drain look
+# like a pile of failed tasks.
+stderr_lines:
+  - "Invalid API key · Please run /login"
+exit_code: 1

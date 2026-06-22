@@ -148,6 +148,8 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
     // v0.8: surface the classified rate-limit signal so the drain wrapper can
     // decide session-paused vs weekly-drained vs ambiguous.
     if (status === 'rate-limit') result.classification = classifySpawnSignal(spawn);
+    // ADR-0009: flag an auth failure so the pipeline can stop the run cleanly.
+    if (spawn.authError) result.authExpired = true;
     return result;
   };
 
@@ -228,6 +230,15 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     try { execFileSync('git', ['-C', main, 'branch', '-D', branch], { stdio: 'ignore' }); } catch { /* branch may not exist */ }
     mkdirSync(join(ctx.gleanRoot, 'work'), { recursive: true });
     execFileSync('git', ['-C', main, 'worktree', 'add', worktree, '-b', branch, base], { stdio: 'pipe' });
+    // ADR-0009 defense-in-depth: neuter git hooks in the disposable draft worktree
+    // so an allow-listed `git commit` in the spawned session can't fire a repo
+    // pre-commit / commit-msg hook (arbitrary code that would run OUTSIDE the
+    // permission layer). Point core.hooksPath at an empty dir; best-effort.
+    try {
+      const noHooks = join(ctx.gleanRoot, 'work', '.glean-nohooks');
+      mkdirSync(noHooks, { recursive: true });
+      execFileSync('git', ['-C', worktree, 'config', 'core.hooksPath', noHooks], { stdio: 'ignore' });
+    } catch { /* best effort — hook-neutering is defense-in-depth */ }
   } catch (e) {
     process.stderr.write(`[draft-impl] worktree provisioning failed for ${c.id}: ${(e as Error).message}\n`);
     return finalizeFail('failed', [`worktree provisioning failed: ${(e as Error).message}`]);
@@ -244,11 +255,14 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   writeFileSync(join(scratchDir, 'prompt.md'), prompt);
   excludeFromWorktree(main, worktree, ['prompt.md', 'OUT.md']);
 
-  // CRITICAL 1: pass a SCOPED Bash allow-list, never bare `Bash`. Bare `Bash`
-  // would let the session run `git -C <main> push`, `rm -rf <main>`, or
-  // `echo x > <main>/file` — none fully blockable by a prefix deny-list. The
-  // allow-list (Edit/Write + git commit-cycle + per-project test command) is the
-  // real boundary; DRAFT_IMPL_DENY stays as defense-in-depth.
+  // CRITICAL 1 / ADR-0009: pass a SCOPED Bash allow-list, never bare `Bash`. The
+  // allow-list bounds WHICH tools the model can call (no bare `Bash` → no
+  // `git -C <main> push` / `rm -rf <main>`); built-in Edit/Write are bounded to
+  // this worktree via --add-dir. The one residual code-execution surface is the
+  // test-command verb set (a runner spawns a subprocess outside the permission
+  // layer) — narrowed to declared runners by default, removed entirely by
+  // config.strict_spawn (ctx.testCommandAllow is already [] then; see cli.ts).
+  // DRAFT_IMPL_DENY stays as in-session defense-in-depth.
   const allowedTools = draftImplAllowedTools(ctx.testCommandAllow ?? DEFAULT_TEST_COMMAND_ALLOW);
   const spawn = await runClaude(c, ctx, {
     prompt,
@@ -326,6 +340,8 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     if (stderr_tail) result.stderr_tail = stderr_tail;
     // v0.8: surface the classified rate-limit signal (drain wrapper consumes it).
     if (status === 'rate-limit') result.classification = classifySpawnSignal(spawn);
+    // ADR-0009: flag an auth failure so the pipeline can stop the run cleanly.
+    if (spawn.authError) result.authExpired = true;
     return result;
   };
 

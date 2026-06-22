@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Candidate } from './types.js';
 import { spawnInJob } from './jobobject.js';
 import { StringDecoder } from 'node:string_decoder';
-import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, RATE_LIMIT_RE, type RateLimitClassification } from './classify.js';
+import { classifyRateLimit, classifyStreamJson, isStreamBlockLine, parseRateLimitEventResetAt, RATE_LIMIT_RE, AUTH_ERROR_RE, isStreamAuthErrorLine, type RateLimitClassification } from './classify.js';
 import { resolveModel, resolveMaxTurns, type ModelRoutingConfig, type PaceTier } from './model-routing.js';
 
 // ADR-0003: the REAL `claude -p` block (session limit, captured 2026-06-11) is a
@@ -30,6 +30,10 @@ const KILL_GRACE_MS = 5_000;
 export type SpawnOutcome = {
   exitCode: number;
   rateLimited: boolean;
+  // ADR-0009 (UNVERIFIED, capture-armed): the spawn surfaced an expired/missing
+  // subscription login (claude stderr prose, or a structured 401). The executor
+  // flags the TaskResult and the pipeline stops the run with reason 'auth-error'.
+  authError: boolean;
   timedOut: boolean;
   stderrPath: string;
   // In-memory tail of stderr captured DURING streaming. Classifying this avoids a
@@ -161,6 +165,37 @@ function captureBlockSignal(taskId: string, logDir: string, spawn: SpawnOutcome)
   }
 }
 
+// ADR-0009 self-capturing tripwire: dump the raw stderr + the stream-json tail to
+// <logDir>/<taskId>.AUTH-CAPTURE.txt the first time an auth-failure flag fires, so
+// the never-yet-observed real auth-error shape documents itself (mirrors
+// captureBlockSignal). LOCAL file write only; best-effort, NEVER throws.
+function captureAuthSignal(taskId: string, logDir: string, spawn: SpawnOutcome): void {
+  try {
+    let stderrRaw = spawn.stderrText ?? '';
+    try {
+      const fromFile = readFileSync(spawn.stderrPath, 'utf8');
+      if (fromFile) stderrRaw = fromFile;
+    } catch { /* keep the in-memory tail */ }
+    let jsonlTail = '';
+    try {
+      const lines = readFileSync(spawn.jsonlPath, 'utf8').split(/\r?\n/);
+      jsonlTail = lines.slice(-BLOCK_CAPTURE_JSONL_TAIL_LINES).join('\n');
+    } catch { /* jsonl missing — capture stderr alone */ }
+    const body =
+      `# glean AUTH-CAPTURE (ADR-0009 self-capturing tripwire)\n` +
+      `# Task: ${taskId}\n` +
+      `# Captured: ${new Date().toISOString()}\n` +
+      `# An auth-failure flag fired for this task. The auth-error shape is UNVERIFIED\n` +
+      `# (never captured). Drop the signal below into a classify.ts fixture + tighten\n` +
+      `# AUTH_ERROR_RE / isStreamAuthErrorLine, then mark the shape VERIFIED.\n` +
+      `\n## raw stderr\n${stderrRaw}\n` +
+      `\n## stream-json tail (last ${BLOCK_CAPTURE_JSONL_TAIL_LINES} lines)\n${jsonlTail}\n`;
+    writeFileSync(join(logDir, `${taskId}.AUTH-CAPTURE.txt`), body);
+  } catch {
+    // Capture is strictly best-effort diagnostics — never let it break a run.
+  }
+}
+
 // Injectable wall-clock source for the per-task deadline check (fn.impl
 // pattern, like diffStat) so tests can simulate a sleep/resume clock jump
 // deterministically (ADR-0004).
@@ -204,6 +239,10 @@ export async function runClaude(
   const stderrStream = createWriteStream(stderrPath);
   const jsonlStream = createWriteStream(jsonlPath);
   let rateLimited = false;
+  // ADR-0009 (UNVERIFIED): set when an auth-failure signal appears in the stream
+  // or claude's stderr. Does not kill the spawn (it exits on its own); the
+  // pipeline stops the whole run on the first one.
+  let authError = false;
   // Bounded in-memory tail of stderr — classified for the rate-limit signal so we
   // never depend on the async file flush completing before we read it back.
   let stderrText = '';
@@ -233,6 +272,9 @@ export async function runClaude(
   ];
   // draft-impl is the first path that runs Bash (git commit, tests); pass explicit
   // --allowedTools so a headless -p run does not hang on an interactive approval.
+  // ASSUMPTION[ADR-0009]: this allow-list bounds tool-call NAMES, not what an
+  // allow-listed interpreter subprocess then writes — that is defense-in-depth on
+  // native Windows (no OS sandbox), narrowed by default + closable via strict_spawn.
   if (opts.allowedTools) claudeArgs.push('--allowedTools', opts.allowedTools);
   claudeArgs.push('--disallowedTools', opts.deny);
   claudeArgs.push('--session-id', randomUUID());
@@ -279,14 +321,18 @@ export async function runClaude(
     const trimmed = line.trim();
     if (!trimmed) return;
     // Cheap pre-filter mirroring classifyStreamJson: only consider lines that
-    // could carry a rate-limit signal.
-    if (!trimmed.includes('rate_limit') && !trimmed.includes('"is_error":true')) return;
+    // could carry a rate-limit OR auth signal.
+    if (!trimmed.includes('rate_limit') && !trimmed.includes('"is_error":true')
+      && !trimmed.includes('401') && !trimmed.includes('authentication')) return;
     streamSignalText = (streamSignalText + trimmed + '\n').slice(-STREAM_SIGNAL_BYTES);
     if (!rateLimited && isStreamBlockLine(trimmed)) {
       rateLimited = true;
       // issueKill no-ops once the child has already exited (the final-line scan).
       issueKill();
     }
+    // ADR-0009 (UNVERIFIED): a structured 401 / authentication result. Flag only —
+    // the spawn exits on its own; the pipeline stops the run on the first flag.
+    if (!authError && isStreamAuthErrorLine(trimmed)) authError = true;
   };
 
   job.child.stdout?.on('data', (chunk: Buffer) => {
@@ -303,11 +349,15 @@ export async function runClaude(
   });
   job.child.stderr?.on('data', (chunk: Buffer) => {
     stderrStream.write(chunk);
-    stderrText = (stderrText + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
-    if (!rateLimited && RATE_LIMIT_RE.test(chunk.toString('utf8'))) {
+    const text = chunk.toString('utf8');
+    stderrText = (stderrText + text).slice(-STDERR_TAIL_BYTES);
+    if (!rateLimited && RATE_LIMIT_RE.test(text)) {
       rateLimited = true;
       issueKill();
     }
+    // ADR-0009 (UNVERIFIED): claude's own auth-failure prose on stderr (not model
+    // stdout content). Flag only — the spawn exits on its own.
+    if (!authError && AUTH_ERROR_RE.test(text)) authError = true;
   });
 
   // INVARIANT[ADR-0004]: enforce the per-task timeout against the WALL CLOCK,
@@ -394,7 +444,7 @@ export async function runClaude(
   // descendantsDead is true only when job.exit resolved AND every kill was
   // awaited to completion — a force-resolved (or straggling) tree is honestly
   // reported as possibly alive so worktree cleanup won't touch its locks (F7).
-  const outcome: SpawnOutcome = { exitCode, rateLimited, timedOut, stderrPath, stderrText, streamSignalText, jsonlPath, descendantsDead };
+  const outcome: SpawnOutcome = { exitCode, rateLimited, authError, timedOut, stderrPath, stderrText, streamSignalText, jsonlPath, descendantsDead };
 
   // ADR-0003 self-capturing tripwire: each spawn flagged rateLimited writes its
   // OWN capture file (keyed by task id `<id>.BLOCK-CAPTURE.txt`), so the
@@ -402,6 +452,9 @@ export async function runClaude(
   // happens. Per-task (not once-global) — distinct task ids never collide.
   // Best-effort, never throws.
   if (rateLimited) captureBlockSignal(c.id, logDir, outcome);
+  // ADR-0009 self-capturing tripwire: the auth-failure shape is likewise
+  // UNVERIFIED, so the first real one writes <id>.AUTH-CAPTURE.txt to document it.
+  if (authError) captureAuthSignal(c.id, logDir, outcome);
 
   return outcome;
 }

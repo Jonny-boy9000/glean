@@ -94,7 +94,11 @@ export type RunReason =
   | 'morning-anti-spill'
   // PIECE 3: a nightly/scheduled drain tick that the pacing gate told to spend
   // nothing this week (recommendTier tier === 'skip'). Opt-in (pacing.enabled).
-  | 'pace-skip';
+  | 'pace-skip'
+  // A spawn surfaced an expired/missing subscription login (UNVERIFIED shape —
+  // capture-armed in spawn-claude). An expired token kills every later spawn, so
+  // the run stops cleanly here rather than masquerading as "all failed". Exit 50.
+  | 'auth-error';
 
 export type RunSummary = {
   run_id: string;
@@ -186,6 +190,8 @@ export type PacingConfig = {
 
 export type GleanConfig = {
   claude_bin?: string;
+  // ADR-0009: drop the draft-impl in-session test-command allow-list (hard-close).
+  strict_spawn?: boolean;
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
   pacing?: PacingConfig;
@@ -219,4 +225,8 @@ export type TaskResult = {
   // v0.8: present only on a 'rate-limit' result — the classified rate-limit
   // signal (session vs weekly vs ambiguous) derived from the spawn's stderr.
   classification?: import('./classify.js').RateLimitClassification;
+  // Set when the spawn surfaced an auth failure (expired/missing login). The
+  // pipeline stops the run with reason 'auth-error' on the first one (an expired
+  // token dooms every later spawn). UNVERIFIED signal — see classify.ts.
+  authExpired?: boolean;
 };

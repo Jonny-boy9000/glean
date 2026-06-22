@@ -19,11 +19,39 @@ hardening). `main` is clean at v0.10.0. **801 tests + 7 skips.** Build ✅, esli
 > **Claude-native**. An opt-in API mode is a *designed-but-unbuilt hedge* ([ADR-0008](../decisions/0008-spawn-backend-seam.md));
 > multi-LLM is explicitly out of scope (a separate product).
 
-> **🟢 SAFETY POSTURE (unchanged, verified).** No Anthropic API-key path exists in `src/`; **every** spawn
-> funnels through one `runClaude()` that unconditionally appends the deny-list (asserted at the **argv**
-> level, not just as a constant); draft-impl pairs deny-list + scoped allow-list + `--add-dir` worktree
-> confinement; `max_parallel` is hardcoded 1; the dashboard is `127.0.0.1`-only with CSRF + anti-rebinding +
-> path-traversal guards. Full review: [`docs/reviews/2026-06-21-full-project-review.md`](../reviews/2026-06-21-full-project-review.md).
+> **🟢 SAFETY POSTURE (updated 2026-06-23 — honest, post-audit).** No Anthropic API-key path exists in `src/`;
+> **every** spawn funnels through one `runClaude()` that unconditionally appends the deny-list (asserted at the
+> **argv** level); built-in Edit/Write are bounded to the worktree via `--add-dir`; research/fetch-docs get no
+> write/interpreter verbs. **ADR-0009 (the load-bearing correction):** the draft-impl allow-list bounds tool
+> *names*, not what an allow-listed interpreter (`node`/`npm run`/a test runner) then writes — and native Windows
+> has **no OS sandbox** — so that layer is *defense-in-depth, not a hard guarantee on Windows*. Now **Narrowed by
+> default** (no `node`/`npm run`) + opt-in `config.strict_spawn` **hard-close** + worktree **hook-neuter**.
+> `max_parallel` is hardcoded 1; the dashboard is `127.0.0.1`-only with CSRF + anti-rebinding + path-traversal
+> guards. Review: [`docs/reviews/2026-06-21-full-project-review.md`](../reviews/2026-06-21-full-project-review.md);
+> audit: [`docs/strategy/2026-06-23-assumption-audit.md`](../strategy/2026-06-23-assumption-audit.md).
+
+## 2026-06-23 — assumption audit + GTM research + safety hardening (this session)
+
+Two multi-agent research passes + a partial implementation. **806 tests + 7 skips, build ✅.**
+- **New docs:** [`docs/strategy/2026-06-23-assumption-audit.md`](../strategy/2026-06-23-assumption-audit.md)
+  (red-team of every CLAUDE.md load-bearing assumption → risk-ranked register) and
+  [`docs/strategy/2026-06-23-go-to-market-distribution.md`](../strategy/2026-06-23-go-to-market-distribution.md)
+  (GTM/distribution plan; **builds on** `docs/launch/`, doesn't replace it).
+- **Landed:** [ADR-0009](../decisions/0009-spawned-session-trust-boundary.md) + the spawned-session safety fix
+  (Narrow default + `strict_spawn` + hook-neuter); honesty edits (README "Is this allowed?" → dated/conditional,
+  "verified tests: pass" → "best-effort", the false "resets Saturday" calendar copy, the Job-Object mislabel;
+  the `est_tokens` "×1.3" doc-lie corrected in CLAUDE.md + glean.md; caching-rationale precision); repo/npm
+  discoverability hygiene (GitHub topics + description + homepage set live; npm keywords expanded).
+- **Still open (from the audit, NOT yet done):**
+  1. **401/`authentication_error` detection** on the `glean morning` receipt + adopt `claude setup-token` →
+     `CLAUDE_CODE_OAUTH_TOKEN` as the scheduled-auth path (subscription, no API key) → write **ADR-0010**.
+  2. **A real enforcement test** against the live `claude` binary (a spawn that attempts an out-of-worktree
+     `fs.writeFileSync` and asserts refusal) — the fake-claude stub can't prove the boundary (ADR-0009).
+  3. **Enable the OS sandbox on macOS/Linux/WSL2** to restore safe in-session code execution (ADR-0009 deferred).
+  4. **`docs/launch/*` staleness patch** (406→806 tests, v0.8.1→v0.10.0, add dashboard/Linux/`glean usage`) +
+     the GTM **launch DIFF**; the hero GIF + 1280×640 social-preview PNG **need the user** (recording/asset).
+  5. **Pivot pacing onto the server-truthful weekly signal** (`rate_limits.seven_day`, ADR-0007 follow-up) and
+     teach `classify.ts` the `seven_day*` weekly shape first-class (cheap ADR-0003 hardening).
 
 ## Read first (orient a cold session)
 - `CLAUDE.md` — load-bearing constraints + current state + the "Decision records & assumptions" section

@@ -330,6 +330,16 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         typeFailures.set(c.type, (typeFailures.get(c.type) ?? 0) + 1);
       }
 
+      // ADR-0009: an expired/missing login dooms every later spawn — stop the run
+      // cleanly with a distinct reason + exit code so a dead drain can't look like
+      // "all failed". The auth shape is UNVERIFIED (capture-armed in spawn-claude).
+      if (result.authExpired) {
+        reason = 'auth-error';
+        exitCode = 50;
+        failed++;
+        break;
+      }
+
       if (result.status === 'rate-limit') {
         reason = 'rate-limit';
         exitCode = 20;

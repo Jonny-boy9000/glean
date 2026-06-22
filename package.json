@@ -15,10 +15,17 @@
   "keywords": [
     "claude",
     "claude-code",
+    "claude-max",
     "cli",
     "ai",
     "automation",
-    "developer-tools"
+    "developer-tools",
+    "rate-limit",
+    "capacity",
+    "subscription",
+    "git-worktree",
+    "task-scheduler",
+    "headless"
   ],
   "publishConfig": {
     "access": "public"

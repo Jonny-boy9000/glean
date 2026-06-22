@@ -91,8 +91,13 @@ const runCmd = defineCommand({
     // so a candidate can never be provisioned off the wrong repo's base.
     const baseBranchFor = (p: string): string | undefined => cfg.projects?.[p]?.base_branch;
     // Per-project test_command scopes the draft-impl Bash allow-list (CRITICAL 1).
+    // ADR-0009 hard-close: config.strict_spawn drops the in-session test-command
+    // allow-list entirely (empty array → draftImplAllowedTools grants no test/
+    // interpreter verbs), so no arbitrary code runs in the spawned session.
     const { testCommandAllowFor } = await import('./lib/deny.js');
-    const testCommandAllow = testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
+    const testCommandAllow = cfg.strict_spawn
+      ? []
+      : testCommandAllowFor(cfg.projects?.[projectPath]?.test_command);
     // Raw per-project test_command — glean runs it itself in the draft worktree
     // after the session commits, to capture a deterministic pass/fail/none.
     const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
