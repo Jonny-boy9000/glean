@@ -56,7 +56,7 @@ subscription-auth/no-API-key holds; `max_parallel=1` becomes a *safety* invarian
 > gate rejects any literal `ADR-0011` (or any unallocated integer)** in a diff.
 
 ### Phase 1 — Safety-kernel completion (the deferred #31 legs; highest stakes)
-4. **`sandbox-enforce`** (split into two PRs): **1a (security)** — `sandbox.ts` availability detection +
+4. **`sandbox-enforce`** (split into two PRs). **1a SHIPPED (PR #34, ADR-0013).** **1a (security)** — `sandbox.ts` availability detection +
    `buildSandboxSettings` (inline `--settings` JSON — web-confirmed it overrides per-session with **zero** global
    mutation), `sandbox.failIfUnavailable: true` (the hard-vs-fallback hinge) + `allowUnsandboxedCommands: false`,
    honest receipt warning when `enforce_spawn` is requested but unavailable, the argv regression lock, and the
@@ -162,8 +162,10 @@ tracked-pending list**, or (c) a tracked watch tripwire — and the code↔ADR a
 3. **Load-bearing constraints intact:** no API key in the core path; read-only-against-main is *strengthened*
    (sandbox + read-scope confinement) **where the sandbox runs**; deny-list + scoped allow-list on every spawn
    (triage included); `max_parallel=1` is a documented *safety* invariant.
-4. **Baseline stated as the live-verified `814 passed + 7 skipped`** everywhere (CLAUDE.md, handoff, PROJECT-MAP,
-   ROADMAP, every cluster's verification cell). A "green" claim cites 814, not 801.
+4. **Baseline stated as the CURRENT live-verified count** everywhere (CLAUDE.md, handoff, PROJECT-MAP, ROADMAP,
+   every cluster's verification cell) — re-verify with `npx vitest run` and bump on each change. **836 passed +
+   8 skipped** as of sandbox-enforce 1a (PR #34); was 814+7 at Phase 0, 801 at the v0.10.0 release. A "green"
+   claim cites the current number, never a stale literal.
 5. **PROJECT-MAP, ROADMAP, the decisions index, AND the handoff** are updated in the same change that adds/moves
    files; the handoff carries the per-cluster remediation status block.
 6. **The audit is split into CLOSED and TRACKED-PENDING, stated loudly.** TRACKED-PENDING (never claimed closed):
@@ -172,8 +174,8 @@ tracked-pending list**, or (c) a tracked watch tripwire — and the code↔ADR a
    UNVERIFIED→ENFORCED/BUILT, archived, → CLOSED) or **ships visibly self-skipped**. **On native Windows the #1
    BROKEN finding is mitigated by Narrow/`strict_spawn` but NEVER resolved to HARD — the ADR and the CLAUDE.md
    constraint say so in those words.** A green CI that *skipped* these is never claimed as one that *proved* them.
-7. **`npm test` green (814 + new), `tsc` + `lint` clean,** no skip-count regression except the intentional new
-   live-test skips (kept visible and explained).
+7. **`npm test` green (the current baseline + new — 836 + 8 as of PR #34), `tsc` + `lint` clean,** no skip-count
+   regression except the intentional new live-test skips (kept visible and explained — e.g. `v30`).
 
 ## Top actions (prioritized)
 

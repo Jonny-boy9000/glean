@@ -2,7 +2,7 @@
 
 > Goal: get the right people (Claude Code / Pro/Max power users) to **actually install glean, run a drain, and tell us what they kept vs. discarded**. Real usage signal, not vanity metrics. We optimize for installs → first `glean run` → first `glean morning` → first `glean rate`.
 >
-> Status when written: v0.8.1 (2026-06-02). **Patched 2026-06-23 to v0.10.0 reality:** published `@jonny-boy9000/glean@0.10.0`; **814 tests**; Windows + **Linux (beta)** scheduler (macOS launchd still tracked in #1); now ships the `glean serve` **dashboard**, the `glean usage` **capacity governor**, and Sonnet model routing. The unattended weekend drain **has run live** (first real run 2026-06-11) but still has limited mileage — we do not fake an overnight result in any asset.
+> Status when written: v0.8.1 (2026-06-02). **Patched 2026-06-23 to v0.10.0 reality:** published `@jonny-boy9000/glean@0.10.0`; **836 tests**; Windows + **Linux (beta)** scheduler (macOS launchd still tracked in #1); now ships the `glean serve` **dashboard**, the `glean usage` **capacity governor**, and Sonnet model routing. The unattended weekend drain **has run live** (first real run 2026-06-11) but still has limited mileage — we do not fake an overnight result in any asset.
 >
 > Owner: Jonny-boy9000. Generated via `/office-hours` (builder mode). Date: 2026-06-02 (patched 2026-06-23). See the GTM follow-up at [`docs/strategy/2026-06-23-go-to-market-distribution.md`](../strategy/2026-06-23-go-to-market-distribution.md).
 
@@ -72,7 +72,7 @@ Shorter variants (use per venue character budget):
 > Your Pro/Max weekly window resets on a fixed per-account weekly schedule (glean learns yours) and the capacity you didn't spend is just gone — it doesn't roll over. glean is a CLI (Windows + Linux beta) that, in that idle tail, spawns its own headless `claude -p` sessions to do speculative prep on your own repos — *finding the unfinished work across them*, then drafting code into throwaway `git worktree` branches (never touching `main`), writing research dossiers, pre-fetching docs — and you point the scheduler at it so it drains the leftover unattended, pausing at each 5-hour wall and resuming until the weekly cap fires. Monday you run `glean morning` and get a receipt: each draft branch with a best-effort `tests: pass`, the exact command to review it, and an honest capacity line. It's your own subscription driving your own `claude` CLI on a schedule — no API key, no proxying, nothing pushed.
 
 ### Honesty boilerplate (paste near the top of every post)
-> Heads up: **glean is early; Windows + Linux (beta).** Manual `glean run` works on macOS *today* — only the unattended scheduler is Windows/Linux (macOS launchd is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (814 tests), and it now runs for real against live `claude -p` (a real run produced dossiers + pre-fetched docs, zero failures; a `--drain` tick works and the unattended weekend drain is armed). The one thing not yet observed in the wild is a real **hard weekly-cap hit** on a full multi-day drain (ADR-0001). I'm posting partly to find people who'll run it and tell me what breaks.
+> Heads up: **glean is early; Windows + Linux (beta).** Manual `glean run` works on macOS *today* — only the unattended scheduler is Windows/Linux (macOS launchd is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (836 tests), and it now runs for real against live `claude -p` (a real run produced dossiers + pre-fetched docs, zero failures; a `--drain` tick works and the unattended weekend drain is armed). The one thing not yet observed in the wild is a real **hard weekly-cap hit** on a full multi-day drain (ADR-0001). I'm posting partly to find people who'll run it and tell me what breaks.
 
 ### What makes it land with this crowd (use as talking points in comments)
 - **"Is this allowed?" is pre-answered.** It drives your own logged-in CLI, same `claude -p` calls you could type by hand. No key, no resale. (The rejected resale design is documented as dropped.)
@@ -234,7 +234,7 @@ Point Windows Task Scheduler at it (`glean schedule enable`) and it drains the w
 
 On "is this allowed": it drives my own logged-in `claude` CLI — the same `claude -p` calls I could type by hand. No API key, no proxying. Every spawned session runs under a deny-list blocking `git push`/`checkout`/`reset`/`gh pr` mutations.
 
-Honest caveats: it's early and Windows-first (macOS/Linux is the top tracked issue). The single-run + draft path is dogfooded and tested (814 tests). The unattended weekend drain has run live (first real run: 2026-06-11) — so genuinely looking for people to try it and report back.
+Honest caveats: it's early and Windows-first (macOS/Linux is the top tracked issue). The single-run + draft path is dogfooded and tested (836 tests). The unattended weekend drain has run live (first real run: 2026-06-11) — so genuinely looking for people to try it and report back.
 
 Repo + install: https://github.com/Jonny-boy9000/glean  (`npm i -g @jonny-boy9000/glean`)
 
@@ -268,7 +268,7 @@ Design constraints I cared about:
 - Read-only against your real checkouts; all speculative output is in worktrees or under ~/glean.
 - Every spawned session runs with a `--disallowedTools` deny-list (no `git push`/`checkout`/`reset`, no `gh pr` mutations).
 
-Honest status: it's early and Windows-first (macOS/Linux scheduling is the top tracked issue). 814 tests; the single-run + draft path is dogfooded and the unattended weekend drain has run live (2026-06-11) — I'd love for someone to try it and tell me where it breaks. The usefulness metric is built in: `glean rate <id> kept|discarded` so I can see what's actually worth keeping.
+Honest status: it's early and Windows-first (macOS/Linux scheduling is the top tracked issue). 836 tests; the single-run + draft path is dogfooded and the unattended weekend drain has run live (2026-06-11) — I'd love for someone to try it and tell me where it breaks. The usefulness metric is built in: `glean rate <id> kept|discarded` so I can see what's actually worth keeping.
 
 Repo: https://github.com/Jonny-boy9000/glean  ·  npm: @jonny-boy9000/glean
 

@@ -6,9 +6,10 @@
 
 **As of:** 2026-06-23. **v0.10.0 is published** (`@jonny-boy9000/glean@0.10.0`, merge `0c86ebf`, tag
 `v0.10.0`), built on **v0.9.0** (published the same day: capacity-governor wave-1 + the full-project-review
-hardening). `main` is clean; **post-v0.10.0 safety hardening landed (PRs #31/#32 + Phase-0)**. **814 tests +
-7 skips** on `main` HEAD (the v0.10.0 npm release was 801; the safety-kernel work added the rest). Build ✅,
-eslint ✅. Install: `npm i -g @jonny-boy9000/glean`.
+hardening). `main` is clean; **post-v0.10.0 safety hardening landed (PRs #31–#34: audit remediation Phase 0 + Phase 1
+sandbox-enforce 1a)**. **836 tests + 8 skips** on `main` HEAD (the v0.10.0 npm release was 801; the
+safety-kernel work added the rest — the +1 skip is the `v30` live sandbox-enforcement proof, self-skipped off
+mac/Linux/WSL2). Build ✅, eslint ✅. Install: `npm i -g @jonny-boy9000/glean`.
 
 > **🧭 STRATEGY IS NOW PINNED (2026-06-22).** A verified competitive review + a codebase coupling audit
 > set the project's direction — read before any "where should this go" work:
@@ -45,16 +46,20 @@ roadmap's done-definition (CLOSED vs **TRACKED-PENDING**).
   auth-failure detection (exit 50 + receipt banner), the honesty/hygiene edits.
 - **PR #32** — the hardening roadmap + the recommended improved CLAUDE.md + the GTM integration into the launch
   plans + `docs/launch/QUALITY-GATE-v1.md` + the M-IDLE drain-report fields.
-- **Phase 0 (docs/anti-drift)** — the 801→814 baseline reconcile + this status block; **ADR-0011** (ToS basis) +
-  `runDrain.ts`/`schedule.ts` tags + `docs/watchlist/tos-automation-drift.md`; **ADR-0006 annotation** (affirm
-  Sonnet pool, flag drain-both #57875/#57050, DO NOT invert) + the code-site marker; **ADR-0012**
-  (conditional economic thesis) + README/`BLIND_SPOT_NOTE` framing; adopted CLAUDE.md.
+- **PR #33 (Phase 0, docs/anti-drift)** — the 801→814 baseline reconcile + this status block; **ADR-0011** (ToS
+  basis) + `runDrain.ts`/`schedule.ts` tags + `docs/watchlist/tos-automation-drift.md`; **ADR-0006 annotation**
+  (affirm Sonnet pool, flag drain-both #57875/#57050, DO NOT invert) + the code-site marker; **ADR-0012**
+  (conditional economic thesis) + README/`BLIND_SPOT_NOTE` framing; **adopted the improved CLAUDE.md**.
+- **PR #34 (Phase 1, sandbox-enforce 1a)** — **[ADR-0013](../decisions/0013-os-sandbox-enforcement.md)** OS-sandbox
+  `enforce_spawn`: `sandbox.ts` (availability detection + `buildSandboxSettings`) + the inline-`--settings`
+  injection (pure `buildClaudeArgs`) + the Windows-fallback warning + argv/fallback tests — the HARD spawn boundary
+  on mac/Linux/WSL2, Narrow fallback on Windows.
 
-**Phase 1 (IN PROGRESS):** sandbox-enforce **1a** (OS-sandbox `enforce_spawn`) is **BUILT**
-([ADR-0013](../decisions/0013-os-sandbox-enforcement.md)) — `sandbox.ts` detection + inline-`--settings` injection
-(Narrow verb set) + the Windows-fallback warning + the self-skipping live test (`v30`). **1b** (restore
-`node`/`npm run` under the active sandbox) + the live enforcement proof are tracked-pending. **Next:** the
-`setup-token` scheduled-auth path.
+**Phase 1 (NEXT):** the **`setup-token` scheduled-auth path** (cluster 5) — the ADR-0010 cause-fix: build
+`auth-token.ts` (`loadOAuthToken` + `applyScheduledAuthEnv` stripping API-key/auth-token), `glean auth
+setup-token|status|clear`, the drain-only gate + the `--bare`-never INVARIANT, then the live Spike-A re-validation.
+(sandbox-enforce **1b** — restore `node`/`npm run` under the active sandbox — + the live enforcement proof `v30`
+remain **tracked-pending** on non-Windows hardware.)
 
 **QUEUED (Phase 1–3 of the roadmap — not yet built):** the `setup-token` scheduled-auth path (Phase 1); draft test-status honesty (Phase 2); privacy /
 read-scope confinement + redaction (Phase 2); weekly-signal fusion + supersede ADR-0007 (Phase 2);
