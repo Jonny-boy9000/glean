@@ -33,6 +33,11 @@ const Schema = z.object({
   // re-runs them out-of-session for the surfaced status). Absent/false = the
   // Narrow default (declared test runners allowed, arbitrary-code verbs excluded).
   strict_spawn: z.boolean().optional(),
+  // ADR-0013: opt-in OS-sandbox enforcement for spawns (macOS/Linux/WSL2 only). When
+  // true AND the sandbox is available, in-session subprocess writes become a HARD OS
+  // boundary (confined to the worktree, $HOME secrets deny-read, fail-closed). On
+  // native Windows it falls back to Narrow with a loud warning. strict_spawn wins.
+  enforce_spawn: z.boolean().optional(),
   // v0.9 model routing: per-task-type model (alias like 'sonnet' or a full
   // model id — accepted verbatim). Partial: unlisted types use the built-in
   // defaults at resolution time (model-routing.ts).

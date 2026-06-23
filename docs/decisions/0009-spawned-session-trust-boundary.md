@@ -1,6 +1,8 @@
 # ADR-0009 — Spawned-session trust boundary (the allow-list bounds tool *names*, not subprocess writes)
 
-- Status: **Accepted** (Narrow default + opt-in `strict_spawn` hard-close shipped 2026-06-23; OS-sandbox-on-supported-platforms deferred)
+- Status: **Accepted** (Narrow default + opt-in `strict_spawn` hard-close shipped 2026-06-23). The deferred
+  **OS-sandbox leg is now built** as the `enforce_spawn` posture — see **[ADR-0013](./0013-os-sandbox-enforcement.md)**
+  (the Narrow/`strict_spawn` decisions below still stand; the live enforcement proof is tracked-pending off Windows).
 - Date: 2026-06-23
 - Enforced at: `src/lib/deny.ts` (`DEFAULT_TEST_COMMAND_ALLOW`, `draftImplAllowedTools`, tagged `ASSUMPTION[ADR-0009]`),
   `src/cli.ts` (`strict_spawn → []`), `src/lib/executor.ts` (allow-list comment + worktree hook-neuter),

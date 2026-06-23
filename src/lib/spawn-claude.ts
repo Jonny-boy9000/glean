@@ -210,7 +210,45 @@ export const __nowMs = nowMs;
 // The render-and-spawn inputs for one `claude -p` invocation. `deny` is the
 // load-bearing safety boundary (INVARIANT: appended unconditionally below as
 // `--disallowedTools`, argv-asserted by the F2 tests).
-export type RunClaudeOpts = { prompt: string; cwd: string; addDir: string | string[]; deny: string; allowedTools?: string };
+export type RunClaudeOpts = { prompt: string; cwd: string; addDir: string | string[]; deny: string; allowedTools?: string; settings?: string };
+
+// Pure assembly of the `claude -p` argv (extracted so the safety-critical flags are
+// unit-testable without spawning). The deny-list is appended UNCONDITIONALLY
+// (INVARIANT[ADR-0009], F2-asserted); `--allowedTools` and the ADR-0013 `--settings`
+// sandbox injection are each present iff supplied — so on the default/Narrow/Windows
+// path (no settings) the argv is byte-identical to the pre-sandbox build.
+export function buildClaudeArgs(p: {
+  model: string;
+  maxTurns: number;
+  addDirs: string[];
+  allowedTools?: string;
+  deny: string;
+  settings?: string;
+  sessionId: string;
+}): string[] {
+  const args = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--include-partial-messages',
+    '--model', p.model,
+    '--max-turns', String(p.maxTurns),
+    ...p.addDirs.flatMap((d) => ['--add-dir', d]),
+    '--permission-mode', 'acceptEdits',
+  ];
+  // draft-impl/research pass an explicit --allowedTools so a headless -p run does not
+  // hang on an interactive approval. ASSUMPTION[ADR-0009]: the allow-list bounds
+  // tool-call NAMES, not what an allow-listed interpreter then writes.
+  if (p.allowedTools) args.push('--allowedTools', p.allowedTools);
+  // ASSUMPTION[ADR-0013]: enforce_spawn + sandbox-available → inject the OS sandbox via
+  // inline --settings (the HARD boundary). --setting-sources pins scopes so a project's
+  // own .claude/settings.json can't widen the injected policy.
+  if (p.settings) args.push('--settings', p.settings, '--setting-sources', 'user,local');
+  // INVARIANT[ADR-0009]: deny-list appended unconditionally (argv-asserted, F2).
+  args.push('--disallowedTools', p.deny);
+  args.push('--session-id', p.sessionId);
+  return args;
+}
 
 // SEAM[ADR-0008]: `runClaude` IS the SUBSCRIPTION spawn backend. Subscription-auth
 // is the headline and the only implemented backend; an opt-in API-key backend (the
@@ -260,24 +298,18 @@ export async function runClaude(
   // on the orchestrator's task.start event — aliases drift across generations.
   const model = resolveModel(c.type, ctx.routing ?? {}, ctx.paceTier ?? 'normal');
   const maxTurns = resolveMaxTurns(c.type, ctx.routing ?? {});
-  const claudeArgs = [
-    '-p',
-    '--output-format', 'stream-json',
-    '--verbose',
-    '--include-partial-messages',
-    '--model', model,
-    '--max-turns', String(maxTurns),
-    ...addDirs.flatMap((d) => ['--add-dir', d]),
-    '--permission-mode', 'acceptEdits',
-  ];
-  // draft-impl is the first path that runs Bash (git commit, tests); pass explicit
-  // --allowedTools so a headless -p run does not hang on an interactive approval.
-  // ASSUMPTION[ADR-0009]: this allow-list bounds tool-call NAMES, not what an
-  // allow-listed interpreter subprocess then writes — that is defense-in-depth on
-  // native Windows (no OS sandbox), narrowed by default + closable via strict_spawn.
-  if (opts.allowedTools) claudeArgs.push('--allowedTools', opts.allowedTools);
-  claudeArgs.push('--disallowedTools', opts.deny);
-  claudeArgs.push('--session-id', randomUUID());
+  // ASSUMPTION[ADR-0013]: opts.settings (present iff enforce_spawn + the OS sandbox is
+  // available) injects the sandbox via inline --settings — the HARD boundary. Absent
+  // (Narrow / strict_spawn / native Windows) → argv byte-identical to the pre-sandbox build.
+  const claudeArgs = buildClaudeArgs({
+    model,
+    maxTurns,
+    addDirs,
+    allowedTools: opts.allowedTools,
+    deny: opts.deny,
+    settings: opts.settings,
+    sessionId: randomUUID(),
+  });
 
   // On Windows, .cmd files must be invoked via cmd.exe /c
   const [spawnCmd, spawnArgs] = resolveSpawn(ctx.claudeBin, claudeArgs);

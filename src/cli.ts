@@ -101,6 +101,16 @@ const runCmd = defineCommand({
     // Raw per-project test_command — glean runs it itself in the draft worktree
     // after the session commits, to capture a deterministic pass/fail/none.
     const testCommandFor = (p: string): string | undefined => cfg.projects?.[p]?.test_command;
+    // ADR-0013: resolve the spawn posture once per run. enforce_spawn injects the OS
+    // sandbox into draft-impl/research spawns where available (mac/Linux/WSL2); on
+    // native Windows it falls back to Narrow with a LOUD warning (never a silent
+    // unsandboxed run). strict_spawn (handled above via testCommandAllow=[]) wins.
+    const { detectSandboxAvailability, resolveSpawnPosture } = await import('./lib/sandbox.js');
+    const sandboxAvail = detectSandboxAvailability();
+    const { posture: spawnPosture, enforceRequestedButUnavailable } = resolveSpawnPosture(cfg, sandboxAvail);
+    if (enforceRequestedButUnavailable) {
+      console.error(`[glean] WARNING: config.enforce_spawn is set but the OS sandbox is unavailable here (${sandboxAvail.missing.join('; ')}). Falling back to Narrow — defense-in-depth, NOT a hard filesystem boundary. For a hard guarantee on this platform set strict_spawn:true (no in-session code), or run glean under WSL2.`);
+    }
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
     const pipelineOpts = {
@@ -116,6 +126,7 @@ const runCmd = defineCommand({
       baseBranchFor,
       testCommandAllow,
       testCommandFor,
+      enforceSpawn: spawnPosture === 'enforce',
       // v0.9 model routing (ADR-0006): the loaded config carries the optional
       // models / max_turns / pacing_promote maps; resolution + defaults live in
       // model-routing.ts. paceTier is wired by the pacing engine (wave 2).

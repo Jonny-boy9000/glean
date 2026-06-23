@@ -50,8 +50,13 @@ roadmap's done-definition (CLOSED vs **TRACKED-PENDING**).
   Sonnet pool, flag drain-both #57875/#57050, DO NOT invert) + the code-site marker; **ADR-0012**
   (conditional economic thesis) + README/`BLIND_SPOT_NOTE` framing; adopted CLAUDE.md.
 
-**QUEUED (Phase 1–3 of the roadmap — not yet built):** OS-sandbox `enforce_spawn` + a real enforcement test
-(Phase 1); the `setup-token` scheduled-auth path (Phase 1); draft test-status honesty (Phase 2); privacy /
+**Phase 1 (IN PROGRESS):** sandbox-enforce **1a** (OS-sandbox `enforce_spawn`) is **BUILT**
+([ADR-0013](../decisions/0013-os-sandbox-enforcement.md)) — `sandbox.ts` detection + inline-`--settings` injection
+(Narrow verb set) + the Windows-fallback warning + the self-skipping live test (`v30`). **1b** (restore
+`node`/`npm run` under the active sandbox) + the live enforcement proof are tracked-pending. **Next:** the
+`setup-token` scheduled-auth path.
+
+**QUEUED (Phase 1–3 of the roadmap — not yet built):** the `setup-token` scheduled-auth path (Phase 1); draft test-status honesty (Phase 2); privacy /
 read-scope confinement + redaction (Phase 2); weekly-signal fusion + supersede ADR-0007 (Phase 2);
 `rateLimitType seven_day*` first-class (Phase 2); the watchlist as a `glean doctor`/dashboard feature (Phase 3);
 parallel-safety lock (Phase 3); the ranking validity guard + opt-in `--triage` (Phase 3).
