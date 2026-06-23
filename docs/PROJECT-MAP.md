@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-23 (post-audit safety hardening, PRs #31/#32 merged; **814 tests + 7 skips** on `main` HEAD — v0.10.0 npm was 801).
+> **Last updated:** 2026-06-23 (post-audit safety hardening, PRs #31–#34 merged incl. ADR-0013 `enforce_spawn`; **836 tests + 8 skips** on `main` HEAD — v0.10.0 npm was 801).
 
 ---
 
