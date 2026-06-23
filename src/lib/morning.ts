@@ -269,11 +269,19 @@ function buildZeroBurstReport(windowStartedAt: string): MorningReport {
   };
 }
 
-// Map the DB draft_tests column to the renderer's test_status. Only a NULL (or
-// unrecognized) value — a pre-v5 row — degrades to 'unknown'.
+// Map the DB draft_tests column to the renderer's test_status. ADR-0014: pass
+// through the 5 producer tokens; keep a legacy 'none' bucket for pre-ADR-0014 rows
+// (irreducibly ambiguous — NOT reinterpreted as a precise state); a NULL or
+// otherwise-unrecognized value (a pre-v5 / pre-feature row) degrades to 'unknown'.
 function normalizeTestStatus(v: string | null): MorningBranchEntry['test_status'] {
-  if (v === 'pass' || v === 'fail' || v === 'none') return v;
-  return 'unknown';
+  switch (v) {
+    case 'pass': case 'fail': case 'env-blocked': case 'skipped': case 'no-command':
+      return v;
+    case 'none':
+      return 'none'; // legacy literal — render as 'none', never 'unknown'
+    default:
+      return 'unknown';
+  }
 }
 
 type IndexEntryLite = {

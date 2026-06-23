@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import type { MorningReport, MorningBranchEntry } from './render-morning.js';
-import { PLAIN, outcomeLine } from './render-morning.js';
+import { PLAIN, outcomeLine, describeTest } from './render-morning.js';
 
 // Render a MorningReport as a durable, shareable Markdown receipt. Same data model
 // as the terminal renderer (render-morning.ts) — single source of truth. Reuses
@@ -73,7 +73,7 @@ function renderBranch(b: MorningBranchEntry, mainRepo: string, lines: string[]):
   lines.push(
     trivial
       ? '_draft produced no changes (review)._'
-      : `\`+${b.insertions} / -${b.deletions}\` across ${b.files} ${b.files === 1 ? 'file' : 'files'} · tests: ${b.test_status}`,
+      : `\`+${b.insertions} / -${b.deletions}\` across ${b.files} ${b.files === 1 ? 'file' : 'files'} · tests: ${describeTest(b.test_status)}`,
   );
   lines.push('');
   lines.push(`- **Review:** \`cd ${b.worktree}\``);

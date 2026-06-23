@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { CandidateType } from './types.js';
+import type { CandidateType, DraftTestStatus } from './types.js';
 
 export interface FingerprintInput {
   project_path: string;
@@ -230,8 +230,11 @@ export class Memory {
       draft_insertions?: number;
       draft_deletions?: number;
       prep_branch?: string;
-      // draft-impl deterministic test status (v5): 'pass' | 'fail' | 'none'.
-      draft_tests?: string;
+      // draft-impl deterministic test status. The DB column (v5) stays TEXT with no
+      // CHECK — ADR-0014 widened the VOCABULARY (pass|fail|env-blocked|skipped|no-command)
+      // with NO schema migration; NULL still = pre-feature. Typed to the producer union
+      // so the compiler couples persisted tokens to the type.
+      draft_tests?: DraftTestStatus;
     } = {},
   ): void {
     this.db.prepare(

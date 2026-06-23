@@ -838,9 +838,9 @@ describe('executeOne', () => {
 
   // ── draft-impl deterministic test-status capture (v0.7.1) ──────────────────
   // After a draft session commits, glean itself runs the project's test_command
-  // in the worktree and records the outcome. exit 0 → 'pass', non-zero → 'fail',
-  // no test_command OR unrunnable → 'none'. A throwing/failing test run must
-  // NEVER crash the executor.
+  // in the worktree and records the outcome (ADR-0014). exit 0 → 'pass', non-zero →
+  // 'fail'; no test_command → 'no-command'; unrunnable/env → 'env-blocked'; chose-not-
+  // to-run → 'skipped'. A throwing/failing test run must NEVER crash the executor.
   function draftRepo(): string {
     const repo = mkdtempSync(join(tmpdir(), 'glean-draft-tests-'));
     execSync('git init -q -b main', { cwd: repo });
@@ -886,26 +886,26 @@ describe('executeOne', () => {
     expect(result.output.tests).toBe('fail');
   });
 
-  it('draft-impl: no test_command configured yields output.tests === "none"', async () => {
+  it('draft-impl: no test_command configured yields output.tests === "no-command" (ADR-0014)', async () => {
     const repo = draftRepo();
     const root = tmpRoot();
     const result = await executeOne(draftCandidate(repo, 'dt-none'), draftCtx(repo, root, undefined));
     expect(result.status).toBe('ok');
     if (result.output?.kind !== 'branch') throw new Error('expected branch output');
-    expect(result.output.tests).toBe('none');
+    expect(result.output.tests).toBe('no-command');
   });
 
-  it('draft-impl: an unrunnable test_command yields "none" and never crashes the run', async () => {
+  it('draft-impl: an unrunnable test_command yields "env-blocked" and never crashes the run (ADR-0014)', async () => {
     const repo = draftRepo();
     const root = tmpRoot();
     const result = await executeOne(
       draftCandidate(repo, 'dt-throw'),
       draftCtx(repo, root, 'glean-nonexistent-binary-xyz --no-such-flag'),
     );
-    // The run still succeeds (a commit landed); the test status degrades to 'none'.
+    // The run still succeeds (a commit landed); the suite never started → 'env-blocked'.
     expect(result.status).toBe('ok');
     if (result.output?.kind !== 'branch') throw new Error('expected branch output');
-    expect(result.output.tests).toBe('none');
+    expect(result.output.tests).toBe('env-blocked');
   });
 
   it('draft-impl: the captured tests status is forwarded to recordOutcome (draft_tests)', async () => {
@@ -919,18 +919,31 @@ describe('executeOne', () => {
     expect(calls[0].fields.draft_tests).toBe('pass');
   });
 
-  // I3: a fresh worktree has no node_modules → a real `npm test` exits nonzero
-  // with an environment/setup signature. That must read as 'none' (couldn't run),
-  // NOT 'fail' (a suite that ran and reported failures).
-  it('draft-impl: an env/setup failure (Cannot find module) maps to "none", not "fail"', async () => {
+  // ADR-0014: a fresh worktree (or missing deps) → a real `npm test` exits nonzero
+  // with an env/setup signature in the runner PREAMBLE (the suite never started).
+  // That must read as 'env-blocked' (couldn't run), NOT 'fail' (a suite that ran).
+  it('draft-impl: an env/setup failure (Cannot find module, in preamble) maps to "env-blocked", not "fail"', async () => {
     const repo = draftRepo();
     const root = tmpRoot();
-    // node resolves on PATH, exits 1, and prints a "Cannot find module" signature.
+    // node resolves on PATH, exits 1, and prints a "Cannot find module" signature with
+    // no test-result fence before it → the suite never started → env-blocked.
     const cmd = `node -e "console.error('Error: Cannot find module \\'vitest\\''); process.exit(1)"`;
     const result = await executeOne(draftCandidate(repo, 'dt-env'), draftCtx(repo, root, cmd));
     expect(result.status).toBe('ok');
     if (result.output?.kind !== 'branch') throw new Error('expected branch output');
-    expect(result.output.tests).toBe('none');
+    expect(result.output.tests).toBe('env-blocked');
+  });
+
+  // ADR-0014 regression: a REAL failure whose OUTPUT (after a test-result fence) prints
+  // "ENOENT" must stay 'fail' — the env scan is anchored to the runner PREAMBLE.
+  it('draft-impl: a late "enoent" AFTER a test fence stays "fail" (preamble anchor)', async () => {
+    const repo = draftRepo();
+    const root = tmpRoot();
+    const cmd = `node -e "console.log('PASS suite a'); console.error('boom ENOENT junk'); process.exit(1)"`;
+    const result = await executeOne(draftCandidate(repo, 'dt-late-enoent'), draftCtx(repo, root, cmd));
+    expect(result.status).toBe('ok');
+    if (result.output?.kind !== 'branch') throw new Error('expected branch output');
+    expect(result.output.tests).toBe('fail');
   });
 
   it('draft-impl: a genuine assertion failure (exit 1, no env signature) maps to "fail"', async () => {
@@ -959,7 +972,7 @@ describe('executeOne', () => {
   });
 
   // I4: a killed/salvaged partial commit must NOT have its tests run/trusted.
-  it('draft-impl: a timed-out salvaged draft reports tests "none", never running them', async () => {
+  it('draft-impl: a timed-out salvaged draft reports tests "skipped", never running them', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'glean-draft-i4-'));
     execSync('git init -q -b main', { cwd: repo });
     execSync('git config user.email t@t', { cwd: repo });
@@ -984,15 +997,15 @@ describe('executeOne', () => {
     );
     expect(result.status).toBe('timeout');
     // A salvaged commit may or may not exist depending on timing; if it did, the
-    // tests must read 'none' and the command must NOT have run (no sentinel).
+    // tests must read 'skipped' and the command must NOT have run (no sentinel).
     if (result.output?.kind === 'branch') {
-      expect(result.output.tests).toBe('none');
+      expect(result.output.tests).toBe('skipped');
     }
     expect(existsSync(sentinel)).toBe(false);
   });
 
   // C1: when remaining budget is exhausted the test run is skipped entirely.
-  it('draft-impl: zero remaining budget skips the test run (tests "none", command never runs)', async () => {
+  it('draft-impl: zero remaining budget skips the test run (tests "skipped", command never runs)', async () => {
     const repo = draftRepo();
     const root = tmpRoot();
     const sentinel = join(root, 'budget-ran.txt');
@@ -1006,12 +1019,12 @@ describe('executeOne', () => {
     });
     expect(result.status).toBe('ok');
     if (result.output?.kind !== 'branch') throw new Error('expected branch output');
-    expect(result.output.tests).toBe('none');
+    expect(result.output.tests).toBe('skipped');
     expect(existsSync(sentinel)).toBe(false);
   });
 
   // C1: an active STOP sentinel skips the test run entirely.
-  it('draft-impl: STOP sentinel skips the test run (tests "none", command never runs)', async () => {
+  it('draft-impl: STOP sentinel skips the test run (tests "skipped", command never runs)', async () => {
     const repo = draftRepo();
     const root = tmpRoot();
     const sentinel = join(root, 'stop-ran.txt');
@@ -1025,7 +1038,7 @@ describe('executeOne', () => {
     });
     expect(result.status).toBe('ok');
     if (result.output?.kind !== 'branch') throw new Error('expected branch output');
-    expect(result.output.tests).toBe('none');
+    expect(result.output.tests).toBe('skipped');
     expect(existsSync(sentinel)).toBe(false);
   });
 

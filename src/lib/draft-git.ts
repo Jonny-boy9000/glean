@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, rmdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 export type DiffStat = { files: number; insertions: number; deletions: number };
@@ -107,6 +107,45 @@ export function excludeFromWorktree(main: string, worktree: string, patterns: st
       writeFileSync(excludePath, existing + (existing && !existing.endsWith('\n') ? '\n' : '') + toAdd.join('\n') + '\n');
     }
   } catch { /* best effort */ }
+}
+
+// ASSUMPTION[ADR-0014]: link the base checkout's node_modules into the worktree so
+// glean's OUT-OF-SESSION test run resolves declared deps — a Node/TS draft that would
+// pass after `npm install` reaches 'pass' instead of a false 'env-blocked'. Created
+// ONLY after the spawn tree is provably dead (descendantsDead) and never at
+// worktree-add, so it does NOT widen the ADR-0009 boundary (the live spawn ran with
+// cwd:worktree BEFORE this link existed and never saw base deps). Junction on Windows
+// (needs no elevation, unlike a 'dir' symlink), dir-symlink on POSIX. Best-effort:
+// NEVER throws; on any error the caller proceeds as today → 'env-blocked'. The caller
+// tears the link down after the test run (rmSync, force, non-recursive — deletes only
+// the reparse point, never the base node_modules it targets).
+export function linkBaseNodeModules(
+  main: string,
+  worktree: string,
+  descendantsDead: boolean,
+): { linked: boolean; path: string | null } {
+  const dst = join(worktree, 'node_modules');
+  try {
+    if (!descendantsDead) return { linked: false, path: null };   // belt-and-braces liveness gate
+    if (existsSync(dst)) return { linked: false, path: dst };     // model already produced one — never clobber
+    const src = join(main, 'node_modules');
+    if (!existsSync(src)) return { linked: false, path: null };   // non-Node project — pure no-op
+    symlinkSync(resolve(src), dst, process.platform === 'win32' ? 'junction' : 'dir');
+    return { linked: true, path: dst };
+  } catch {
+    // EPERM (locked-down host) / EEXIST (race) / ENOSYS — degrade to today's behavior.
+    return { linked: false, path: existsSync(dst) ? dst : null };
+  }
+}
+
+// Remove a node_modules LINK created by linkBaseNodeModules — removes ONLY the link
+// (POSIX dir-symlink via unlinkSync; Windows junction reparse point via rmdirSync),
+// NEVER the base node_modules it targets. Critically does NOT use rmSync({recursive}):
+// a Windows junction lstats as a directory, so a recursive remove could delete the
+// base's contents. Best-effort, never throws.
+export function unlinkNodeModulesLink(path: string): void {
+  try { unlinkSync(path); return; } catch { /* not a POSIX symlink — try the Windows junction path */ }
+  try { rmdirSync(path); } catch { /* best effort — leaves only a harmless link if it can't be removed */ }
 }
 
 // T8/F7: remove a STALE index.lock left by a killed/exited child so the

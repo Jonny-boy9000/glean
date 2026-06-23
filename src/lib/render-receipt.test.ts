@@ -55,6 +55,16 @@ describe('renderReceiptMarkdown', () => {
     expect(md).toContain('main` was never touched');
   });
 
+  // ADR-0014: the receipt routes test_status through describeTest (not raw
+  // interpolation), so a producer token renders its human phrasing, not the token.
+  it("renders a 'skipped' branch through describeTest, not the raw token", () => {
+    const md = renderReceiptMarkdown(report({
+      branches: [{ title: 'Fix X', prep_branch: 'prep/glean-skip', worktree: 'C:\\wt', files: 1, insertions: 5, deletions: 1, status: 'ok', test_status: 'skipped' }],
+    }));
+    expect(md).toContain('tests: skipped (partial/stopped)');
+    expect(md).not.toContain('tests: skipped\n');
+  });
+
   it('0-burst window reads honestly, no false success', () => {
     const md = renderReceiptMarkdown(report({ bursts: 0, branches: [], files: [] }));
     expect(md).toContain('0 bursts — nothing ran this window');

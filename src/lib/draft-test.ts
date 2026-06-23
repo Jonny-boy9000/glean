@@ -7,19 +7,21 @@ import type { DraftTestStatus } from './types.js';
 // `claude -p` session also runs tests, but its result is invisible to glean, so
 // glean re-runs and owns the surfaced status.
 //
-// Status mapping (HEURISTIC — the only fully trustworthy signal is exit 0 → pass):
-//   exit 0                                   → 'pass'
-//   non-zero + env/setup-failure signature   → 'none'  (couldn't run cleanly)
-//   non-zero otherwise                       → 'fail'  (a suite that ran + failed)
-//   no command                               → 'none'
-//   unrunnable first token / throw / timeout → 'none'  (NEVER crash the executor)
+// Status mapping (ADR-0014 — HEURISTIC; the only assumption-free signal is exit 0 → pass):
+//   exit 0                                          → 'pass'
+//   non-zero, no env signature in the PREAMBLE      → 'fail'  (a suite that ran + failed)
+//   no test_command                                 → 'no-command'
+//   unrunnable first token / spawn ENOENT / killed  → 'env-blocked' (suite never started)
+//   env signature in the runner PREAMBLE            → 'env-blocked'
+//   throw                                           → 'env-blocked' (NEVER crash the executor)
 //
-// I3 rationale: a fresh `git worktree` has no node_modules, so a real project's
-// `npm test` exits nonzero with "Cannot find module" / "missing script" — that is
-// an ENVIRONMENT failure (the suite never ran), NOT a genuine test failure. We
-// inspect combined stdout/stderr for known setup-failure signatures and map those
-// to 'none' so a bare worktree is never misreported as 'fail'. This is a best-
-// effort heuristic; exit 0 → pass remains the clean, unambiguous signal.
+// ANCHOR (ADR-0014): an env/setup failure means the suite NEVER STARTED, so its
+// signature can only appear in the runner's STARTUP preamble — not interleaved with
+// passing/failing test lines. We scan only the preamble (text before the first
+// test-result fence line, capped), so a REAL failure that prints "enoent" / "cannot
+// find module" in its OUTPUT stays 'fail'. The executor links the base `node_modules`
+// into the worktree before this runs (ADR-0014), so a Node/TS draft that would pass
+// after `npm install` reaches 'pass' instead of a false 'env-blocked'.
 //
 // C1: `remainingBudgetMs` (when provided) clamps the run timeout so the test run
 // can never exceed the run's remaining wall-clock `--budget`. The actual timeout
@@ -42,8 +44,40 @@ const ENV_FAILURE_SIGNATURES = [
   'cannot find package',
 ];
 
-function looksLikeEnvFailure(output: string): boolean {
-  const hay = output.toLowerCase();
+// ASSUMPTION[ADR-0014]: a heuristic allow-list of runner-progress markers that mean
+// "the suite has started printing results" (vitest/jest/mocha/TAP/pytest). Matched at
+// LINE START (after trim, case-insensitive) so an assertion message containing "PASS"
+// mid-sentence isn't mistaken for a run marker. Resist growing it; exit 0 → pass stays
+// the assumption-free signal, and the node_modules link shrinks the env-blocked population.
+const SUITE_STARTED_FENCE = [
+  'ok ', 'not ok ', 'tap version',         // TAP
+  'pass ', 'fail ',                         // jest/vitest per-file result lines
+  '✓', '✗', '√', '×',                       // vitest/mocha check glyphs
+  'test files', 'tests ',                   // vitest summary
+  'run ',                                   // jest runner
+  'collected ', '=== test session starts',  // pytest
+];
+const PREAMBLE_LINE_CAP = 50;
+
+// The runner's STARTUP preamble: lines before the first suite-started fence, capped
+// so a giant single-line failure dump can't be mis-walked. If no fence appears, the
+// whole (capped) output is the preamble — i.e. the suite never started.
+export function preambleOf(output: string): string {
+  const lines = output.split(/\r?\n/);
+  const cap = Math.min(lines.length, PREAMBLE_LINE_CAP);
+  const preamble: string[] = [];
+  for (let i = 0; i < cap; i++) {
+    const t = lines[i].trim().toLowerCase();
+    if (t && SUITE_STARTED_FENCE.some((f) => t.startsWith(f))) break; // suite started — stop
+    preamble.push(lines[i]);
+  }
+  return preamble.join('\n');
+}
+
+// True iff an env/setup-failure signature appears in the runner PREAMBLE (the suite
+// never started). A signature AFTER a fence line (real test output) does NOT match.
+export function preambleLooksLikeEnvFailure(output: string): boolean {
+  const hay = preambleOf(output).toLowerCase();
   return ENV_FAILURE_SIGNATURES.some((sig) => hay.includes(sig));
 }
 
@@ -54,13 +88,13 @@ export function runTestCommand(
   remainingBudgetMs?: number,
 ): DraftTestStatus {
   const cmd = testCommand?.trim();
-  if (!cmd) return 'none';
+  if (!cmd) return 'no-command';
   // Distinguish "test_command is not runnable on this machine" from "tests
   // failed": under `shell: true` a missing program returns exit 1 (cmd.exe /
   // sh), indistinguishable from a real failure by exit code alone. So resolve
-  // the FIRST token (the program) on PATH first — if it isn't resolvable, this
-  // is 'none' (not run), never 'fail'.
-  if (!isProgramRunnable(firstToken(cmd))) return 'none';
+  // the FIRST token (the program) on PATH first — if it isn't resolvable, the
+  // suite never started → 'env-blocked', never 'fail'.
+  if (!isProgramRunnable(firstToken(cmd))) return 'env-blocked';
   try {
     // C1: the test-run timeout is bounded by ALL of: the 5-min cap, the per-task
     // timeout, and the run's remaining wall-clock budget — so it can never push
@@ -76,16 +110,18 @@ export function runTestCommand(
       encoding: 'utf8',      // capture stdout/stderr to classify env-vs-real failures (I3)
       windowsHide: true,
     });
-    // spawnSync sets .error on spawn failure (ENOENT) or timeout (ETIMEDOUT).
-    if (res.error) return 'none';
-    // A killed/timed-out child has signal set and status null → treat as 'none'.
-    if (res.status === null) return 'none';
+    // spawnSync sets .error on spawn failure (ENOENT) or timeout (ETIMEDOUT) — the
+    // suite never produced a verdict → 'env-blocked' (not a test failure).
+    if (res.error) return 'env-blocked';
+    // A killed/timed-out child has signal set and status null → no usable verdict.
+    if (res.status === null) return 'env-blocked';
     if (res.status === 0) return 'pass';
-    // I3: non-zero — distinguish "couldn't run" (env/setup) from "ran + failed".
+    // ADR-0014: non-zero — env failure (suite never started) ONLY if the signature
+    // is in the runner PREAMBLE; a real fail printing "enoent" in its output stays 'fail'.
     const combined = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
-    return looksLikeEnvFailure(combined) ? 'none' : 'fail';
+    return preambleLooksLikeEnvFailure(combined) ? 'env-blocked' : 'fail';
   } catch {
-    return 'none';
+    return 'env-blocked';
   }
 }
 

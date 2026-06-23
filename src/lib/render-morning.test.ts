@@ -87,9 +87,27 @@ describe('renderMorning — test status line', () => {
     expect(out).not.toContain('tests: unknown');
   });
 
-  it("renders 'tests: none' for 'none' (configured-but-not-run / not pass-or-fail), NOT unknown", () => {
+  it("renders 'tests: none' for 'none' (legacy pre-ADR-0014 bucket), NOT unknown", () => {
     const out = renderMorning(branchWith('none'), false);
     expect(out).toContain('tests: none');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: could not run (environment)' for 'env-blocked' (ADR-0014)", () => {
+    const out = renderMorning(branchWith('env-blocked'), false);
+    expect(out).toContain('tests: could not run (environment)');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: skipped (partial/stopped)' for 'skipped' (ADR-0014), NOT unknown or none", () => {
+    const out = renderMorning(branchWith('skipped'), false);
+    expect(out).toContain('tests: skipped (partial/stopped)');
+    expect(out).not.toContain('tests: unknown');
+  });
+
+  it("renders 'tests: no test command' for 'no-command' (ADR-0014)", () => {
+    const out = renderMorning(branchWith('no-command'), false);
+    expect(out).toContain('tests: no test command');
     expect(out).not.toContain('tests: unknown');
   });
 

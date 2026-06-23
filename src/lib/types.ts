@@ -210,10 +210,17 @@ export type GleanConfig = {
 // - 'file':   a dossier/fetch-docs run wrote a markdown file at `path`.
 // - 'branch': a draft-impl run committed to `branch` (off `base`) in a linked
 //             worktree; the diff-stat fields feed the receipt/INDEX.
-// draft_tests status: glean's OWN deterministic check — after the session
-// commits, glean runs the project's test_command in the worktree.
-//   'pass' → exit 0, 'fail' → non-zero, 'none' → no command configured / unrunnable.
-export type DraftTestStatus = 'pass' | 'fail' | 'none';
+// draft_tests status (ADR-0014 — honest taxonomy): glean's OWN deterministic
+// check — after the session commits, glean runs the project's test_command in the
+// worktree. The PRODUCER set is 5 distinguishable states (the old overloaded 'none'
+// is split so the receipt can tell "couldn't run" from "ran and we skipped"):
+//   'pass'        → suite ran, exit 0 (the only assumption-free signal)
+//   'fail'        → suite ran to completion, non-zero, no env signature in the runner preamble
+//   'env-blocked' → suite NEVER started (unrunnable program / spawn ENOENT / env signature in the preamble)
+//   'skipped'     → a runnable command existed but glean chose not to run it (salvaged / STOP / out of budget)
+//   'no-command'  → no test_command configured, or nothing committed to test
+// ('unknown' is renderer-ONLY — for pre-ADR-0014 / NULL rows; never produced here.)
+export type DraftTestStatus = 'pass' | 'fail' | 'env-blocked' | 'skipped' | 'no-command';
 
 export type TaskOutput =
   | { kind: 'file'; path: string }
