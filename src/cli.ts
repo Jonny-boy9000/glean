@@ -113,11 +113,22 @@ const runCmd = defineCommand({
     }
     const budgetMs = parseBudget(args.budget as string);
     const taskTimeoutMs = parseBudget(args['task-timeout'] as string);
+    // ADR-0010 scheduled-auth: on a --drain run, inject the stored/ambient OAuth token
+    // (CLAUDE_CODE_OAUTH_TOKEN) into the spawn env + strip override vars, so a token-less
+    // unattended weekend drain can't 401 mid-window. Non-drain / no-token → process.env
+    // unchanged (the bare path stays byte-identical). The setup-token path is subscription
+    // auth, NOT an API key.
+    const { loadAuthToken, applyScheduledAuthEnv } = await import('./lib/auth-token.js');
+    const authTok = args.drain ? loadAuthToken(gleanRoot()) : null;
+    if (authTok) {
+      console.error(`[glean] drain auth: injecting CLAUDE_CODE_OAUTH_TOKEN (${authTok.source}); API-key / cloud-provider override vars stripped from the spawn env.`);
+    }
+    const claudeEnv = applyScheduledAuthEnv(process.env, authTok?.token ?? null);
     const pipelineOpts = {
       projectPath,
       gleanRoot: gleanRoot(),
       claudeBin,
-      claudeEnv: process.env,
+      claudeEnv,
       budgetMs,
       taskTimeoutMs,
       dryRun: Boolean(args['dry-run']),
@@ -686,7 +697,55 @@ const doctorCmd = defineCommand({
     const checks = runDoctor(probes);
     const useColor = Boolean(process.stdout.isTTY);
     process.stdout.write(renderDoctor(checks, useColor) + '\n');
+    // ADR-0010: surface the scheduled-drain auth posture (informational; not a hard check).
+    const { loadAuthToken } = await import('./lib/auth-token.js');
+    const at = loadAuthToken(gleanRoot());
+    process.stdout.write(at
+      ? `scheduled-auth (--drain): configured (${at.source}) — subscription OAuth token, no API key.\n`
+      : `scheduled-auth (--drain): none — a long unattended drain relies on your interactive login (may 401 mid-window). Set one with \`glean auth setup-token\`.\n`);
     process.exit(summarizeDoctor(checks).exitCode);
+  },
+});
+
+const authCmd = defineCommand({
+  meta: { name: 'auth', description: 'Manage the scheduled-drain OAuth token (claude setup-token → CLAUDE_CODE_OAUTH_TOKEN)' },
+  subCommands: {
+    'setup-token': defineCommand({
+      meta: { name: 'setup-token', description: 'Store a `claude setup-token` OAuth token (read from stdin) for unattended --drain auth' },
+      async run() {
+        const { validateToken, storeToken } = await import('./lib/auth-token.js');
+        if (process.stdin.isTTY) {
+          console.error('Run `claude setup-token` (it opens a browser and prints a ~1-year subscription OAuth token), then pipe it in:');
+          console.error('  claude setup-token | glean auth setup-token');
+          console.error('(or paste just the token:  echo <token> | glean auth setup-token)');
+          process.exit(2);
+        }
+        const v = validateToken(readFileSync(0, 'utf8'));
+        if (!v.ok) { console.error(`error: ${v.reason}`); process.exit(1); }
+        const p = storeToken(gleanRoot(), v.token);
+        console.log(`stored scheduled-auth token at ${p} (0600). It will be injected on \`glean run --drain\` (CLAUDE_CODE_OAUTH_TOKEN). Rotate by re-running; \`glean auth clear\` to remove.`);
+      },
+    }),
+    status: defineCommand({
+      meta: { name: 'status', description: 'Show whether a scheduled-auth token is configured' },
+      async run() {
+        const { loadAuthToken } = await import('./lib/auth-token.js');
+        const t = loadAuthToken(gleanRoot());
+        if (!t) {
+          console.log('scheduled-auth: none configured. --drain uses your interactive `claude` login (may 401 mid-window if it expires). Set one with `glean auth setup-token`.');
+          return;
+        }
+        const masked = t.token.length > 12 ? `${t.token.slice(0, 6)}…${t.token.slice(-4)}` : '****';
+        console.log(`scheduled-auth: configured (source: ${t.source}, ${masked}). Subscription OAuth (no API key), ~1-year. Injected on --drain runs.`);
+      },
+    }),
+    clear: defineCommand({
+      meta: { name: 'clear', description: 'Remove the stored scheduled-auth token' },
+      async run() {
+        const { clearToken } = await import('./lib/auth-token.js');
+        console.log(clearToken(gleanRoot()) ? 'cleared the stored scheduled-auth token.' : 'no stored scheduled-auth token to clear.');
+      },
+    }),
   },
 });
 
@@ -717,7 +776,7 @@ const gcCmd = defineCommand({
 
 const root = defineCommand({
   meta: { name: 'glean', description: 'Consume idle Claude Pro/Max capacity for speculative prep work' },
-  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, doctor: doctorCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd },
+  subCommands: { run: runCmd, stop: stopCmd, version: versionCmd, repair: repairCmd, today: todayCmd, rate: rateCmd, peek: peekCmd, morning: morningCmd, gc: gcCmd, doctor: doctorCmd, schedule: scheduleCmd, serve: serveCmd, projects: projectsCmd, usage: usageCmd, auth: authCmd },
 });
 
 export function main(argv: string[]): void {

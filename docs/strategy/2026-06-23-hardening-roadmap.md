@@ -66,7 +66,7 @@ subscription-auth/no-API-key holds; `max_parallel=1` becomes a *safety* invarian
    state in those words: on native Windows this finding is mitigated but NEVER resolved to a HARD boundary.**
    *(The sandbox special-cases linked worktrees — auto-allows the shared `.git` for refs/index but keeps
    `hooks/`+`config` denied — which exactly complements our existing hook-neuter.)*
-5. **`auth-token-path`** — build the buildable parts first: `auth-token.ts` (`loadOAuthToken` +
+5. **`auth-token-path`** — **SHIPPED (PR #36; the live Spike-A re-validation stays tracked-pending).** Build the buildable parts first: `auth-token.ts` (`loadOAuthToken` +
    `applyScheduledAuthEnv` stripping `ANTHROPIC_API_KEY`+`ANTHROPIC_AUTH_TOKEN`+the cloud flags),
    `glean auth setup-token|status|clear` (0600, rejects `sk-`), the drain-only gate, the `--bare`-never INVARIANT
    test, the doctor line. **Then** the empirical Spike-A re-validation (token-less CONTROL drain → token-backed
@@ -163,8 +163,8 @@ tracked-pending list**, or (c) a tracked watch tripwire — and the code↔ADR a
    (sandbox + read-scope confinement) **where the sandbox runs**; deny-list + scoped allow-list on every spawn
    (triage included); `max_parallel=1` is a documented *safety* invariant.
 4. **Baseline stated as the CURRENT live-verified count** everywhere (CLAUDE.md, handoff, PROJECT-MAP, ROADMAP,
-   every cluster's verification cell) — re-verify with `npx vitest run` and bump on each change. **836 passed +
-   8 skipped** as of sandbox-enforce 1a (PR #34); was 814+7 at Phase 0, 801 at the v0.10.0 release. A "green"
+   every cluster's verification cell) — re-verify with `npx vitest run` and bump on each change. **850 passed +
+   8 skipped** as of the setup-token auth path (PR #36); was 836+8 at sandbox-enforce 1a, 801 at the v0.10.0 release. A "green"
    claim cites the current number, never a stale literal.
 5. **PROJECT-MAP, ROADMAP, the decisions index, AND the handoff** are updated in the same change that adds/moves
    files; the handoff carries the per-cluster remediation status block.
@@ -174,7 +174,7 @@ tracked-pending list**, or (c) a tracked watch tripwire — and the code↔ADR a
    UNVERIFIED→ENFORCED/BUILT, archived, → CLOSED) or **ships visibly self-skipped**. **On native Windows the #1
    BROKEN finding is mitigated by Narrow/`strict_spawn` but NEVER resolved to HARD — the ADR and the CLAUDE.md
    constraint say so in those words.** A green CI that *skipped* these is never claimed as one that *proved* them.
-7. **`npm test` green (the current baseline + new — 836 + 8 as of PR #34), `tsc` + `lint` clean,** no skip-count
+7. **`npm test` green (the current baseline + new — 850 + 8 as of PR #36), `tsc` + `lint` clean,** no skip-count
    regression except the intentional new live-test skips (kept visible and explained — e.g. `v30`).
 
 ## Top actions (prioritized)

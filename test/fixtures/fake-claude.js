@@ -16,6 +16,22 @@ if (process.env.FAKE_CLAUDE_ARGV_OUT) {
   }
 }
 
+// Optional: dump the auth-relevant env this stub was spawned with, so a test can
+// assert glean's --drain CLAUDE_CODE_OAUTH_TOKEN injection + API-key stripping (ADR-0010).
+if (process.env.FAKE_CLAUDE_ENV_OUT) {
+  try {
+    const e = process.env;
+    appendFileSync(process.env.FAKE_CLAUDE_ENV_OUT, JSON.stringify({
+      CLAUDE_CODE_OAUTH_TOKEN: e.CLAUDE_CODE_OAUTH_TOKEN ?? null,
+      ANTHROPIC_API_KEY: e.ANTHROPIC_API_KEY ?? null,
+      ANTHROPIC_AUTH_TOKEN: e.ANTHROPIC_AUTH_TOKEN ?? null,
+      CLAUDE_CODE_USE_BEDROCK: e.CLAUDE_CODE_USE_BEDROCK ?? null,
+    }) + '\n');
+  } catch {
+    /* best effort */
+  }
+}
+
 const scenarioPath = process.env.FAKE_CLAUDE_SCENARIO;
 if (!scenarioPath) {
   console.error('FAKE_CLAUDE_SCENARIO env var required');
