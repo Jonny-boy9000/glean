@@ -54,4 +54,12 @@ describe('buildClaudeArgs (ADR-0013 / ADR-0009 argv invariants)', () => {
     expect(argv).not.toContain('--allowedTools');
     expect(argv).toContain('--disallowedTools');
   });
+
+  it('NEVER emits --bare (INVARIANT[ADR-0010] — --bare ignores CLAUDE_CODE_OAUTH_TOKEN)', () => {
+    // The scheduled-auth path injects CLAUDE_CODE_OAUTH_TOKEN into the spawn env; if
+    // glean ever passed --bare, claude would ignore it and a token-backed drain would
+    // silently fall back to /login (defeating the cause-fix). Guard against a future edit.
+    expect(buildClaudeArgs(BASE)).not.toContain('--bare');
+    expect(buildClaudeArgs({ ...BASE, allowedTools: 'Edit Write', settings: '{"sandbox":{"enabled":true}}' })).not.toContain('--bare');
+  });
 });

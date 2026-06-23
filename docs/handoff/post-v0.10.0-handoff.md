@@ -7,7 +7,7 @@
 **As of:** 2026-06-23. **v0.10.0 is published** (`@jonny-boy9000/glean@0.10.0`, merge `0c86ebf`, tag
 `v0.10.0`), built on **v0.9.0** (published the same day: capacity-governor wave-1 + the full-project-review
 hardening). `main` is clean; **post-v0.10.0 safety hardening landed (PRs #31–#34: audit remediation Phase 0 + Phase 1
-sandbox-enforce 1a)**. **836 tests + 8 skips** on `main` HEAD (the v0.10.0 npm release was 801; the
+sandbox-enforce 1a + setup-token auth)**. **850 tests + 8 skips** on `main` HEAD (the v0.10.0 npm release was 801; the
 safety-kernel work added the rest — the +1 skip is the `v30` live sandbox-enforcement proof, self-skipped off
 mac/Linux/WSL2). Build ✅, eslint ✅. Install: `npm i -g @jonny-boy9000/glean`.
 
@@ -54,14 +54,16 @@ roadmap's done-definition (CLOSED vs **TRACKED-PENDING**).
   `enforce_spawn`: `sandbox.ts` (availability detection + `buildSandboxSettings`) + the inline-`--settings`
   injection (pure `buildClaudeArgs`) + the Windows-fallback warning + argv/fallback tests — the HARD spawn boundary
   on mac/Linux/WSL2, Narrow fallback on Windows.
+- **PR #36 (Phase 1, setup-token auth)** — **[ADR-0010](../decisions/0010-auth-failure-handling.md)** scheduled-auth
+  path: `auth-token.ts` (`loadAuthToken`/`applyScheduledAuthEnv`/`storeToken`/`validateToken`) + `glean auth
+  setup-token|status|clear` + the **drain-only** `CLAUDE_CODE_OAUTH_TOKEN` injection (API-key strip, `--bare`-never)
+  + the doctor line; the `v32` drain-env-injection proof.
 
-**Phase 1 (NEXT):** the **`setup-token` scheduled-auth path** (cluster 5) — the ADR-0010 cause-fix: build
-`auth-token.ts` (`loadOAuthToken` + `applyScheduledAuthEnv` stripping API-key/auth-token), `glean auth
-setup-token|status|clear`, the drain-only gate + the `--bare`-never INVARIANT, then the live Spike-A re-validation.
-(sandbox-enforce **1b** — restore `node`/`npm run` under the active sandbox — + the live enforcement proof `v30`
-remain **tracked-pending** on non-Windows hardware.)
+**Phase 1 — COMPLETE (modulo tracked-pending).** Both clusters landed: sandbox-enforce **1a** (PR #34) + the
+**setup-token** auth path (PR #36). **Phase 2 NEXT:** draft test-status honesty → privacy / read-scope confinement →
+weekly-signal fusion. (sandbox-enforce **1b** + the live `v30`/Spike-A proofs remain tracked-pending below.)
 
-**QUEUED (Phase 1–3 of the roadmap — not yet built):** the `setup-token` scheduled-auth path (Phase 1); draft test-status honesty (Phase 2); privacy /
+**QUEUED (Phase 2–3 of the roadmap — not yet built):** draft test-status honesty (Phase 2); privacy /
 read-scope confinement + redaction (Phase 2); weekly-signal fusion + supersede ADR-0007 (Phase 2);
 `rateLimitType seven_day*` first-class (Phase 2); the watchlist as a `glean doctor`/dashboard feature (Phase 3);
 parallel-safety lock (Phase 3); the ranking validity guard + opt-in `--triage` (Phase 3).

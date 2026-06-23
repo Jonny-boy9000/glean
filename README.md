@@ -83,6 +83,7 @@ The Linux port is new and has had far less mileage than the Windows path — tre
 | `glean today` | Today's dossiers across all projects. |
 | `glean rate <id> <kept\|discarded\|actioned>` | Record whether a dossier was useful (usefulness telemetry). |
 | `glean doctor` | Environment preflight: Node 20+, `claude` on PATH, git (gh optional), config, native deps. Exits non-zero if a hard requirement is missing. |
+| `glean auth setup-token\|status\|clear` | Manage the scheduled-drain auth token. `claude setup-token` mints a ~1-year **subscription** OAuth token (no API key); pipe it into `glean auth setup-token` and glean injects it (`CLAUDE_CODE_OAUTH_TOKEN`) on `--drain` runs so a long unattended drain can't 401 mid-window. Stored `0600`; API-key env vars stripped from the spawn. |
 | `glean gc` | Expire draft-impl worktrees + `prep/glean-*` branches older than 21 days. |
 | `glean stop` | Halt the active run/drain between tasks. |
 

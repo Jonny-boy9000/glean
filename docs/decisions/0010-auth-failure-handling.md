@@ -1,12 +1,15 @@
 # ADR-0010 — Auth-failure handling (detect + stop loudly) and the scheduled-auth path
 
-- Status: **Accepted** (detection built 2026-06-23; the `setup-token` scheduled-auth path is designed, NOT built)
+- Status: **Accepted** (detection + the `setup-token` scheduled-auth path **BUILT** 2026-06-23; the live **Spike-A re-validation** is **TRACKED-PENDING** — do NOT promote to 're-validated' until a real multi-hour drain captures it)
 - Date: 2026-06-23
 - Enforced at: `src/lib/classify.ts` (`AUTH_ERROR_RE` + `isStreamAuthErrorLine`, tagged `ASSUMPTION[ADR-0009] UNVERIFIED`),
   `src/lib/spawn-claude.ts` (`SpawnOutcome.authError` + the `AUTH-CAPTURE` tripwire), `src/lib/pipeline.ts`
   (stops the run with `reason: 'auth-error'`, exit 50), `src/lib/render-morning.ts` (the receipt banner).
   Tests: `classify.test.ts` (AUTH detection), `v28-auth-error.test.ts` (exit 50 / reason `auth-error`),
-  `render-morning.test.ts` (banner).
+  `render-morning.test.ts` (banner). **Scheduled-auth path:** `src/lib/auth-token.ts` (`loadAuthToken` /
+  `applyScheduledAuthEnv` / `storeToken` / `validateToken`), `src/cli.ts` (`glean auth setup-token|status|clear`
+  + the `--drain` env injection + the doctor line). Tests: `auth-token.test.ts`, `v31-auth-cli`,
+  `v32-drain-auth-env` (the `--drain` token-injection + API-key-strip proof), `spawn-claude.test.ts` (`--bare`-never).
 
 ## Context
 
@@ -34,12 +37,17 @@ flags `TaskResult.authExpired`; `pipeline.ts` stops the run with `reason: 'auth-
 first flag — an expired token dooms every later spawn, so stopping is the correct, non-wasteful behavior — and
 `glean morning` renders a loud **"AUTH EXPIRED — re-run `claude /login`"** banner instead of a wall of failures.
 
-**2. The scheduled-auth path (designed, NOT built).** The robust fix for the underlying *cause* (non-interactive
-OAuth not refreshing) is to authenticate scheduled/drain runs via `claude setup-token` →
-`CLAUDE_CODE_OAUTH_TOKEN`. Re-verified live 2026-06-23: this is a **subscription** auth token (1-year,
-inference-only, **no API key** — it does *not* violate the "subscription auth, no API key" constraint), and it
-must **not** be combined with `--bare` (which ignores it). It is deliberately left unbuilt here, like the
-ADR-0008 seam: it changes the scheduler's credential handling and deserves its own change + live validation.
+**2. The scheduled-auth path (BUILT 2026-06-23).** The robust fix for the underlying *cause* (non-interactive
+OAuth not refreshing) authenticates scheduled/drain runs via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`
+(re-verified live 2026-06-23: a **subscription** token, 1-year, inference-only, **no API key** — does *not*
+violate the constraint). `glean auth setup-token` reads the token from stdin and stores it `0600` at
+`~/glean/state/auth-token` (rejecting an `sk-…` API key); `glean run --drain` injects it as
+`CLAUDE_CODE_OAUTH_TOKEN` **and strips** `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / the
+`CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY}` flags (claude precedence: API_KEY > AUTH_TOKEN > OAUTH_TOKEN > /login),
+so the subscription token wins; glean **never** passes `--bare` (it ignores the token — INVARIANT). The injection
+is **drain-only** — a plain `glean run` is byte-identical. **NEW tradeoff (recorded):** a long-lived
+`CLAUDE_CODE_OAUTH_TOKEN` at rest is a larger secret surface than the short-TTL `~/.claude/.credentials.json`;
+the drain-only injection + the strip-set + `0600` bound the blast radius.
 
 ## Status / what would change this
 
@@ -47,8 +55,10 @@ ADR-0008 seam: it changes the scheduler's credential handling and deserves its o
   it into a `classify.ts` fixture, tighten `AUTH_ERROR_RE` / `isStreamAuthErrorLine` to the verified shape, and
   promote it from UNVERIFIED. Until then, accept a small false-positive risk (an stderr auth-phrase or a
   structured 401 stops the run — conservative, and a stopped run is recoverable).
-- **Build the scheduled-auth path** when a live multi-hour drain reproduces a mid-drain 401 (the stale Spike-A
-  re-validation), or proactively. When built, **record the new tradeoff**: a long-lived `CLAUDE_CODE_OAUTH_TOKEN`
-  in env / Task Scheduler is a larger secret-at-rest surface than the short-TTL `~/.claude/.credentials.json`.
+- **The scheduled-auth path is now BUILT** (above). **TRACKED-PENDING:** the live **Spike-A re-validation** —
+  run one real multi-hour weekend drain (token-less CONTROL → token-backed TREATMENT) and confirm no mid-drain
+  401; **only then** promote this ADR to 're-validated' and flip the classify `UNVERIFIED` tag. Per the ADR-0001
+  discipline: do NOT promote before the capture. (The auth-error DETECTION already exits 50 + warns if a 401 does
+  occur, so an unattended drain fails loudly, not silently, in the meantime.)
 - **False-positive escape hatch:** if the UNVERIFIED detector ever stops healthy runs in practice, gate the
   run-stop behind the structured-401 signal only (keep the stderr regex as a softer, non-halting note).
