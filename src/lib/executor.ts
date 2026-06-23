@@ -12,6 +12,7 @@ import type { ModelRoutingConfig, PaceTier } from './model-routing.js';
 import { runClaude, classifySpawnSignal } from './spawn-claude.js';
 import {
   diffStat, commitsBeyondBase, autoCommitIfDirty, excludeFromWorktree, clearStaleIndexLock,
+  linkBaseNodeModules, unlinkNodeModulesLink,
   type DiffStat,
 } from './draft-git.js';
 import { runTestCommand } from './draft-test.js';
@@ -83,7 +84,7 @@ export type ExecCtx = {
     draft_insertions?: number;
     draft_deletions?: number;
     prep_branch?: string;
-    draft_tests?: string;
+    draft_tests?: DraftTestStatus;
   }) => void;
   // ADR-0013: resolved posture === 'enforce' (config.enforce_spawn set AND the OS
   // sandbox is available — mac/Linux/WSL2). When true, draft-impl/research spawns get
@@ -267,7 +268,10 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   const scratchDir = join(ctx.gleanRoot, 'work', '.glean-scratch', c.id);
   mkdirSync(scratchDir, { recursive: true });
   writeFileSync(join(scratchDir, 'prompt.md'), prompt);
-  excludeFromWorktree(main, worktree, ['prompt.md', 'OUT.md']);
+  // ADR-0014: also exclude the post-spawn node_modules link (belt-and-braces — a
+  // non-gitignoring project must never sweep the link into the prep branch). Writing
+  // the info/exclude pattern at worktree-add exposes nothing (config, not the deps).
+  excludeFromWorktree(main, worktree, ['prompt.md', 'OUT.md', 'node_modules', '/node_modules']);
 
   // CRITICAL 1 / ADR-0009: pass a SCOPED Bash allow-list, never bare `Bash`. The
   // allow-list bounds WHICH tools the model can call (no bare `Bash` → no
@@ -338,9 +342,22 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
     salvaged ||
     stopSet ||
     (remainingBudgetMs !== undefined && remainingBudgetMs <= 0);
+  // ASSUMPTION[ADR-0014]: make base node_modules reachable for glean's OWN
+  // out-of-session test run ONLY now — the live spawn finished (runClaude awaited
+  // above; spawn.descendantsDead consumed by clearStaleIndexLock; autoCommitIfDirty +
+  // diffStat already ran), so the link can't reach the spawn and doesn't exist at
+  // commit time. Skipped exactly when the test run is skipped.
+  let nmLink: { linked: boolean; path: string | null } = { linked: false, path: null };
+  if (!skipTests) nmLink = linkBaseNodeModules(main, worktree, spawn.descendantsDead);
+  // ADR-0014: the skip path is no longer the overloaded 'none' — 'no-command' when
+  // there's nothing to test, 'skipped' when a runnable command existed but glean
+  // chose not to run it (salvaged / STOP / out of budget).
   const tests: DraftTestStatus = skipTests
-    ? 'none'
+    ? (!hasCommit ? 'no-command' : 'skipped')
     : runTestCommand(ctx.testCommandFor?.(c.project_path), worktree, ctx.taskTimeoutMs, remainingBudgetMs);
+  // ADR-0014: tear the link down so the user never `cd`s into a worktree with a stray
+  // junction. unlinkNodeModulesLink removes ONLY the link (never the base it targets).
+  if (nmLink.linked && nmLink.path) unlinkNodeModulesLink(nmLink.path);
 
   // C2: recompute elapsed AFTER the test run so the recorded per-task duration
   // includes the time glean spent running tests (the old position excluded it).

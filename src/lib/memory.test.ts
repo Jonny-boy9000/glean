@@ -731,6 +731,26 @@ describe('Memory migration v5 (draft_tests)', () => {
     expect(latest!.candidates[0].draft_tests).toBe('pass');
     m.close();
   });
+
+  // ADR-0014: the new producer tokens ('env-blocked' / 'skipped' / 'no-command')
+  // persist to the same plain TEXT column (no CHECK constraint) — so they need NO
+  // schema migration. Round-trip one to prove the column accepts the new vocabulary.
+  it("persists a new ADR-0014 token ('skipped') round-trip with no migration", () => {
+    const m = new Memory(':memory:');
+    m.recordRun('run-skip', { project_path: 'C:\\Glean', budget_seconds: 3600, max_parallel: 1, glean_version: '0.10.0' });
+    const id = m.recordCandidate('run-skip', {
+      candidate_slug: 'd-skip', candidate_type: 'draft-impl', title: 'Handle TODO in b.ts',
+      source_signal: 'git-todo', file_path: 'b.ts', est_value: 1, est_tokens: 6000, priority_rank: 0,
+    });
+    m.recordOutcome(id, 'ok', {
+      started_at: 1, ended_at: 2, duration_ms: 1, stderr_rate_limit_hits: 0,
+      draft_files: 1, draft_insertions: 5, draft_deletions: 0, prep_branch: 'prep/glean-d-skip',
+      draft_tests: 'skipped',
+    });
+    const latest = m.getLatestRunWithCandidates();
+    expect(latest!.candidates[0].draft_tests).toBe('skipped');
+    m.close();
+  });
 });
 
 describe('Memory enrichment lookup', () => {

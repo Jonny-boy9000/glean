@@ -426,11 +426,11 @@ describe('isNonTrivialOutput (item 1)', () => {
     expect(isNonTrivialOutput(r)).toBe(true);
   });
   it('a draft branch with an empty diff (0 files) is trivial', () => {
-    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 0, insertions: 0, deletions: 0, tests: 'none' } };
+    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 0, insertions: 0, deletions: 0, tests: 'no-command' } };
     expect(isNonTrivialOutput(r)).toBe(false);
   });
   it('a draft branch with files but 0 changed lines is trivial', () => {
-    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 1, insertions: 0, deletions: 0, tests: 'none' } };
+    const r: TaskResult = { ...base, output: { kind: 'branch', branch: 'p', base: 'main', worktree: 'w', files: 1, insertions: 0, deletions: 0, tests: 'no-command' } };
     expect(isNonTrivialOutput(r)).toBe(false);
   });
   it('a result with no output is trivial', () => {

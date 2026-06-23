@@ -4,7 +4,7 @@
 > read this after `CLAUDE.md` to know *where everything lives* — including the parts that are
 > **not** in this git repo. Keep it current: see [How to keep this map current](#how-to-keep-this-map-current).
 >
-> **Last updated:** 2026-06-23 (post-audit safety hardening, PRs #31–#36 merged — Phase 1 complete: ADR-0013 `enforce_spawn` + ADR-0010 `setup-token` auth; **850 tests + 8 skips** on `main` HEAD — v0.10.0 npm was 801).
+> **Last updated:** 2026-06-23 (post-audit safety hardening, PRs #31–#36 merged + Phase 2 in progress — Phase 1 complete: ADR-0013 `enforce_spawn` + ADR-0010 `setup-token` auth; Phase 2: [ADR-0014](./decisions/0014-honest-draft-test-status.md) honest draft test-status taxonomy; **867 tests + 8 skips** on `feat/test-status-honesty` — v0.10.0 npm was 801).
 
 ---
 
@@ -89,8 +89,8 @@ is `src/lib/*.ts` (one responsibility per file). Grouped by subsystem:
 |------|-----|----------------|
 | `executor.ts` | ~430 | Per-candidate **orchestration** after the F7 split (2026-06-22): provision (worktree/dossier), render template, run the task, capture output, route to draft-impl commit/test. Spawn + git + test plumbing now live in the three files below. |
 | `spawn-claude.ts` | ~410 | The `claude -p` spawn state machine + rate-limit signal glue (stream-json + deny-list + wall-clock timeout + bounded kill grace), extracted from `executor.ts`. Holds the ADR-0003/0004 spawn invariants. |
-| `draft-git.ts` | ~140 | draft-impl git plumbing: worktree provision off `base_branch`, commit, diff-stat — extracted from `executor.ts`. |
-| `draft-test.ts` | ~130 | draft-impl post-commit test runner: runs the per-project `test_command` inside the worktree, bounded by budget/STOP, reports `pass`/`fail`/`none` — extracted from `executor.ts`. |
+| `draft-git.ts` | ~180 | draft-impl git plumbing: worktree provision off `base_branch`, commit, diff-stat — extracted from `executor.ts`. **+ ADR-0014** `linkBaseNodeModules`/`unlinkNodeModulesLink`: link base `node_modules` into the worktree post-spawn-death (junction on Windows / dir-symlink on POSIX) so glean's out-of-session test run resolves deps; teardown removes only the link (never `rmSync({recursive})`). |
+| `draft-test.ts` | ~150 | draft-impl post-commit test runner: runs the per-project `test_command` inside the worktree, bounded by budget/STOP. **ADR-0014 honest taxonomy** — reports `pass`/`fail`/`env-blocked`/`skipped`/`no-command` (a suite that never started is `env-blocked`, not a false `fail`); env-failure detection is **preamble-anchored** (`preambleOf`/`preambleLooksLikeEnvFailure` — a late `ENOENT` after a test fence stays `fail`). Extracted from `executor.ts`. |
 | `jobobject.ts` | 58 | Child-tree kill on timeout/stop: `taskkill /T /F` on Windows; detached process group + `kill(-pid)` on POSIX. |
 | `deny.ts` | 80 | The non-negotiable `--disallowedTools` deny-list applied to every spawn. |
 | `model-routing.ts` | 97 | **v0.9 model routing (ADR-0006)**: pure `resolveModel`/`resolveMaxTurns` — pool-aware `sonnet` base → task-type default → config `models`/`max_turns` override → pace-tier override (wave-2 `paceTier` hook). Every spawn gets `--model` + `--max-turns`; `task.start` logs the resolved model. |

@@ -12,8 +12,9 @@ export type MorningBranchEntry = {
   insertions: number;
   deletions: number;
   status: string;
-  // 'pass' | 'fail' | 'none' | 'unknown' — best-effort test status from the run.
-  test_status: 'pass' | 'fail' | 'none' | 'unknown';
+  // ADR-0014: the 5 producer states + a legacy 'none' bucket (pre-ADR-0014 rows) +
+  // renderer-only 'unknown' (NULL / unrecognized).
+  test_status: 'pass' | 'fail' | 'env-blocked' | 'skipped' | 'no-command' | 'none' | 'unknown';
 };
 
 export type MorningFileEntry = {
@@ -203,15 +204,19 @@ export function outcomeLine(reason: string | null, c: Painter): string {
   }
 }
 
-// Surface the captured deterministic test status verbatim (pass | fail | none).
-// 'unknown' is ONLY for runs recorded before the v5 migration, where the field
-// is genuinely absent — never for a configured-but-skipped test.
-function describeTest(s: MorningBranchEntry['test_status']): string {
+// ADR-0014: humanize the captured deterministic test status — distinct phrases so the
+// receipt stops conflating "couldn't run" with "ran and we skipped". 'unknown' is ONLY
+// for pre-ADR-0014 / NULL rows; 'none' is the legacy bucket for pre-ADR-0014 literals —
+// never for a configured-but-skipped test (that's 'skipped'). Shared by render-receipt.
+export function describeTest(s: MorningBranchEntry['test_status']): string {
   switch (s) {
-    case 'pass': return 'pass';
-    case 'fail': return 'fail';
-    case 'none': return 'none';
-    default:     return 'unknown';
+    case 'pass':        return 'pass';
+    case 'fail':        return 'fail';
+    case 'env-blocked': return 'could not run (environment)';
+    case 'skipped':     return 'skipped (partial/stopped)';
+    case 'no-command':  return 'no test command';
+    case 'none':        return 'none';      // legacy pre-ADR-0014 rows
+    default:            return 'unknown';   // NULL / unrecognized — pre-feature
   }
 }
 
