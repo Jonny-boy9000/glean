@@ -70,11 +70,34 @@ describe('draftImplAllowedTools (CRITICAL 1: scoped Bash allow-list)', () => {
     expect(allow).toContain('Bash(cargo test:*)');
   });
 
-  it('default test allow-list covers the npm/node toolchain', () => {
+  it('default test allow-list grants the declared test runners', () => {
     expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(npm test:*)');
-    expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(npm run:*)');
     expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(npx vitest:*)');
-    expect(DEFAULT_TEST_COMMAND_ALLOW).toContain('Bash(node:*)');
+  });
+
+  it('ADR-0009: the default EXCLUDES the arbitrary-code verbs node + npm run', () => {
+    // `node -e ...` and `npm run <script>` execute a subprocess OUTSIDE the
+    // permission layer, and native Windows has no OS sandbox to contain it — so
+    // they are deliberately NOT in the default draft-impl allow-list.
+    expect(DEFAULT_TEST_COMMAND_ALLOW).not.toContain('Bash(node:*)');
+    expect(DEFAULT_TEST_COMMAND_ALLOW).not.toContain('Bash(npm run:*)');
+    const allow = draftImplAllowedTools(DEFAULT_TEST_COMMAND_ALLOW);
+    expect(allow).not.toContain('Bash(node:*)');
+    expect(allow).not.toContain('Bash(npm run:*)');
+  });
+
+  it('ADR-0009 strict_spawn: an empty test-command set drops ALL in-session code execution', () => {
+    // cli.ts passes [] when config.strict_spawn is true — leaving only Edit/Write
+    // (bounded to the worktree via --add-dir) + the read/commit git verbs.
+    const allow = draftImplAllowedTools([]);
+    const tokens = allow.match(/Bash\([^)]*\)|\S+/g) ?? [];
+    expect(tokens).toEqual([
+      'Edit', 'Write',
+      'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git status:*)', 'Bash(git diff:*)',
+    ]);
+    expect(allow).not.toContain('Bash(npm');
+    expect(allow).not.toContain('Bash(node');
+    expect(allow).not.toContain('Bash(npx');
   });
 });
 
@@ -123,10 +146,10 @@ describe('researchAllowedTools (read-only scope for research-dossier spawns)', (
 });
 
 describe('draft-impl regression guard (research change must not alter it)', () => {
-  it('draftImplAllowedTools output is byte-for-byte unchanged', () => {
+  it('draftImplAllowedTools output is the expected scoped allow-list (ADR-0009 narrow default)', () => {
     expect(draftImplAllowedTools(DEFAULT_TEST_COMMAND_ALLOW)).toBe(
       'Edit Write Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) ' +
-      'Bash(npm test:*) Bash(npm run:*) Bash(npx vitest:*) Bash(node:*)',
+      'Bash(npm test:*) Bash(npx vitest:*)',
     );
   });
 

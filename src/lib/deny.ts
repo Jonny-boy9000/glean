@@ -1,10 +1,23 @@
-// Centralized claude -p --disallowedTools deny-lists (T4).
+// Centralized claude -p --allowedTools / --disallowedTools lists (T4).
 //
-// These are load-bearing safety constraints from CLAUDE.md. Spawned sessions
-// run with subscription auth against the user's machine; the deny-list is the
-// in-session guard that stops a runaway model from publishing or rewriting refs.
-// Worktree isolation is the *real* guarantee (git refuses to let a linked
-// worktree mutate another worktree's HEAD); this list is defense-in-depth.
+// These are load-bearing safety constraints from CLAUDE.md. Spawned sessions run
+// with subscription auth against the user's machine. The boundary model is
+// LAYERED — read ADR-0009 before changing any list here:
+//   1. A scoped, default-deny ALLOW-LIST (below): the spawn never gets bare
+//      `Bash`, so the only tools the model can call are the ones we name.
+//   2. Built-in Edit/Write are bounded to the worktree via `--add-dir` — that is
+//      the real *filesystem-write* boundary for the tools claude itself controls.
+//   3. Worktree isolation (git refuses to let a linked worktree mutate another
+//      worktree's HEAD) and the DENY-LIST are in-session defense-in-depth against
+//      ref publishing/mutation. Neither is the filesystem boundary on its own.
+//
+// IMPORTANT (ADR-0009): an allow-listed INTERPRETER verb (a test runner, `node`,
+// `npm run`) executes a subprocess OUTSIDE the permission layer — claude's
+// permission rules do NOT constrain what that subprocess then reads/writes, and
+// native Windows has NO OS sandbox to contain it (the sandbox is macOS/Linux/WSL2
+// only). So in-session code execution is NOT a hard filesystem boundary on
+// Windows: we narrow it by default (no `node`/`npm run`), and `config.strict_spawn`
+// drops it entirely for a hard guarantee at the cost of in-session test runs.
 
 // Blocked on EVERY spawn (dossier, fetch-docs, draft-impl):
 const PUSH = 'Bash(git push:*)';            // never publish to a remote
@@ -43,6 +56,11 @@ export const DRAFT_IMPL_DENY = [BASE_DENY, SWITCH, BRANCH, RESET, WORKTREE, GIT_
 // commit-cycle verbs the model needs to stage/commit its own draft, plus a
 // per-project test-command set. Anything not on this list is denied by default,
 // so a re-targeted `git -C`, a raw `rm`, or a stray `curl` simply cannot run.
+// CAVEAT (ADR-0009): the test-command set is the ONE code-execution surface — an
+// allow-listed runner spawns a subprocess outside the permission layer. We keep
+// the surface as small as possible (declared runners only, no `node`/`npm run`)
+// and `config.strict_spawn` removes it; a true OS-level guarantee needs the
+// sandbox (macOS/Linux/WSL2), which native Windows does not provide.
 //
 // Capability/safety tradeoff: a tighter list means a more capable model is
 // occasionally blocked from a legitimate helper command (e.g. `git log`), which
@@ -55,13 +73,21 @@ const DRAFT_IMPL_GIT_ALLOW = [
   'Bash(git diff:*)',    // inspect changes
 ] as const;
 
-// Default test-command prefixes (Node/TS projects). Per-project overrides come
-// from config.json `projects[path].test_command`; see config.ts.
+// Default test-command prefixes (Node/TS projects), so a draft-impl session can
+// run the suite and iterate toward a green draft. Per-project overrides come from
+// config.json `projects[path].test_command`; see config.ts.
+//
+// ADR-0009 (Narrow default): the two ARBITRARY-CODE verbs — `node` (`node -e …`)
+// and `npm run` (any package.json script) — are deliberately EXCLUDED here. They
+// are the most direct way for an in-session subprocess to write OUTSIDE the
+// worktree, and native Windows has no OS sandbox to stop it. The declared test
+// runners (`npm test`, `npx vitest`, or a per-project `test_command`) remain so
+// the model can still verify its own draft. `config.strict_spawn: true` collapses
+// the test-command allow-list to empty (no in-session code execution at all) for
+// users who want the hard "read-only against main" guarantee over draft quality.
 export const DEFAULT_TEST_COMMAND_ALLOW = [
   'Bash(npm test:*)',
-  'Bash(npm run:*)',
   'Bash(npx vitest:*)',
-  'Bash(node:*)',
 ] as const;
 
 // Build the draft-impl --allowedTools string from the fixed Edit/Write + git

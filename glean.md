@@ -18,7 +18,7 @@ These supersede any conflicting language elsewhere in the doc.
 - **OS target:** Windows-first. Development happens on Windows 11 (`C:\Glean`). macOS/Linux ports are post-MVP. References to bash scripts (`lib/discover-git.sh`, `lib/executor.sh`) are replaced with Node/TS modules; `launchd`/cron scheduling is deferred and replaced by Windows Task Scheduler for the schedule MVP.
 - **Language:** Node + TypeScript. `bin/glean` is a Node CLI; `lib/*` are `.ts` files. No Python, no Bash core. Shell-out only for `git` and `gh` subprocess calls.
 - **Base branch resolution:** per-project, explicit. `~/glean/config.json` (or `%USERPROFILE%\glean\config.json` on Windows) maps `project_path → base_branch`. No autodetection in MVP. Missing entry → skip `draft-impl` candidates for that project with a warning.
-- **`est_value` / `est_tokens` for MVP:** pure heuristics from discovery evidence. `est_value` = weighted sum of signal strength (TODO count, branch staleness in days, PR comment count, file recency); `est_tokens` = template size + evidence excerpt size × 1.3. No upfront `claude -p` triage pass in MVP. If post-MVP ranking proves unreliable, swap in a triage pass; otherwise keep heuristics.
+- **`est_value` / `est_tokens` for MVP:** pure heuristics from discovery evidence. `est_value` = weighted sum of signal strength (TODO count, branch staleness in days, PR comment count, file recency); `est_tokens` = a coarse per-source constant (≈2000–6000 tokens by discovery source; hardcoded in `discover-*.ts`, *not* a per-candidate template/excerpt size estimate). No upfront `claude -p` triage pass in MVP. If post-MVP ranking proves unreliable, swap in a triage pass; otherwise keep heuristics.
 
 ---
 

@@ -287,3 +287,11 @@ describe('renderMorning — color vs plain', () => {
     expect(out).toContain('2026-06-01-0312-abc123');
   });
 });
+
+describe('renderMorning — auth-error outcome (ADR-0009)', () => {
+  it('surfaces a loud AUTH EXPIRED banner with the re-login instruction', () => {
+    const out = renderMorning(baseReport({ exit_reason: 'auth-error' }), false);
+    expect(out).toContain('AUTH EXPIRED');
+    expect(out).toContain('claude /login');
+  });
+});

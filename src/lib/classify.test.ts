@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyRateLimit, classifyStreamJson, parseRateLimitEventResetAt } from './classify.js';
+import { classifyRateLimit, classifyStreamJson, parseRateLimitEventResetAt, AUTH_ERROR_RE, isStreamAuthErrorLine } from './classify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(
@@ -442,5 +442,53 @@ describe('parseRateLimitEventResetAt (rate_limit_event enrichment)', () => {
   it('returns null for a rate_limit_event missing resetsAt', () => {
     const text = '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}';
     expect(parseRateLimitEventResetAt(text)).toBeNull();
+  });
+});
+
+// ADR-0009: auth-error detection (UNVERIFIED shape — capture-armed in spawn-claude).
+describe('AUTH_ERROR_RE (claude stderr auth-failure prose)', () => {
+  it('matches the common auth-failure phrasings', () => {
+    expect(AUTH_ERROR_RE.test('Invalid API key · Please run /login')).toBe(true);
+    expect(AUTH_ERROR_RE.test('Error: please log in')).toBe(true);
+    expect(AUTH_ERROR_RE.test('OAuth token expired')).toBe(true);
+    expect(AUTH_ERROR_RE.test('authentication_error: not authenticated')).toBe(true);
+    expect(AUTH_ERROR_RE.test('credentials expired, re-run login')).toBe(true);
+    expect(AUTH_ERROR_RE.test('401 Unauthorized')).toBe(true);
+    expect(AUTH_ERROR_RE.test('session expired')).toBe(true);
+  });
+
+  it('does NOT match ordinary output / a dossier that merely mentions auth', () => {
+    expect(AUTH_ERROR_RE.test('Implemented OAuth login flow for the app')).toBe(false);
+    expect(AUTH_ERROR_RE.test('The user authentication module looks fine')).toBe(false);
+    expect(AUTH_ERROR_RE.test('rate limit reached')).toBe(false);
+    expect(AUTH_ERROR_RE.test('')).toBe(false);
+  });
+});
+
+describe('isStreamAuthErrorLine (structured 401 / authentication result)', () => {
+  it('flags a result line carrying HTTP 401', () => {
+    expect(isStreamAuthErrorLine(
+      '{"type":"result","is_error":true,"api_error_status":401,"result":"Unauthorized"}',
+    )).toBe(true);
+  });
+
+  it('flags a top-level authentication_error', () => {
+    expect(isStreamAuthErrorLine(
+      '{"type":"assistant","error":"authentication_error","message":{}}',
+    )).toBe(true);
+  });
+
+  it('does NOT flag a 429 rate-limit result (that is the block path, not auth)', () => {
+    expect(isStreamAuthErrorLine(
+      '{"type":"result","is_error":true,"api_error_status":429,"result":"session limit"}',
+    )).toBe(false);
+  });
+
+  it('does NOT flag ordinary content mentioning authentication, and tolerates junk', () => {
+    expect(isStreamAuthErrorLine(
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"add authentication"}]}}',
+    )).toBe(false);
+    expect(isStreamAuthErrorLine('not json 401')).toBe(false);
+    expect(isStreamAuthErrorLine('')).toBe(false);
   });
 });

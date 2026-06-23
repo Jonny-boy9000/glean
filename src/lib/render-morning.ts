@@ -193,6 +193,11 @@ export function outcomeLine(reason: string | null, c: Painter): string {
     case 'pace-skip':
       // PIECE 3: the pacing gate said there is no slack this week → spent nothing.
       return c.dim('Outcome: skipped by the pacing gate (no slack this week).');
+    case 'auth-error':
+      // ADR-0009: a spawn could not authenticate (expired/missing login). This is
+      // the "silently dead drain" guard — surface it loudly so it can't hide as a
+      // pile of failed tasks.
+      return c.red('Outcome: AUTH EXPIRED — glean could not authenticate. Re-run `claude /login` (or refresh CLAUDE_CODE_OAUTH_TOKEN), then run again.');
     default:
       return c.dim(`Outcome: ${reason ?? 'unknown'}.`);
   }

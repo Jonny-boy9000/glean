@@ -37,6 +37,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig(p)).toThrow(/claude_bin/);
   });
 
+  // ADR-0009: opt-in hard-close of the draft-impl in-session allow-list.
+  it('parses strict_spawn', () => {
+    const p = tmpFile(JSON.stringify({ strict_spawn: true }));
+    expect(loadConfig(p).strict_spawn).toBe(true);
+  });
+
+  it('leaves strict_spawn undefined when absent (Narrow default)', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).strict_spawn).toBeUndefined();
+  });
+
+  it('rejects a non-boolean strict_spawn', () => {
+    const p = tmpFile(JSON.stringify({ strict_spawn: 'yes' }));
+    expect(() => loadConfig(p)).toThrow(/strict_spawn/);
+  });
+
   // v0.8.2 item 1: configurable circuit-breaker threshold on drain_trigger.
   it('parses drain_trigger.max_unproductive', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 5 } }));

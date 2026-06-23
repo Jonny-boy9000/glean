@@ -7,22 +7,26 @@
 
 > **🍎 macOS / Linux:** glean is Windows-first, with **Linux support in beta** (see [Linux (beta)](#linux-beta)). macOS is the remaining gap — tracked in [issue #1](https://github.com/Jonny-boy9000/glean/issues/1), PRs very welcome.
 
-You're on a Claude Pro or Max subscription. The weekly rate-limit window resets Saturday morning. By Thursday and Friday you've often spent the high-value work and have unused capacity that **doesn't roll over**.
+You're on a Claude Pro or Max subscription. The weekly rate-limit window resets at a fixed time each week assigned to your account — not a fixed calendar day, and glean learns yours. By the tail of your week you've often spent the high-value work and have unused capacity that **doesn't roll over**.
 
 `glean` is a local CLI that, during that idle tail-window, spawns its own headless `claude -p` sessions to do *speculative* prep work on your existing projects — **drafting reviewable code branches** for your top TODOs (in isolated git worktrees, never touching `main`), drafting research dossiers, and pre-fetching library docs. Point Windows Task Scheduler at it (`glean schedule enable`) and it **drains the whole weekend's leftover capacity unattended** — exiting and re-launching itself across each 5-hour rate-limit window until the weekly cap resets. Monday morning you run `glean morning` and get a receipt of everything it did.
 
 > *gleaning* (n.) — the practice of gathering leftover crops from the field after the main harvest. `glean` does the same with unused capacity at the tail of your weekly rate-limit window.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/glean-morning.png" alt="glean morning receipt: an AI-drafted branch with a verified 'tests: pass', main branch untouched" width="760">
+  <img src="https://raw.githubusercontent.com/Jonny-boy9000/glean/main/docs/assets/glean-morning.png" alt="glean morning receipt: an AI-drafted branch with a best-effort 'tests: pass', main branch untouched" width="760">
 </p>
-<p align="center"><em><code>glean morning</code> — the Monday-morning payoff: a reviewable draft branch with a verified <code>tests: pass</code>, your <code>main</code> never touched.</em></p>
+<p align="center"><em><code>glean morning</code> — the Monday-morning payoff: a reviewable draft branch with a best-effort <code>tests: pass</code> (glean re-runs your test command out-of-session to check), your <code>main</code> never touched.</em></p>
 
 ---
 
 ## Is this allowed?
 
-**Yes.** `glean` drives *your own* logged-in Claude Code CLI — the same headless `claude -p` invocations you could type by hand. No API key, no proxying, no shared accounts. You're using *your* subscription, just on a schedule.
+**As of 2026-06-23, yes — with honest caveats.** `glean` drives *your own* logged-in Claude Code CLI via headless `claude -p` — Anthropic's own official binary. No API key, no proxying, no shared accounts, **no token extraction**. That makes it categorically different from the third-party token-extraction harnesses Anthropic has acted against (the "OpenClaw" class). Today, headless `claude -p` still draws from your normal Pro/Max subscription limits.
+
+Two qualifications we'd rather state than bury:
+1. Anthropic's Consumer Terms permit non-API automation "where we otherwise explicitly permit it"; glean drives the *official* CLI, which is the gray-but-defensible basis here. *Unattended/scheduled* use specifically isn't spelled out either way.
+2. Anthropic announced — then **paused** (June 2026) — a change that would meter headless `claude -p` onto separate credits. If it returns, glean's free-idle-capacity premise changes, and it's built to adapt ([ADR-0008](./docs/decisions/0008-spawn-backend-seam.md)). We watch this weekly.
 
 (The earlier, rejected design for this project *was* an MCP that resold leftover tokens. That idea is documented as explicitly dropped in [`glean.md`](./glean.md) §2 because it would have violated Anthropic's Usage Policies and Commercial Terms.)
 
@@ -102,7 +106,7 @@ Four discovery sources run in parallel:
 3. **Recently-added dependencies** in `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, `pyproject.toml` (last 14 days via `git log`).
 4. **The project's own planning docs** (`discover-docs`) — mines `ROADMAP`/`TODO`/`BACKLOG`/`PLAN`, `docs/ROADMAP.md`, `docs/handoff/*.md`, and planning-titled root `*.md` for "up next" list items and unchecked `- [ ]` tasks, so the work you already wrote down becomes prep candidates.
 
-Each candidate becomes a single `claude -p` invocation, sandboxed inside a Windows Job Object so the child tree dies cleanly on Ctrl-C or `glean stop`. The spawned Claude session runs with a `--disallowedTools` deny-list blocking `git push`, `git switch`/`checkout`/`reset`/`branch`/`worktree`, and `gh pr` mutations — speculative work only, no production-affecting changes.
+Each candidate becomes a single `claude -p` invocation, wrapped in a Windows Job Object so the child tree dies cleanly on Ctrl-C or `glean stop` (the Job Object bounds process *lifetime*, not filesystem access). The spawned Claude session runs with a `--disallowedTools` deny-list blocking `git push`, `git switch`/`checkout`/`reset`/`branch`/`worktree`, and `gh pr` mutations, plus a scoped `--allowedTools` allow-list — so `main` is never checked out, pushed, or merged. Speculative work only.
 
 **Code drafts (`draft-impl`).** For a project with a `base_branch` set in config, the single highest-value TODO is implemented into an isolated `git worktree` on a `prep/glean-*` branch off that base. Your `main` is never checked out, mutated, pushed, or merged — review by `cd`-ing into the worktree (the receipt prints the exact command). glean runs the project's `test_command` inside the worktree and reports `pass`/`fail`/`none`.
 
@@ -163,7 +167,7 @@ Each linked `OUT.md` is a structured note Claude wrote during the idle window �
     <task-id>.stderr                  ← raw stderr
 ```
 
-Run `glean morning` (or open `RECEIPT.md`) for the human-readable summary: each draft branch with its diff stat and verified test status, the review/discard commands, dossiers, and an honest capacity line. `glean morning --md` prints it as Markdown to paste into a PR or Slack.
+Run `glean morning` (or open `RECEIPT.md`) for the human-readable summary: each draft branch with its diff stat and best-effort test status (glean re-runs your test command out-of-session; `pass`/`fail`/`none`), the review/discard commands, dossiers, and an honest capacity line. `glean morning --md` prints it as Markdown to paste into a PR or Slack.
 
 ---
 
@@ -200,6 +204,7 @@ Yes, on Windows and Linux. `glean schedule enable --project <path>` registers on
 | 20 | Claude rate-limit detected — stopped cleanly |
 | 30 | STOP sentinel triggered (`glean stop`) |
 | 40 | Another `glean run` is holding the lock |
+| 50 | Claude auth failed (expired/missing login) — stopped cleanly; re-run `claude /login` |
 | 1 | Unexpected error |
 
 The orchestrator also writes a structured ndjson event log at `%USERPROFILE%\glean\logs\<run-id>\orchestrator.log` and a final `summary.json` capturing reason + counts.
@@ -237,6 +242,7 @@ Add this to `~/.claude/settings.json`:
 ```json
 {
   "claude_bin": "claude",
+  "strict_spawn": false,
   "projects": {
     "C:\\code\\my-app": {
       "base_branch": "main",
@@ -251,6 +257,7 @@ Add this to `~/.claude/settings.json`:
 ```
 
 - **`claude_bin`** — point at a specific `claude` executable if it isn't on PATH.
+- **`strict_spawn`** — safety posture for the `draft-impl` spawn (default `false`). On native Windows there is no OS sandbox, so an in-session test runner executes a subprocess *outside* Claude Code's permission layer. By default glean already excludes the arbitrary-code verbs `node`/`npm run` and keeps only your declared test runner so a draft can still self-verify. Set `strict_spawn: true` to drop in-session code execution **entirely** — the session can only edit files inside the worktree and run `git add`/`commit` — a hard "read-only against `main`" guarantee on every platform, at the cost of the model running your tests in-session (glean still re-runs them out-of-session for the receipt's status). See [ADR-0009](./docs/decisions/0009-spawned-session-trust-boundary.md).
 - **`projects.<absolute-path>.base_branch`** — **enables code drafts (`draft-impl`)** for that project; the draft worktree is branched off this ref. Without it, that project gets dossiers/docs only.
 - **`projects.<absolute-path>.test_command`** — what glean runs inside the draft worktree to capture a `pass`/`fail`/`none` test status (also scopes the draft session's Bash allow-list).
 - **`drain_trigger`** — overrides the scheduler default (day/time/repetition). Omit it to let `glean schedule enable` auto-detect the day from your timezone.
