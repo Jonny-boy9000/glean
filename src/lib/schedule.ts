@@ -1,6 +1,12 @@
 /**
  * schedule.ts — scheduled weekly drain for `glean schedule`.
  *
+ * ASSUMPTION[ADR-0011] UNVERIFIED — registering an UNATTENDED/scheduled `claude -p`
+ * drain rests on the gray-but-defensible ToS basis (the official binary, Consumer-Terms
+ * §3 "explicitly permit it", NOT the OpenClaw class); the unattended-vs-interactive edge
+ * is untested, and the metered-billing un-pause is the existential tripwire. See
+ * docs/decisions/0011-tos-basis-for-scheduled-claude-p.md + docs/watchlist/tos-automation-drift.md.
+ *
  *   - win32: Windows Task Scheduler (the original, live-validated path).
  *   - linux: systemd USER timer (glean-drain.timer + glean-drain.service in
  *     ~/.config/systemd/user/), with a crontab fallback when systemd --user

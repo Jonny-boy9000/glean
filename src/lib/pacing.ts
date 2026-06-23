@@ -107,7 +107,10 @@ export const BLIND_SPOT_NOTE =
   'Blind spot: claude.ai web/desktop chat and other machines share the weekly cap ' +
   'but write no local JSONL here — an under-pace reading may be wrong if usage ' +
   'shifted elsewhere. Config: pacing.haircut (0-1) discounts for this; ' +
-  'pacing.enabled:false turns the gate off.';
+  'pacing.enabled:false turns the gate off. Note (ADR-0012): "free idle capacity" ' +
+  'assumes you have an idle tail on the SHARED weekly pool — check this before ' +
+  'enabling the drain; and if you opted into extra usage (Settings>Usage, off by ' +
+  'default), draining past the included limit is billed at API rates.';
 
 /** Weighted-token total for one day's per-family raw counts. */
 export function weighDay(

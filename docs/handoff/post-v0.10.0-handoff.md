@@ -4,10 +4,11 @@
 > This is the **only live handoff** (convention: exactly one live handoff in `docs/handoff/`; superseded
 > ones move to `docs/archive/` — the previous one is at [`docs/archive/post-v0.9.0-handoff.md`](../archive/post-v0.9.0-handoff.md)).
 
-**As of:** 2026-06-22. **v0.10.0 is published** (`@jonny-boy9000/glean@0.10.0`, merge `0c86ebf`, tag
+**As of:** 2026-06-23. **v0.10.0 is published** (`@jonny-boy9000/glean@0.10.0`, merge `0c86ebf`, tag
 `v0.10.0`), built on **v0.9.0** (published the same day: capacity-governor wave-1 + the full-project-review
-hardening). `main` is clean at v0.10.0. **801 tests + 7 skips.** Build ✅, eslint ✅. Install:
-`npm i -g @jonny-boy9000/glean`.
+hardening). `main` is clean; **post-v0.10.0 safety hardening landed (PRs #31/#32 + Phase-0)**. **814 tests +
+7 skips** on `main` HEAD (the v0.10.0 npm release was 801; the safety-kernel work added the rest). Build ✅,
+eslint ✅. Install: `npm i -g @jonny-boy9000/glean`.
 
 > **🧭 STRATEGY IS NOW PINNED (2026-06-22).** A verified competitive review + a codebase coupling audit
 > set the project's direction — read before any "where should this go" work:
@@ -30,28 +31,35 @@ hardening). `main` is clean at v0.10.0. **801 tests + 7 skips.** Build ✅, esli
 > guards. Review: [`docs/reviews/2026-06-21-full-project-review.md`](../reviews/2026-06-21-full-project-review.md);
 > audit: [`docs/strategy/2026-06-23-assumption-audit.md`](../strategy/2026-06-23-assumption-audit.md).
 
-## 2026-06-23 — assumption audit + GTM research + safety hardening (this session)
+## 2026-06-23 — assumption-audit remediation (status tracker; every later PR bumps this)
 
-Two multi-agent research passes + a partial implementation. **806 tests + 7 skips, build ✅.**
-- **New docs:** [`docs/strategy/2026-06-23-assumption-audit.md`](../strategy/2026-06-23-assumption-audit.md)
-  (red-team of every CLAUDE.md load-bearing assumption → risk-ranked register) and
-  [`docs/strategy/2026-06-23-go-to-market-distribution.md`](../strategy/2026-06-23-go-to-market-distribution.md)
-  (GTM/distribution plan; **builds on** `docs/launch/`, doesn't replace it).
-- **Landed:** [ADR-0009](../decisions/0009-spawned-session-trust-boundary.md) + the spawned-session safety fix
-  (Narrow default + `strict_spawn` + hook-neuter); honesty edits (README "Is this allowed?" → dated/conditional,
-  "verified tests: pass" → "best-effort", the false "resets Saturday" calendar copy, the Job-Object mislabel;
-  the `est_tokens` "×1.3" doc-lie corrected in CLAUDE.md + glean.md; caching-rationale precision); repo/npm
-  discoverability hygiene (GitHub topics + description + homepage set live; npm keywords expanded).
-- **Still open (from the audit, NOT yet done):**
-  1. **401/`authentication_error` detection** on the `glean morning` receipt + adopt `claude setup-token` →
-     `CLAUDE_CODE_OAUTH_TOKEN` as the scheduled-auth path (subscription, no API key) → write **ADR-0010**.
-  2. **A real enforcement test** against the live `claude` binary (a spawn that attempts an out-of-worktree
-     `fs.writeFileSync` and asserts refusal) — the fake-claude stub can't prove the boundary (ADR-0009).
-  3. **Enable the OS sandbox on macOS/Linux/WSL2** to restore safe in-session code execution (ADR-0009 deferred).
-  4. **`docs/launch/*` staleness patch** (406→806 tests, v0.8.1→v0.10.0, add dashboard/Linux/`glean usage`) +
-     the GTM **launch DIFF**; the hero GIF + 1280×640 social-preview PNG **need the user** (recording/asset).
-  5. **Pivot pacing onto the server-truthful weekly signal** (`rate_limits.seven_day`, ADR-0007 follow-up) and
-     teach `classify.ts` the `seven_day*` weekly shape first-class (cheap ADR-0003 hardening).
+The 2026-06-23 [assumption audit](../strategy/2026-06-23-assumption-audit.md) is being worked through per the
+[**hardening roadmap**](../strategy/2026-06-23-hardening-roadmap.md) (the dev plan: 12 clusters, phased). The
+[GTM plan](../strategy/2026-06-23-go-to-market-distribution.md) was integrated into `docs/launch/` (PR #32). The
+recommended improved CLAUDE.md was **adopted** as the live `CLAUDE.md` (Phase-0). The audit closes per the
+roadmap's done-definition (CLOSED vs **TRACKED-PENDING**).
+
+**CLOSED (merged):**
+- **PR #31** — [ADR-0009](../decisions/0009-spawned-session-trust-boundary.md) spawned-session trust boundary
+  (Narrow default + `strict_spawn` + hook-neuter), [ADR-0010](../decisions/0010-auth-failure-handling.md)
+  auth-failure detection (exit 50 + receipt banner), the honesty/hygiene edits.
+- **PR #32** — the hardening roadmap + the recommended improved CLAUDE.md + the GTM integration into the launch
+  plans + `docs/launch/QUALITY-GATE-v1.md` + the M-IDLE drain-report fields.
+- **Phase 0 (docs/anti-drift)** — the 801→814 baseline reconcile + this status block; **ADR-0011** (ToS basis) +
+  `runDrain.ts`/`schedule.ts` tags + `docs/watchlist/tos-automation-drift.md`; **ADR-0006 annotation** (affirm
+  Sonnet pool, flag drain-both #57875/#57050, DO NOT invert) + the code-site marker; **ADR-0012**
+  (conditional economic thesis) + README/`BLIND_SPOT_NOTE` framing; adopted CLAUDE.md.
+
+**QUEUED (Phase 1–3 of the roadmap — not yet built):** OS-sandbox `enforce_spawn` + a real enforcement test
+(Phase 1); the `setup-token` scheduled-auth path (Phase 1); draft test-status honesty (Phase 2); privacy /
+read-scope confinement + redaction (Phase 2); weekly-signal fusion + supersede ADR-0007 (Phase 2);
+`rateLimitType seven_day*` first-class (Phase 2); the watchlist as a `glean doctor`/dashboard feature (Phase 3);
+parallel-safety lock (Phase 3); the ranking validity guard + opt-in `--triage` (Phase 3).
+
+**TRACKED-PENDING (hardware-gated — never claimed "closed" until proven on the right box):** (i) the live
+sandbox-enforcement proof, (ii) the live Spike-A auth re-validation, (iii) a captured real `seven_day*` event.
+**On native Windows (glean's primary platform) the audit's #1 BROKEN finding is mitigated by Narrow/`strict_spawn`
+but is NEVER resolved to a HARD filesystem boundary** — the OS sandbox is macOS/Linux/WSL2-only.
 
 ## Read first (orient a cold session)
 - `CLAUDE.md` — load-bearing constraints + current state + the "Decision records & assumptions" section

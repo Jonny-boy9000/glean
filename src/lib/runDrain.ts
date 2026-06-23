@@ -12,6 +12,13 @@
 //
 // All time flows through the injected `now()` so the state machine is fully
 // deterministic under test. All persisted timestamps are ISO UTC.
+//
+// ASSUMPTION[ADR-0011] UNVERIFIED — an UNATTENDED/scheduled headless `claude -p`
+// drain rests on the gray-but-defensible ToS basis (it drives the OFFICIAL binary,
+// Consumer-Terms §3 "where we otherwise explicitly permit it", NOT the OpenClaw
+// token-extraction class); the unattended-vs-interactive edge is untested, and the
+// metered-billing un-pause is the existential tripwire (→ ADR-0008 hedge). See
+// docs/decisions/0011-tos-basis-for-scheduled-claude-p.md + docs/watchlist/tos-automation-drift.md.
 
 import { randomUUID } from 'node:crypto';
 import type { RunSummary, PacingConfig } from './types.js';

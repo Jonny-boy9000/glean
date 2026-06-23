@@ -10,6 +10,15 @@ import type { CandidateType } from './types.js';
 // drift across model generations, so the resolved model is logged per task
 // (orchestrator log `task.start.model`). Read docs/decisions/0006-* before
 // "correcting" any of this.
+//
+// ASSUMPTION[ADR-0006] drain-both (distinct from the Pro-pool-split above): the
+// leg-(b) benefit ("Sonnet draws from an otherwise-unused pool") is currently
+// ERODED by a live Anthropic bug — Sonnet drains BOTH buckets (claude-code #57875
+// + #57050, closed not-planned). leg-(a) (Opus burns the shared cap several times
+// faster, so Sonnet conserves it) is unaffected and IS the load-bearing reason for
+// the default. Do NOT invert to opus — the audit's #9 cross-check disproved that.
+
+
 
 // Pacing tier handed down by the pacing engine (wave 2 — feat/usage-pacing).
 // Until that engine is wired in, callers pass nothing and resolution behaves
