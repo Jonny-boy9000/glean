@@ -74,3 +74,21 @@ Research findings (verified 2026-06-12, recorded in the capacity-governor design
 - If `--model` ever stops being honored in `-p` mode (CLI regression), the spawn-argv tests
   fail loudly; the orchestrator-log `model:` field tells you what each historical run actually
   requested.
+
+## Status note — 2026-06-23 (assumption audit #9 cross-check)
+
+**AFFIRMED:** the separate **Sonnet-only** weekly pool is documented-correct (Anthropic Nov-24-2025
+"Sonnet now has its own limit"; the Max-plan page "another for Sonnet models only";
+`anthropics/claude-code` #55663/#12487). **DO NOT INVERT to "Opus-only."** A sub-auditor proposed exactly
+that and it was *disproved* in the audit cross-check; inverting would re-introduce the ADR-0001 failure
+mode in reverse (a wrong "correction" stated as fact). **Keep `--model sonnet` as the default** — this is
+the verified-correct decision; the routing is sound.
+
+**WEAKENED (leg-(b) only):** the *"draws from an otherwise-unused pool"* benefit (clause **(b)** in Context)
+is currently **degraded by a live Anthropic bug** — Sonnet drains **BOTH** the all-models cap AND the
+Sonnet-only pool (`anthropics/claude-code` **#57875** + closer-duplicate **#57050**, CLOSED not-planned).
+The **leg-(a)** benefit (clause **(a)**: Opus burns the shared cap several times faster, so Sonnet conserves
+it) is **unaffected** and remains the load-bearing reason for the default. Re-verify via a captured
+`rateLimitType` on a real drain. The **paused metered-billing change** ([ADR-0008](./0008-spawn-backend-seam.md)
+/ [ADR-0011](./0011-tos-basis-for-scheduled-claude-p.md)) is the dominant frame threat to the whole routing
+rationale, watched weekly. Status: still **Accepted**; do not supersede.
