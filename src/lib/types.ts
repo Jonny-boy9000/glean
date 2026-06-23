@@ -192,6 +192,8 @@ export type GleanConfig = {
   claude_bin?: string;
   // ADR-0009: drop the draft-impl in-session test-command allow-list (hard-close).
   strict_spawn?: boolean;
+  // ADR-0013: opt-in OS-sandbox enforcement (mac/Linux/WSL2; Narrow fallback on Windows).
+  enforce_spawn?: boolean;
   projects?: Record<string, { base_branch?: string; test_command?: string; priority?: ProjectPriority }>;
   drain_trigger?: DrainTrigger;
   pacing?: PacingConfig;

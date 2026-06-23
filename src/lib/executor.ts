@@ -7,6 +7,7 @@ import { extractLastAssistantText } from './jsonl-extract.js';
 import { projectSlug } from './state.js';
 import { titleFor, today } from './candidate-meta.js';
 import { BASE_DENY, DRAFT_IMPL_DENY, draftImplAllowedTools, researchAllowedTools, DEFAULT_TEST_COMMAND_ALLOW } from './deny.js';
+import { buildSandboxSettings } from './sandbox.js';
 import type { ModelRoutingConfig, PaceTier } from './model-routing.js';
 import { runClaude, classifySpawnSignal } from './spawn-claude.js';
 import {
@@ -84,6 +85,12 @@ export type ExecCtx = {
     prep_branch?: string;
     draft_tests?: string;
   }) => void;
+  // ADR-0013: resolved posture === 'enforce' (config.enforce_spawn set AND the OS
+  // sandbox is available — mac/Linux/WSL2). When true, draft-impl/research spawns get
+  // an inline `--settings` OS sandbox. Resolved once per run in cli.ts
+  // (detectSandboxAvailability + resolveSpawnPosture). Absent → Narrow (the default,
+  // and the only option on native Windows).
+  enforceSpawn?: boolean;
 };
 
 export async function executeOne(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
@@ -113,12 +120,19 @@ async function executeDossier(c: Candidate, ctx: ExecCtx): Promise<TaskResult> {
   // via a scoped read-only allow-list. fetch-docs (`docs`) keeps the original
   // output-dir-only scope for now (separate roadmap item).
   const isResearch = c.type === 'research-dossier';
+  // ADR-0013: under enforce_spawn (sandbox available) confine this spawn's writes to
+  // its output dir and deny-read $HOME secrets; research also re-allows reading the
+  // project it researches. Undefined on Narrow/strict/Windows → argv byte-identical.
+  const settings = ctx.enforceSpawn
+    ? buildSandboxSettings({ writeRoot: workDir, readScopes: isResearch ? [c.project_path] : undefined })
+    : undefined;
   const spawn = await runClaude(c, ctx, {
     prompt,
     cwd: workDir,
     addDir: isResearch ? [workDir, c.project_path] : workDir,
     deny: BASE_DENY,
     allowedTools: isResearch ? researchAllowedTools() : undefined,
+    settings,
   });
 
   const startedAt = start;
@@ -264,12 +278,21 @@ async function executeDraftImpl(c: Candidate, ctx: ExecCtx): Promise<TaskResult>
   // config.strict_spawn (ctx.testCommandAllow is already [] then; see cli.ts).
   // DRAFT_IMPL_DENY stays as in-session defense-in-depth.
   const allowedTools = draftImplAllowedTools(ctx.testCommandAllow ?? DEFAULT_TEST_COMMAND_ALLOW);
+  // ADR-0013: under enforce_spawn (sandbox available) confine writes to the worktree
+  // and deny-read $HOME secrets + the user's MAIN checkout (so the draft can't peek at
+  // uncommitted main work). The sandbox auto-allows the shared .git refs/index but
+  // keeps .git/hooks denied — complementing the hook-neuter above. Undefined on
+  // Narrow/strict/Windows → argv byte-identical.
+  const settings = ctx.enforceSpawn
+    ? buildSandboxSettings({ writeRoot: worktree, denyReadExtra: [main] })
+    : undefined;
   const spawn = await runClaude(c, ctx, {
     prompt,
     cwd: worktree,
     addDir: worktree,
     deny: DRAFT_IMPL_DENY,
     allowedTools,
+    settings,
   });
 
   // Kill-mid-commit safety (T8/F7): a killed child may leave a stale index.lock

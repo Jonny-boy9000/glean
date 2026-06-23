@@ -246,6 +246,7 @@ Add this to `~/.claude/settings.json`:
 {
   "claude_bin": "claude",
   "strict_spawn": false,
+  "enforce_spawn": false,
   "projects": {
     "C:\\code\\my-app": {
       "base_branch": "main",
@@ -261,6 +262,7 @@ Add this to `~/.claude/settings.json`:
 
 - **`claude_bin`** — point at a specific `claude` executable if it isn't on PATH.
 - **`strict_spawn`** — safety posture for the `draft-impl` spawn (default `false`). On native Windows there is no OS sandbox, so an in-session test runner executes a subprocess *outside* Claude Code's permission layer. By default glean already excludes the arbitrary-code verbs `node`/`npm run` and keeps only your declared test runner so a draft can still self-verify. Set `strict_spawn: true` to drop in-session code execution **entirely** — the session can only edit files inside the worktree and run `git add`/`commit` — a hard "read-only against `main`" guarantee on every platform, at the cost of the model running your tests in-session (glean still re-runs them out-of-session for the receipt's status). See [ADR-0009](./docs/decisions/0009-spawned-session-trust-boundary.md).
+- **`enforce_spawn`** — the *other* way to get a hard boundary (default `false`), **on macOS/Linux/WSL2 only**. Set `enforce_spawn: true` and glean wraps each spawn in Claude Code's **OS sandbox** (via an inline `--settings` that never touches your `~/.claude/settings.json`): writes are confined to the worktree, `$HOME` secrets are deny-read, and it **fails closed** if the sandbox runtime (bubblewrap) is missing. Unlike `strict_spawn`, this keeps in-session test execution — the OS, not the allow-list, is the boundary. **On native Windows the OS sandbox doesn't exist**, so `enforce_spawn` falls back to the Narrow default with a loud warning (use `strict_spawn`, or run glean under WSL2, for a hard guarantee on Windows). See [ADR-0013](./docs/decisions/0013-os-sandbox-enforcement.md).
 - **`projects.<absolute-path>.base_branch`** — **enables code drafts (`draft-impl`)** for that project; the draft worktree is branched off this ref. Without it, that project gets dossiers/docs only.
 - **`projects.<absolute-path>.test_command`** — what glean runs inside the draft worktree to capture a `pass`/`fail`/`none` test status (also scopes the draft session's Bash allow-list).
 - **`drain_trigger`** — overrides the scheduler default (day/time/repetition). Omit it to let `glean schedule enable` auto-detect the day from your timezone.

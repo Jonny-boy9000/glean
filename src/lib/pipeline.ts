@@ -44,6 +44,7 @@ export type PipelineOpts = {
   baseBranchFor?: (projectPath: string) => string | undefined; // F5: per-candidate base resolver
   testCommandAllow?: readonly string[]; // per-project scoped test-command allow prefixes (draft-impl)
   testCommandFor?: (projectPath: string) => string | undefined; // per-project RAW test_command — glean runs it post-commit to capture test status
+  enforceSpawn?: boolean; // ADR-0013: resolved posture === 'enforce' (sandbox available); injects --settings into spawns
   // v0.8 drain: candidate ids already completed in a prior burst of the SAME
   // drain window. Any candidate whose id is in this set is skipped (not re-run).
   // Inert for the bare `glean run` path (undefined ⇒ nothing skipped).
@@ -292,6 +293,7 @@ export async function runPipeline(opts: PipelineOpts): Promise<RunSummary> {
         baseBranchFor: opts.baseBranchFor,
         testCommandAllow: opts.testCommandAllow,
         testCommandFor: opts.testCommandFor,
+        enforceSpawn: opts.enforceSpawn,
         routing: opts.routing,
         paceTier: opts.paceTier,
         // C1: thread the run's REMAINING wall-clock budget + a live STOP probe so

@@ -53,6 +53,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig(p)).toThrow(/strict_spawn/);
   });
 
+  // ADR-0013: opt-in OS-sandbox enforcement.
+  it('parses enforce_spawn', () => {
+    const p = tmpFile(JSON.stringify({ enforce_spawn: true }));
+    expect(loadConfig(p).enforce_spawn).toBe(true);
+  });
+
+  it('leaves enforce_spawn undefined when absent', () => {
+    const p = tmpFile(JSON.stringify({ claude_bin: 'claude' }));
+    expect(loadConfig(p).enforce_spawn).toBeUndefined();
+  });
+
+  it('rejects a non-boolean enforce_spawn', () => {
+    const p = tmpFile(JSON.stringify({ enforce_spawn: 'yes' }));
+    expect(() => loadConfig(p)).toThrow(/enforce_spawn/);
+  });
+
   // v0.8.2 item 1: configurable circuit-breaker threshold on drain_trigger.
   it('parses drain_trigger.max_unproductive', () => {
     const p = tmpFile(JSON.stringify({ drain_trigger: { max_unproductive: 5 } }));
