@@ -26,6 +26,10 @@ assignees: ''
   `%USERPROFILE%\glean\logs\<run-id>\<task-id>.jsonl` if you can find it
   (this directly helps the classifier):
 
+**Idle-capacity signal** (helps validate the core thesis — the *M-IDLE* milestone)
+- Did the **weekly-cap** signal fire at all this week? (y/n) — i.e. did you actually have leftover capacity to glean, or were you already maxed out?
+- Paste `glean usage --json` (your self-relative pace + the last captured utilization — this is the honest measure of whether the idle tail exists for you):
+
 **The honest question**
 - Was the Monday-morning receipt worth the capacity it spent? (1–5)
 - What would have made the #1 draft actually useful?

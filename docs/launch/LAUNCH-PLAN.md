@@ -8,6 +8,49 @@
 
 ---
 
+## GTM integration (2026-06-23) — READ FIRST; this updates the sections below
+
+Folds the [2026-06-23 go-to-market & distribution research](../strategy/2026-06-23-go-to-market-distribution.md) into this plan. Where this section conflicts with §1–§3 below, **this section wins** — the body is patched, not regenerated, so the paste-ready copy in §2–§3 + the [runbook](./RUNBOOK-stages-1-3.md) still stand, with the corrections noted here.
+
+### A. Reframed positioning (supersedes the §1 hook)
+- **Lead with DISCOVERY, not "Friday waste."** The uncontested wedge no competitor — including Anthropic's first-party Routines / Desktop tasks — has is **local cross-project discovery of unfinished work + idle-capacity drain economics.** New one-liner: *"glean finds the unfinished work across your repos and drafts a head-start on it — using the Claude Max capacity you already paid for but didn't use this week. Locally, your own login, no API key."*
+- **Day-agnostic.** Drop "resets every Saturday" / "Friday" as *literal* claims — the weekly window is per-account and glean learns it. Keep Friday→Monday only as illustration.
+- **The loudest public 2026 pain is the OPPOSITE of the old headline** (capacity *starvation*, not idle surplus). The durable frame that fits both segments: *"extract value from a weekly cap you can't bank."* And the **governor/drainer split** — pitch `glean usage` pacing to the starved majority; **never pitch the drain to an already-maxed user** (it worsens their pain).
+- PR-title / awesome-list variant (≤80 chars, no superlatives): *"glean — drain idle weekly Claude Max capacity into reviewable code drafts, locally."* Full taglines + per-segment pitches + the vs-first-party frame: GTM doc §Positioning.
+- **ICP = the multi-repo personal-Max developer** (beachhead: the Windows AI-tooling power-user). GTM doc §ICP.
+
+### B. STAGE 0 — eng freeze line + owner-time budget (new; gates everything)
+- **Ship-blocking ONLY:** clean `npm i -g`; `glean run --dry-run` doesn't crash; the real morning-receipt GIF (§3.1); the base_branch + test-pass-suppression interaction can't yield a blank/broken first receipt.
+- **FROZEN until after launch:** macOS launchd, the draft-quality *number* (launch feeds it), dev-tooling vuln bumps, the ADR-0001 weekly-block capture. Rule: *nothing leaves the frozen bucket unless it blocks a stranger's first run.* (Counters the #1 solo-launch failure mode: over-build, under-distribute.)
+- **Owner-time budget ≈ 40 person-hours over ~3 calendar weeks** (the maintainer runs ~3 burst-days/week). Wk1 = ship-blocking eng + GIF; Wk2 = Discord + r/ClaudeAI + fix-loop; Wk3 = Show HN + awesome-claude-code + X. Pin every presence-heavy event to **16:00–20:00 Jerusalem (= 9am ET)** — inside the maintainer's existing peak hours.
+
+### C. Channel corrections (patches §2)
+- **awesome-claude-code (§2.4) is STALE and would be auto-closed.** Correct rules (verified live, June 2026): title **`[Resource]: glean`** (the old `resource-submission` is now an auto-applied LABEL, not the title); submit via the **github.com UI form ONLY** (gh CLI / programmatic submissions are auto-closed); Category **Tooling → "Tooling: Orchestrators"** (NOT Usage Monitors — dodges the saturated ccusage cluster); repo must be **>1 week old**; **no other open issue** in that repo; disclose **no network requests beyond the local `claude` CLI**; run the repo's `evaluate-repository` self-check first.
+- **NEW venue — anthropics/skills "Show and tell" Discussions (TIER-2, P1):** an official Anthropic surface, zero gatekeeping, monitored by the exact audience + DevRel; durable backlink. Post the build-story + the receipt GIF, framed as discovery + drain.
+- **Repo-owned surfaces (P0, compounding):** GitHub topics + description + homepage are **now set** (2026-06-23) and npm keywords expanded. **Remaining (needs the maintainer):** commit a 1280×640 <1MB social-preview PNG and set it in repo Settings.
+- The macOS gate must be stated accurately everywhere (manual `glean run` works on macOS *today*; only the scheduler is Windows/Linux) — see §G.
+
+### D. The pre-committed quality gate + M-IDLE (new; the make-or-break)
+- Write a one-page **"Quality gate v1"** under `docs/launch/` BEFORE the next dogfood: **draft-impl keep-rate ≥33%** (branch merged/cherry-picked — this bar can BLOCK the loud launch) and **dossier keep/action ≥30%** (advisory); **N≥30 across ≥3 NON-glean repos**; judged on an **objective git/JSONL artifact**, not the maintainer's in-the-moment opinion. Below N=30 → "insufficient evidence", don't pass/fail. Ship `glean rate --report` so the gate is computed, not asserted. Anchors: Copilot ~27–30% inline acceptance (verified); Cursor agent merge ~35% (directional).
+- **M-IDLE** — the premise-validation milestone: from ≥20 consenting power-user weeks, publish the fraction of weeks the weekly-cap signal never fired (an honest idle-capacity floor) + the pace-ratio distribution, **stratified by intensity** (surplus is bimodal). **Decision rule: if median beachhead surplus is near zero, demote the drain headline and lead with discovery.** Seed it now via a "weekly-cap fired? y/n + paste `glean usage --json`" field in the drain-report template.
+
+### E. Growth loops (new)
+- **RECEIPT.md attribution footer (highest-ROI, lowest-effort):** add one tasteful, opt-out-able line to `glean morning --md`: *"Drafted overnight by glean (`npm i -g @jonny-boy9000/glean`) — github.com/Jonny-boy9000/glean."* Turns an existing share artifact into the only real acquisition loop.
+- **Empty-receipt activation fix (the #1 activation killer):** auto-detect the default branch on first run + nudge-to-unlock draft-impl (do NOT auto-run it — a confidently-wrong first draft causes permanent churn) + a never-blank receipt, so the first run that decides retention is never empty.
+- **`glean usage` as the zero-config first command** — an instant, true "you have idle capacity" micro-aha that earns the heavier setup ("ccusage shows the waste; glean USES it").
+
+### F. GO/NO-GO gate + contingency (new)
+- **Before the loud Show HN:** (1) the macOS story is front-and-centre (manual-run note + dated issue #1; the launchd port itself is *frozen*, not gated); (2) a real keep-rate number exists OR an honest "insufficient evidence, N too low"; (3) the metered-billing pause is **re-checked the week of launch** (canonical: `support.claude.com/en/articles/15036540`).
+- **Metered-billing kill-switch:** if Anthropic un-pauses metered `claude -p` on/near launch day, **POSTPONE the loud Show HN** (its whole premise is publicly undercut); the soft channels can proceed on the discovery framing. Re-anchor the headline on billing-independent **discovery** value with a pre-written honest response, and point to the ADR-0008 API seam. A weekly pre-launch check.
+
+### G. Honesty corrections (apply throughout this plan + the runbook)
+- Drop the unverified **"40% routing reduction"** stat and any **fabricated rollover quote** — no-rollover is directionally verified; the exact wording is not.
+- **"verified tests: pass" → "best-effort test status"** everywhere (a fresh worktree has no `node_modules`, so the common Node/TS case is structurally `none`; glean re-runs your test command out-of-session for the receipt's status).
+- **macOS:** "Windows-first" → **"Windows + Linux (beta); manual `glean run` works on macOS today — only the unattended scheduler is Windows/Linux."**
+- Scope every economic claim to *"capacity you'd lose **this week**"*, never "free forever" — and note that "free idle capacity" is **conditional** on the user being under their shared weekly cap (Claude Code + chat + Cowork); point them at `glean usage` to check before enabling the drain.
+
+---
+
 ## 0. The one rule for this launch
 
 This audience can smell a launch that overclaims. glean's credibility *is* its honesty (the README literally documents the rejected token-reselling design and the pending overnight run). So every post leads with the honest frame: **"early, Windows-first, here's exactly what it does and what it doesn't yet."** That honesty is the differentiator against the wave of "AI does your work while you sleep" hype. Lean into it.
@@ -26,10 +69,10 @@ Shorter variants (use per venue character budget):
 - **"A CLI that drains your idle Claude weekly capacity into a Monday-morning head-start."**
 
 ### 3-sentence pitch (for the Claude Code / Max power-user crowd — assumes they already get subscription auth + weekly limits)
-> Your Pro/Max weekly window resets every Saturday and the capacity you didn't spend is just gone. glean is a Windows CLI that, in that idle tail, spawns its own headless `claude -p` sessions to do speculative prep on your own repos — drafting code into throwaway `git worktree` branches (never touching `main`), writing research dossiers, pre-fetching docs — and you point Windows Task Scheduler at it so it drains the whole weekend's leftover unattended, pausing at each 5-hour wall and resuming until the weekly cap fires. Monday you run `glean morning` and get a receipt: each draft branch with a verified `tests: pass`, the exact command to review it, and an honest capacity line. It's your own subscription driving your own `claude` CLI on a schedule — no API key, no proxying, nothing pushed.
+> Your Pro/Max weekly window resets on a fixed per-account weekly schedule (glean learns yours) and the capacity you didn't spend is just gone — it doesn't roll over. glean is a CLI (Windows + Linux beta) that, in that idle tail, spawns its own headless `claude -p` sessions to do speculative prep on your own repos — *finding the unfinished work across them*, then drafting code into throwaway `git worktree` branches (never touching `main`), writing research dossiers, pre-fetching docs — and you point the scheduler at it so it drains the leftover unattended, pausing at each 5-hour wall and resuming until the weekly cap fires. Monday you run `glean morning` and get a receipt: each draft branch with a best-effort `tests: pass`, the exact command to review it, and an honest capacity line. It's your own subscription driving your own `claude` CLI on a schedule — no API key, no proxying, nothing pushed.
 
 ### Honesty boilerplate (paste near the top of every post)
-> Heads up: **glean is early and Windows-first today.** The scheduler is Windows Task Scheduler only (macOS/Linux is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (806 tests), and it now runs for real against live `claude -p` (a real run produced dossiers + pre-fetched docs, zero failures; a `--drain` tick works and the unattended weekend drain is armed). The one thing not yet observed in the wild is a real **hard weekly-cap hit** on a full multi-day drain (ADR-0001). I'm posting partly to find people who'll run it and tell me what breaks.
+> Heads up: **glean is early; Windows + Linux (beta).** Manual `glean run` works on macOS *today* — only the unattended scheduler is Windows/Linux (macOS launchd is the [top tracked issue](https://github.com/Jonny-boy9000/glean/issues/1)). The single-run + draft-branch path is dogfooded and tested (806 tests), and it now runs for real against live `claude -p` (a real run produced dossiers + pre-fetched docs, zero failures; a `--drain` tick works and the unattended weekend drain is armed). The one thing not yet observed in the wild is a real **hard weekly-cap hit** on a full multi-day drain (ADR-0001). I'm posting partly to find people who'll run it and tell me what breaks.
 
 ### What makes it land with this crowd (use as talking points in comments)
 - **"Is this allowed?" is pre-answered.** It drives your own logged-in CLI, same `claude -p` calls you could type by hand. No key, no resale. (The rejected resale design is documented as dropped.)
@@ -80,8 +123,9 @@ Ranked by **density of the exact audience × ease of getting real install + feed
 - **Reposting:** HN allows a resubmit once the project is genuinely ready if a first attempt sank without traction. Don't spam it; one good shot.
 
 ### 2.4 awesome-claude-code (curated GitHub list)
-- **Submission path (important, it changed):** **Do NOT open a PR yourself** — the repo's workflow is to **open a GitHub Issue labeled `resource-submission`** (the maintainer's automation handles the PR). Read `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` first.
-- **Category:** "applications" / "tooling" for Claude Code.
+> ⚠️ **Submission rules changed again (verified June 2026) — see GTM integration §C above.** Title **`[Resource]: glean`**; **github.com UI form ONLY** (gh CLI / programmatic = auto-closed); Category **Tooling → "Tooling: Orchestrators"** (NOT Usage Monitors); repo **>1 week old**; **no other open issue** in the repo; disclose **no network requests beyond the local `claude` CLI**. The note below is superseded.
+- **Submission path (SUPERSEDED — see §C):** ~~open a GitHub Issue labeled `resource-submission`~~. Read `CONTRIBUTING.md` and run `evaluate-repository` first.
+- **Category:** Tooling → "Tooling: Orchestrators".
 - **Why:** Evergreen. People browsing that list are exactly our buyer and arrive with intent. Costs 10 minutes, pays for months.
 
 ### 2.5 X / Twitter
@@ -119,7 +163,7 @@ Recommended structure — a 3-beat, ~15–20s loop:
 2. **Beat 2 (1s): a hard cut + caption** — *"Monday morning:"* (black frame or title card).
 3. **Beat 3 (10–14s, the star): `glean morning` running and its receipt.** Capture the real receipt output:
    - the draft branch line with its **diff stat**,
-   - the **verified `tests: pass`**,
+   - the **best-effort `tests: pass`** (glean re-runs your test command out-of-session),
    - the **"main untouched"** / review-command line (`cd` into the worktree),
    - the dossier list,
    - the honest **capacity line** at the bottom.

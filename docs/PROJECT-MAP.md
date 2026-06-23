@@ -176,14 +176,17 @@ Run: `npm test` (builds first via `pretest`). Baseline @ v0.9.0: **739 pass, 7 s
 | `docs/strategy/2026-06-22-*.md` | **Pinned direction** — next-wave strategy (narrow / subscription-only / Claude-native) + the verified competitive landscape. |
 | `docs/strategy/2026-06-23-go-to-market-distribution.md` | GTM / distribution plan (pain→message, ICP, channels, launch DIFF, growth loops) — builds on `docs/launch/`. |
 | `docs/strategy/2026-06-23-assumption-audit.md` | Red-team of CLAUDE.md's load-bearing assumptions → risk-ranked register (drove ADR-0009 + the 2026-06-23 honesty edits). |
+| `docs/strategy/2026-06-23-hardening-roadmap.md` | **Development plan to close the audit** — 12 remediation clusters → phased/sequenced plan + ADR-token allocation mechanism + done-definition (CLOSED vs TRACKED-PENDING). |
+| `CLAUDE.recommended.md` (repo root) | **Recommended improved CLAUDE.md** (audit-hardened, strictly additive, critic-verified). Review, then `mv CLAUDE.recommended.md CLAUDE.md` to adopt. |
 | `docs/decisions/*.md` | **ADRs** — load-bearing decisions + unverified assumptions, tagged at the code site (`ASSUMPTION[ADR-NNNN]`). `0001` = rate-limit signal source (superseded by 0003); `0003` = structured stream-json block signal (session verified, weekly open); `0004` = wall-clock task deadline + bounded kill grace (the 2026-06-12 sleep/resume timeout overrun); `0005` = pacing model-weight multipliers (UNVERIFIED, consistency-over-truth); `0006` = model routing pool-aware sonnet default (Pro pool-split assumption open); `0007` = internal JSONL usage loader (ccusage's programmatic API gone upstream); `0008` = spawn-backend seam (subscription headline; API hedge designed-not-built); `0009` = spawned-session trust boundary (allow-list bounds tool names, not subprocess writes; no native-Windows sandbox — Narrow default + opt-in `strict_spawn`); `0010` = auth-failure handling (detect expired login → stop with exit 50 + receipt banner; UNVERIFIED shape capture-armed; `setup-token` scheduled-auth path designed-not-built). See its README. |
 | `docs/superpowers/specs/*.md` | Per-release **design specs** (the "what") — MVP through v0.5/peek. |
 | `docs/superpowers/plans/*.md` | Per-release **implementation plans** (the "how"). |
 | `docs/open-work/01…05-*.md` | Findings + dogfood reports (jsonl format, job-object decision, dogfood results). |
 | `docs/open-work/06-rate-limit-signal-findings.md` | ⭐ The `rate_limit_event` discovery (created 2026-06-02). |
 | `docs/design/*.md` + `gstack-learnings.jsonl` | **Mirrored** gstack design docs + eng-review test plans (clone-portable copy of Tree 2 — see `docs/design/README.md`). |
-| `docs/launch/LAUNCH-PLAN.md` | Launch + marketing plan. |
-| `docs/launch/RUNBOOK-stages-1-3.md` | Launch execution runbook (stages 1–3). |
+| `docs/launch/LAUNCH-PLAN.md` | Launch + marketing plan. **Top section = the 2026-06-23 GTM integration** (folds in `docs/strategy/2026-06-23-go-to-market-distribution.md`: reframed positioning, Stage 0 freeze + owner-budget, channel corrections, quality gate + M-IDLE, growth loops, contingency). |
+| `docs/launch/RUNBOOK-stages-1-3.md` | Launch execution runbook (stages 1–3); paste copy honesty-corrected 2026-06-23. |
+| `docs/launch/QUALITY-GATE-v1.md` | Pre-committed draft-quality bar (draft-impl keep-rate ≥33% / dossier ≥30%, N≥30 across ≥3 non-glean repos, objective judge) — lock before the next dogfood. |
 | `docs/assets/glean-morning.png` | README hero image. |
 
 > **Naming note:** `docs/superpowers/` is internal jargon (how the project was built). ROADMAP
